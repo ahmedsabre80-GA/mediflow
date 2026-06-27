@@ -167,7 +167,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
                 <div className="absolute left-0 top-10 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
                   <div className="px-4 py-3 border-b flex items-center justify-between">
-                    <button onClick={markAllRead} className="text-xs text-sky-600 hover:underline">تحديد الكل كمقروء</button>
+                    <button onClick={(e) => { e.stopPropagation(); markAllRead(); }} className="text-xs text-sky-600 hover:underline">تحديد الكل كمقروء</button>
                     <h3 className="font-bold text-gray-900 text-sm">
                       الإشعارات {unreadCount > 0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full mr-1">{unreadCount}</span>}
                     </h3>
@@ -177,21 +177,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <div className="px-4 py-8 text-center text-gray-400 text-sm">لا توجد إشعارات</div>
                     ) : notifications.map(n => (
                       <div key={n.id}
-                        onClick={() => handleNotificationClick(n)}
-                        className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors flex items-start gap-3 ${!n.read ? 'bg-sky-50' : ''}`}>
+                        onClick={(e) => { e.stopPropagation(); handleNotificationClick(n); }}
+                        className={`px-4 py-3 cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition-colors flex items-start gap-3 ${!n.read ? 'bg-sky-50' : ''}`}>
                         {!n.read && <span className="w-2 h-2 bg-sky-500 rounded-full shrink-0 mt-1.5" />}
                         <div className={!n.read ? '' : 'mr-4'}>
-                          <p className="text-sm text-gray-800">{n.message}</p>
-                          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                            {n.timestamp}
-                            {n.link && <span className="text-sky-500">← اضغط للعرض</span>}
-                          </p>
+                          <p className="text-sm text-gray-800 font-medium">{n.message}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{n.timestamp}</p>
+                          {n.link && <span className="text-xs text-sky-600 font-medium">← اضغط للانتقال للطلب</span>}
                         </div>
                       </div>
                     ))}
                   </div>
                   <div className="px-4 py-3 text-center border-t">
-                    <button onClick={() => setShowNotifications(false)} className="text-xs text-gray-500 hover:text-gray-700">إغلاق</button>
+                    <button onClick={(e) => { e.stopPropagation(); setShowNotifications(false); }} className="text-xs text-gray-500 hover:text-gray-700">إغلاق</button>
                   </div>
                 </div>
               </>
