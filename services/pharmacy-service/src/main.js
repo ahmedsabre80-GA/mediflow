@@ -109,24 +109,27 @@ app.post('/api/v1/pharmacies/register', authenticate, async (req, res) => {
       address, city, country = 'IQ', latitude, longitude
     } = req.body;
 
-    if (!name || !licenseNumber || !phone || !address) {
-      return res.status(422).json({ success: false, error: { title: 'Missing required fields', status: 422 } });
+    const pharmacyName = name || nameAr;
+    const expiry = licenseExpiry || '2027-12-31'; // default expiry if not provided
+
+    if (!pharmacyName || !licenseNumber || !phone || !address) {
+      return res.status(422).json({ success: false, error: { title: 'الاسم ورقم الرخصة والهاتف والعنوان مطلوبة', status: 422 } });
     }
 
     const result = await pool.query(`
       INSERT INTO pharmacies.pharmacies
         (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country, latitude, longitude, status)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
-      RETURNING id, name, status
-    `, [req.user.sub, name, nameAr, licenseNumber, licenseExpiry, phone, email, address, city, country, latitude, longitude]);
+      RETURNING id, name, name_ar, status
+    `, [req.user.sub, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     if (err.code === '23505') {
-      return res.status(409).json({ success: false, error: { title: 'License number already registered', status: 409 } });
+      return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
     }
-    console.error('Register error:', err);
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
+    console.error('Register error:', err.message, err.detail);
+    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
   }
 });
 
