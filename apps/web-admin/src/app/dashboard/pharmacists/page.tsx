@@ -37,6 +37,22 @@ export default function PharmacistsPage() {
     }
   }, []);
 
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', license: '', pharmacyName: '', city: '', email: '', addedBy: 'platform' });
+
+  const handleAdd = () => {
+    if (!addForm.name || !addForm.license) return alert('يرجى ملء الاسم والترخيص');
+    const newPh = { id: Date.now(), name: addForm.name, pharmacyName: addForm.pharmacyName, license: addForm.license, city: addForm.city, rating: 0, status: addForm.addedBy === 'platform' ? 'active' : 'pending_verification', createdAt: new Date().toISOString().split('T')[0] };
+    setPharmacists(prev => [newPh, ...prev]);
+    const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    saved[newPh.id] = newPh.status;
+    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
+    logAction('add', `إضافة صيدلاني (${addForm.addedBy === 'platform' ? 'من قِبَل المنصة' : 'طلب شخصي'})`, 'صيدلاني', addForm.name, String(newPh.id), '/dashboard/pharmacists');
+    setShowAddModal(false);
+    setAddForm({ name: '', license: '', pharmacyName: '', city: '', email: '', addedBy: 'platform' });
+    showToast('✅ تم إضافة الصيدلاني');
+  };
+
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   const updateStatus = (id: number, status: string) => {
@@ -71,10 +87,69 @@ export default function PharmacistsPage() {
     <div className="space-y-6" dir="rtl">
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm">{toast}</div>}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">إدارة الصيادلة</h1>
-        <span className="bg-teal-100 text-teal-700 text-sm font-medium px-3 py-1 rounded-full">{pharmacists.length} صيدلاني</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="bg-teal-100 text-teal-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacists.length} إجمالي</span>
+          <span className="bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacists.filter(p=>p.status==='active').length} نشط</span>
+          <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacists.filter(p=>p.status==='pending_verification').length} معلق</span>
+          <span className="bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacists.filter(p=>p.status==='suspended').length} موقوف</span>
+          <button onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-teal-500 hover:bg-teal-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
+            + إضافة صيدلاني
+          </button>
+        </div>
       </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setShowAddModal(false)}><X className="w-5 h-5 text-gray-400" /></button>
+              <h2 className="text-lg font-bold">إضافة صيدلاني جديد</h2>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">مصدر الإضافة</label>
+                <div className="flex gap-2">
+                  {[{k:'platform',l:'من قِبَل المنصة'},{k:'request',l:'طلب شخصي'},{k:'team',l:'فريق العمل'}].map(s => (
+                    <button key={s.k} onClick={() => setAddForm(f => ({...f, addedBy: s.k}))}
+                      className={`flex-1 py-2 rounded-xl text-xs font-medium border-2 ${addForm.addedBy === s.k ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-600'}`}>
+                      {s.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {[
+                { key: 'name', label: 'اسم الصيدلاني *', placeholder: 'حسن الموسى' },
+                { key: 'license', label: 'رقم الترخيص *', placeholder: 'PH-LIC-001', dir: 'ltr' },
+                { key: 'pharmacyName', label: 'اسم الصيدلية', placeholder: 'صيدلية الأمين' },
+                { key: 'city', label: 'المدينة', placeholder: 'بغداد' },
+                { key: 'email', label: 'البريد الإلكتروني', placeholder: 'pharmacist@example.com', dir: 'ltr' },
+              ].map(field => (
+                <div key={field.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+                  <input dir={(field as any).dir || 'rtl'}
+                    value={(addForm as any)[field.key]} onChange={e => setAddForm(f => ({...f, [field.key]: e.target.value}))}
+                    placeholder={field.placeholder}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                </div>
+              ))}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">شهادة / ترخيص المزاولة</label>
+                <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center cursor-pointer hover:border-teal-400">
+                  <p className="text-sm text-gray-500">اضغط لرفع المستند</p>
+                  <p className="text-xs text-gray-400 mt-1">PDF, JPG, PNG — حد أقصى 5MB</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowAddModal(false)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={handleAdd} className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl text-sm">إضافة</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         {[

@@ -36,6 +36,33 @@ export default function PharmaciesPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', nameAr: '', licenseNumber: '', phone: '', address: '', city: '', addedBy: 'platform' });
+
+  const handleAdd = () => {
+    if (!addForm.nameAr || !addForm.licenseNumber || !addForm.phone) return alert('يرجى ملء الاسم والترخيص والهاتف');
+    const newPharmacy = {
+      id: `manual-${Date.now()}`,
+      name: addForm.name || addForm.nameAr,
+      name_ar: addForm.nameAr,
+      license_number: addForm.licenseNumber,
+      phone: addForm.phone,
+      address: addForm.address,
+      city: addForm.city,
+      status: addForm.addedBy === 'platform' ? 'active' : 'pending_verification',
+      rating: 0,
+      distance_km: 0,
+    };
+    setPharmacies(prev => [newPharmacy, ...prev]);
+    const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    saved[newPharmacy.id] = newPharmacy.status;
+    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
+    logAction('add', `إضافة صيدلية (${addForm.addedBy === 'platform' ? 'من قِبَل المنصة' : 'طلب شخصي'})`, 'صيدلية', addForm.nameAr, newPharmacy.id, '/dashboard/pharmacies');
+    setShowAddModal(false);
+    setAddForm({ name: '', nameAr: '', licenseNumber: '', phone: '', address: '', city: '', addedBy: 'platform' });
+    showToast('✅ تم إضافة الصيدلية');
+  };
+
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   const updateStatus = (id: string, status: string) => {
@@ -74,10 +101,69 @@ export default function PharmaciesPage() {
     <div className="space-y-6" dir="rtl">
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm font-medium">{toast}</div>}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">إدارة الصيدليات</h1>
-        <span className="bg-sky-100 text-sky-700 text-sm font-medium px-3 py-1 rounded-full">{pharmacies.length} صيدلية</span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="bg-sky-100 text-sky-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacies.length} إجمالي</span>
+          <span className="bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacies.filter(p=>p.status==='active').length} نشط</span>
+          <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacies.filter(p=>p.status==='pending_verification').length} معلق</span>
+          <span className="bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">{pharmacies.filter(p=>p.status==='suspended').length} موقوف</span>
+          <button onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
+            + إضافة صيدلية
+          </button>
+        </div>
       </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setShowAddModal(false)}><X className="w-5 h-5 text-gray-400" /></button>
+              <h2 className="text-lg font-bold">إضافة صيدلية جديدة</h2>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">مصدر الإضافة</label>
+                <div className="flex gap-2">
+                  {[{k:'platform',l:'من قِبَل المنصة'},{k:'request',l:'طلب شخصي'},{k:'team',l:'فريق العمل'}].map(s => (
+                    <button key={s.k} onClick={() => setAddForm(f => ({...f, addedBy: s.k}))}
+                      className={`flex-1 py-2 rounded-xl text-xs font-medium border-2 ${addForm.addedBy === s.k ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}>
+                      {s.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {[
+                { key: 'nameAr', label: 'اسم الصيدلية (عربي) *', placeholder: 'صيدلية الأمين' },
+                { key: 'licenseNumber', label: 'رقم الترخيص *', placeholder: 'PH-2024-001', dir: 'ltr' },
+                { key: 'phone', label: 'رقم الهاتف *', placeholder: '+9647801234567', dir: 'ltr' },
+                { key: 'address', label: 'العنوان', placeholder: 'الكرادة، شارع المتنبي' },
+                { key: 'city', label: 'المدينة', placeholder: 'بغداد' },
+              ].map(field => (
+                <div key={field.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+                  <input dir={(field as any).dir || 'rtl'}
+                    value={(addForm as any)[field.key]} onChange={e => setAddForm(f => ({...f, [field.key]: e.target.value}))}
+                    placeholder={field.placeholder}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                </div>
+              ))}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">مستند الترخيص</label>
+                <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center cursor-pointer hover:border-sky-400">
+                  <p className="text-sm text-gray-500">اضغط لرفع مستند الترخيص</p>
+                  <p className="text-xs text-gray-400 mt-1">PDF, JPG, PNG — حد أقصى 5MB</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowAddModal(false)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={handleAdd} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">إضافة</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         {[
