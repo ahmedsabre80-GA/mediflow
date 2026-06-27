@@ -1,0 +1,136 @@
+name: CI — Test, Lint & Build
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+
+jobs:
+  # ─── DETECT CHANGED SERVICES ─────────────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      auth-service: ${{ steps.filter.outputs.auth-service }}
+      order-service: ${{ steps.filter.outputs.order-service }}
+      pharmacy-service: ${{ steps.filter.outputs.pharmacy-service }}
+      web-patient: ${{ steps.filter.outputs.web-patient }}
+      packages: ${{ steps.filter.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            auth-service:
+              - 'services/auth-service/**'
+            order-service:
+              - 'services/order-service/**'
+            pharmacy-service:
+              - 'services/pharmacy-service/**'
+            web-patient:
+              - 'apps/web-patient/**'
+            packages:
+              - 'packages/**'
+
+  # ─── LINT & TYPE CHECK ───────────────────────────────────────────────────
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint all packages
+        run: pnpm turbo run lint
+      - name: Type check all packages
+        run: pnpm turbo run type-check
+
+  # ─── UNIT TESTS ───────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: mediflow_test
+          POSTGRES_USER: mediflow
+          POSTGRES_PASSWORD: test_password
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 10s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: '${{ env.PNPM_VERSION }}' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Run tests with coverage
+        run: pnpm turbo run test:coverage
+        env:
+          DATABASE_URL: postgresql://mediflow:test_password@localhost:5432/mediflow_test
+          REDIS_URL: redis://localhost:6379
+          JWT_PUBLIC_KEY: ${{ secrets.JWT_PUBLIC_KEY_TEST }}
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ─── SECURITY SCANNING ───────────────────────────────────────────────────
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secret detection
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: SAST — Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/typescript
+            p/nodejs
+            p/owasp-top-ten
+            p/jwt
+      - name: Dependency audit
+        run: |
+          npm install -g pnpm@${{ env.PNPM_VERSION }}
+          pnpm audit --audit-level=high
+
+  # ─── BUILD DOCKER IMAGES ─────────────────────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    needs: [quality, test]
+    strategy:
+      matrix:
+        service:
+          - { name: auth-service, context: ., dockerfile: services/auth-service/Dockerfile }
+          - { name: order-service, context: ., dockerfile: services/order-service/Dockerfile }
+          - { name: pharmacy-service, context: ., dockerfile: services/pharmacy-service/Dockerfile }
+          - { name: web-patient, context: ., dockerfile: apps/web-patient/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (verify)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: false
+          tags: mediflow-${{ matrix.service.name }}:pr-${{ github.event.number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

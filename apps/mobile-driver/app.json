@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "MediFlow Driver",
+    "slug": "mediflow-driver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#10b981"
+    },
+    "ios": {
+      "bundleIdentifier": "io.mediflow.driver"
+    },
+    "android": {
+      "package": "io.mediflow.driver",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION"]
+    },
+    "plugins": ["expo-router", "expo-location"],
+    "scheme": "mediflow-driver"
+  }
+}

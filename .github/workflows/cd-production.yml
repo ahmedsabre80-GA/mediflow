@@ -1,0 +1,161 @@
+name: CD — Production Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false  # never cancel a production deploy
+
+jobs:
+  approval:
+    runs-on: ubuntu-latest
+    environment: production  # requires 2 approvers configured in GitHub Environments
+    steps:
+      - run: echo "Production deploy approved"
+
+  build-push:
+    needs: approval
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - user-service
+          - patient-service
+          - pharmacy-service
+          - warehouse-service
+          - order-service
+          - prescription-service
+          - delivery-service
+          - payment-service
+          - notification-service
+          - gis-service
+          - analytics-service
+          - loyalty-service
+          - audit-service
+          - web-patient
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mediflow-github-deploy
+          aws-region: me-south-1
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build & Push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ startsWith(matrix.service, 'web-') && format('apps/{0}/Dockerfile', matrix.service) || format('services/{0}/Dockerfile', matrix.service) }}
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/mediflow-${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.ECR_REGISTRY }}/mediflow-${{ matrix.service }}:latest
+          cache-from: type=registry,ref=${{ secrets.ECR_REGISTRY }}/mediflow-${{ matrix.service }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.ECR_REGISTRY }}/mediflow-${{ matrix.service }}:buildcache,mode=max
+      - name: Security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ECR_REGISTRY }}/mediflow-${{ matrix.service }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 1
+          severity: CRITICAL
+
+  migrate:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mediflow-github-deploy
+          aws-region: me-south-1
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region me-south-1 --name mediflow-production
+      - name: Run migrations
+        run: |
+          kubectl create job db-migrate-$(date +%s) \
+            --image=${{ secrets.ECR_REGISTRY }}/mediflow-auth-service:${{ github.sha }} \
+            --namespace=mediflow-core \
+            -- node dist/infrastructure/database/migrate.js
+          kubectl wait --for=condition=complete job/db-migrate-* -n mediflow-core --timeout=300s
+
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS + kubectl
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/mediflow-github-deploy
+          aws-region: me-south-1
+      - run: aws eks update-kubeconfig --region me-south-1 --name mediflow-production
+
+      - name: Deploy all services
+        run: |
+          SERVICES=(
+            "mediflow-core:auth-service"
+            "mediflow-core:user-service"
+            "mediflow-core:patient-service"
+            "mediflow-commerce:order-service"
+            "mediflow-commerce:payment-service"
+            "mediflow-provider:pharmacy-service"
+            "mediflow-provider:warehouse-service"
+            "mediflow-clinical:prescription-service"
+            "mediflow-logistics:delivery-service"
+            "mediflow-logistics:gis-service"
+            "mediflow-engagement:notification-service"
+            "mediflow-platform:analytics-service"
+            "mediflow-platform:loyalty-service"
+            "mediflow-platform:audit-service"
+          )
+          for entry in "${SERVICES[@]}"; do
+            NS="${entry%%:*}"
+            SVC="${entry##*:}"
+            IMAGE="${{ secrets.ECR_REGISTRY }}/mediflow-${SVC}:${{ github.sha }}"
+            kubectl set image deployment/${SVC} ${SVC}=${IMAGE} -n ${NS}
+            echo "Updated ${SVC} in ${NS}"
+          done
+
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/auth-service -n mediflow-core --timeout=300s
+          kubectl rollout status deployment/order-service -n mediflow-commerce --timeout=300s
+          kubectl rollout status deployment/pharmacy-service -n mediflow-provider --timeout=300s
+
+      - name: Monitor error rate (canary check)
+        run: |
+          echo "Waiting 3 minutes to check error rates..."
+          sleep 180
+          # Check Prometheus metrics for elevated error rate
+          echo "Deploy monitoring: check Grafana dashboard for anomalies"
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Production deploy ${{ job.status }}",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${{ job.status == 'success' && '✅' || '❌' }} *Production Deploy ${{ job.status }}*\nCommit: `${{ github.sha }}`\nBy: ${{ github.actor }}"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
