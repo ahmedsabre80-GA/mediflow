@@ -102,15 +102,32 @@ app.get('/api/v1/pharmacies/:id', async (req, res) => {
 });
 
 // ─── REGISTER PHARMACY ───────────────────────────────────────────────────────
-app.post('/api/v1/pharmacies/register', authenticate, async (req, res) => {
+app.post('/api/v1/pharmacies/register', async (req, res) => {
   try {
     const {
       name, nameAr, licenseNumber, licenseExpiry, phone, email,
-      address, city, country = 'IQ', latitude, longitude
+      address, city, country = 'IQ', latitude, longitude, userId
     } = req.body;
 
+    // Resolve owner_id: from JWT or from userId in body (pending-approval flow)
+    let ownerId = userId || null;
+    const auth = req.headers.authorization;
+    if (auth && auth.startsWith('Bearer ')) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_SECRET || 'mediflow-secret-key-change-in-production';
+        const decoded = jwt.verify(auth.slice(7), secret);
+        ownerId = decoded.sub;
+      } catch {
+        // JWT invalid — fall back to userId in body
+      }
+    }
+    if (!ownerId) {
+      return res.status(401).json({ success: false, error: { title: 'Unauthorized', status: 401 } });
+    }
+
     const pharmacyName = name || nameAr;
-    const expiry = licenseExpiry || '2027-12-31'; // default expiry if not provided
+    const expiry = licenseExpiry || '2027-12-31';
 
     if (!pharmacyName || !licenseNumber || !phone || !address) {
       return res.status(422).json({ success: false, error: { title: 'الاسم ورقم الرخصة والهاتف والعنوان مطلوبة', status: 422 } });
@@ -121,7 +138,7 @@ app.post('/api/v1/pharmacies/register', authenticate, async (req, res) => {
         (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country, latitude, longitude, status)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
       RETURNING id, name, name_ar, status
-    `, [req.user.sub, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
+    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
