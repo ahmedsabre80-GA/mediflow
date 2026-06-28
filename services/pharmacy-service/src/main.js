@@ -139,6 +139,21 @@ app.patch('/api/v1/pharmacies/admin/:id/status', async (req, res) => {
   }
 });
 
+// ─── ADMIN: set pharmacy coordinates ─────────────────────────────────────────
+app.patch('/api/v1/pharmacies/admin/:id/location', async (req, res) => {
+  try {
+    const { lat, lng } = req.body;
+    const result = await pool.query(
+      'UPDATE pharmacies.pharmacies SET latitude=$1, longitude=$2, updated_at=NOW() WHERE id=$3 RETURNING id, latitude, longitude',
+      [lat, lng, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, error: { title: 'Not found' } });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
+  }
+});
+
 // ─── TEMP: cleanup user+pharmacy by email ────────────────────────────────────
 app.delete('/api/v1/pharmacies/admin/cleanup', async (req, res) => {
   const { email, secret } = req.body;
