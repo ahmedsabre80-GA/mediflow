@@ -115,12 +115,14 @@ app.post('/api/v1/auth/register', async (req, res) => {
       );
     }
 
-    // If requires approval — return pending message without tokens
+    // If requires approval — return a registration token so frontend can call pharmacy/doctor register
     if (initialStatus === 'pending_verification') {
+      const registrationToken = generateToken(user.id, user.role);
       return res.status(201).json({
         success: true,
         data: {
           userId: user.id,
+          accessToken: registrationToken,
           status: 'pending_verification',
           message: 'تم تسجيل طلبك بنجاح. سيتم مراجعته من قبل الإدارة وستصلك إشعار عند الموافقة.',
           requiresApproval: true,
