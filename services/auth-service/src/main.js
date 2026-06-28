@@ -261,8 +261,11 @@ app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
   const { email, secret } = req.body;
   if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
   try {
-    const r = await pool.query('DELETE FROM auth.users WHERE LOWER(email)=LOWER($1) RETURNING id,email', [email]);
-    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    const u = await pool.query('SELECT id FROM auth.users WHERE LOWER(email)=LOWER($1)', [email]);
+    if (!u.rows.length) return res.status(404).json({ error: 'not found' });
+    const uid = u.rows[0].id;
+    await pool.query('DELETE FROM pharmacies.pharmacies WHERE owner_id=$1', [uid]).catch(()=>{});
+    const r = await pool.query('DELETE FROM auth.users WHERE id=$1 RETURNING id,email', [uid]);
     res.json({ success: true, deleted: r.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
