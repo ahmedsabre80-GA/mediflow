@@ -180,7 +180,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
     }
 
     if (user.status === 'pending_verification') {
-      return res.status(403).json({ success: false, error: { title: 'حسابك قيد المراجعة. سيتم إشعارك عند الموافقة من قبل الإدارة.', status: 403, code: 'PENDING_APPROVAL' } });
+      return res.status(403).json({ success: false, error: { title: 'حسابك قيد المراجعة.', status: 403, code: 'PENDING_APPROVAL' }, data: { userId: user.id, requiresApproval: true } });
     }
 
     if (user.status === 'rejected') {
