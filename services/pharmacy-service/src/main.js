@@ -101,6 +101,20 @@ app.get('/api/v1/pharmacies/:id', async (req, res) => {
   }
 });
 
+// ─── TEMP: cleanup user+pharmacy by email ────────────────────────────────────
+app.delete('/api/v1/pharmacies/admin/cleanup', async (req, res) => {
+  const { email, secret } = req.body;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const u = await pool.query('SELECT id FROM auth.users WHERE LOWER(email)=LOWER($1)', [email]);
+    if (!u.rows.length) return res.status(404).json({ error: 'user not found' });
+    const uid = u.rows[0].id;
+    const p = await pool.query('DELETE FROM pharmacies.pharmacies WHERE owner_id=$1 RETURNING id', [uid]);
+    const r = await pool.query('DELETE FROM auth.users WHERE id=$1 RETURNING email', [uid]);
+    res.json({ success: true, deletedUser: r.rows[0], deletedPharmacies: p.rowCount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── REGISTER FULL: creates account + pharmacy atomically in one request ──────
 app.post('/api/v1/pharmacies/register-full', async (req, res) => {
   const https = require('https');
