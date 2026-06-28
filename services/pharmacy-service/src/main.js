@@ -101,6 +101,44 @@ app.get('/api/v1/pharmacies/:id', async (req, res) => {
   }
 });
 
+// ─── ADMIN: get ALL pharmacies (any status) ──────────────────────────────────
+app.get('/api/v1/pharmacies/admin/all', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT p.id, p.name, p.name_ar, p.license_number, p.phone,
+             p.address, p.city, p.status, p.rating, p.created_at,
+             u.email AS owner_email,
+             pr.first_name, pr.last_name
+      FROM pharmacies.pharmacies p
+      LEFT JOIN auth.users u ON u.id = p.owner_id
+      LEFT JOIN users.profiles pr ON pr.id = p.owner_id
+      WHERE p.status != 'deleted'
+      ORDER BY p.created_at DESC
+    `);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
+  }
+});
+
+// ─── ADMIN: update pharmacy status ───────────────────────────────────────────
+app.patch('/api/v1/pharmacies/admin/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['active','suspended','rejected','pending_verification'].includes(status)) {
+      return res.status(422).json({ success: false, error: { title: 'Invalid status' } });
+    }
+    const result = await pool.query(
+      'UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING id, name_ar, status',
+      [status, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, error: { title: 'Not found' } });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
+  }
+});
+
 // ─── TEMP: cleanup user+pharmacy by email ────────────────────────────────────
 app.delete('/api/v1/pharmacies/admin/cleanup', async (req, res) => {
   const { email, secret } = req.body;

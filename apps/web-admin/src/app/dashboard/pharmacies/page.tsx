@@ -23,15 +23,9 @@ export default function PharmaciesPage() {
   const [toast, setToast] = useState('');
 
   useEffect(() => {
-    fetch(`${PHARMACY_API}/pharmacies/nearby?lat=33.31&lng=44.36&radiusKm=9999&limit=100`)
+    fetch(`${PHARMACY_API}/pharmacies/admin/all`)
       .then(r => r.json())
-      .then(d => {
-        const apiData = d.data || [];
-        // Load saved status overrides from localStorage
-        const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-        const merged = apiData.map((p: any) => saved[p.id] ? { ...p, status: saved[p.id] } : p);
-        setPharmacies(merged);
-      })
+      .then(d => setPharmacies(d.data || []))
       .catch(() => setPharmacies([]))
       .finally(() => setLoading(false));
   }, []);
@@ -65,19 +59,20 @@ export default function PharmaciesPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
-  const updateStatus = (id: string, status: string) => {
-    // Save to localStorage for persistence
-    const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    saved[id] = status;
-    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
-
-    setPharmacies(prev => prev.map(p => p.id === id ? { ...p, status } : p));
-    const msgs: Record<string, string> = { active: '✅ تم تفعيل الصيدلية', suspended: '🚫 تم إيقاف الصيدلية', rejected: '❌ تم رفض الصيدلية' };
-    showToast(msgs[status] || 'تم التحديث');
-    const actionLabels: Record<string, string> = { active: 'موافقة على صيدلية', suspended: 'إيقاف صيدلية', rejected: 'رفض صيدلية' };
-    const pharmacy = pharmacies.find(p => p.id === id);
-    logAction(status, actionLabels[status] || status, 'صيدلية', pharmacy?.name_ar || pharmacy?.name || id, id, '/dashboard/pharmacies');
-    setSelected(null);
+  const updateStatus = async (id: string, status: string) => {
+    try {
+      await fetch(`${PHARMACY_API}/pharmacies/admin/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      setPharmacies(prev => prev.map(p => p.id === id ? { ...p, status } : p));
+      const msgs: Record<string, string> = { active: '✅ تم تفعيل الصيدلية', suspended: '🚫 تم إيقاف الصيدلية', rejected: '❌ تم رفض الصيدلية' };
+      showToast(msgs[status] || 'تم التحديث');
+      const pharmacy = pharmacies.find(p => p.id === id);
+      logAction(status, { active: 'موافقة على صيدلية', suspended: 'إيقاف صيدلية', rejected: 'رفض صيدلية' }[status] || status, 'صيدلية', pharmacy?.name_ar || pharmacy?.name || id, id, '/dashboard/pharmacies');
+      setSelected(null);
+    } catch { showToast('⚠️ فشل تحديث الحالة'); }
   };
 
   const deletePharmacy = (id: string) => {
