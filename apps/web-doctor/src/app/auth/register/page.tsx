@@ -40,6 +40,10 @@ export default function DoctorRegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
+      if (data.data?.requiresApproval) {
+        router.push('/auth/pending');
+        return;
+      }
       localStorage.setItem('doctor-token', data.data.accessToken);
       localStorage.setItem('doctor-id', data.data.userId);
       router.push('/dashboard');

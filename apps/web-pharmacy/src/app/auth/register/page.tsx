@@ -32,6 +32,13 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
+      // If requires approval — go directly to step 2 with userId
+      if (data.data?.requiresApproval) {
+        setToken(data.data.userId); // use userId as temp token
+        localStorage.setItem('pharmacy-pending-id', data.data.userId);
+        setStep(2);
+        return;
+      }
       setToken(data.data.accessToken);
       localStorage.setItem('pharmacy-token', data.data.accessToken);
       setStep(2);
@@ -54,8 +61,8 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل تسجيل الصيدلية');
-      localStorage.setItem('pharmacy-id', data.data.id);
-      router.push('/dashboard');
+      // Show pending approval page
+      router.push('/auth/pending');
     } catch (err: any) {
       setError(err.message);
     } finally {

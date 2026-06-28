@@ -92,12 +92,17 @@ app.post('/api/v1/auth/register', async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
+    // Roles that require admin approval before they can log in
+    const requiresApproval = ['doctor', 'pharmacy_owner', 'warehouse_owner', 'driver'];
+    const initialStatus = requiresApproval.includes(role) ? 'pending_verification' : 'active';
+    const requiresPasswordChange = requiresApproval.includes(role) ? true : false;
+
     // Create user
     const userResult = await pool.query(
       `INSERT INTO auth.users (email, phone, password_hash, role, status, email_verified, phone_verified)
-       VALUES ($1, $2, $3, $4, 'active', $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, email, phone, role, status`,
-      [email ? email.toLowerCase() : null, phone || null, passwordHash, role, !!email, !!phone]
+      [email ? email.toLowerCase() : null, phone || null, passwordHash, role, initialStatus, !!email, !!phone]
     );
     const user = userResult.rows[0];
 
@@ -110,7 +115,20 @@ app.post('/api/v1/auth/register', async (req, res) => {
       );
     }
 
-    // Generate tokens
+    // If requires approval — return pending message without tokens
+    if (initialStatus === 'pending_verification') {
+      return res.status(201).json({
+        success: true,
+        data: {
+          userId: user.id,
+          status: 'pending_verification',
+          message: 'تم تسجيل طلبك بنجاح. سيتم مراجعته من قبل الإدارة وستصلك إشعار عند الموافقة.',
+          requiresApproval: true,
+        },
+      });
+    }
+
+    // Generate tokens (patients only at this point)
     const accessToken = generateToken(user.id, user.role);
     const refreshToken = generateRefreshToken(user.id);
 
@@ -158,7 +176,15 @@ app.post('/api/v1/auth/login', async (req, res) => {
     }
 
     if (user.status === 'suspended') {
-      return res.status(403).json({ success: false, error: { title: 'Account suspended', status: 403 } });
+      return res.status(403).json({ success: false, error: { title: 'تم إيقاف حسابك. تواصل مع الإدارة.', status: 403 } });
+    }
+
+    if (user.status === 'pending_verification') {
+      return res.status(403).json({ success: false, error: { title: 'حسابك قيد المراجعة. سيتم إشعارك عند الموافقة من قبل الإدارة.', status: 403, code: 'PENDING_APPROVAL' } });
+    }
+
+    if (user.status === 'rejected') {
+      return res.status(403).json({ success: false, error: { title: 'تم رفض طلبك. تواصل مع الإدارة لمزيد من التفاصيل.', status: 403 } });
     }
 
     // Update last login
