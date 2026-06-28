@@ -94,6 +94,7 @@ app.post('/api/v1/auth/register', async (req, res) => {
 
     // Roles that require admin approval before they can log in
     const requiresApproval = ['doctor', 'pharmacy_owner', 'warehouse_owner', 'driver'];
+    // Employees added directly by owners are immediately active
     const initialStatus = requiresApproval.includes(role) ? 'pending_verification' : 'active';
     const requiresPasswordChange = requiresApproval.includes(role) ? true : false;
 
