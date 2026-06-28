@@ -101,6 +101,99 @@ app.get('/api/v1/pharmacies/:id', async (req, res) => {
   }
 });
 
+// ─── REGISTER FULL: creates account + pharmacy atomically in one request ──────
+app.post('/api/v1/pharmacies/register-full', async (req, res) => {
+  const https = require('https');
+  const AUTH = 'mediflowauth-service-production.up.railway.app';
+
+  const callAuth = (path, method, body) => new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const options = {
+      hostname: AUTH, port: 443, path, method,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    };
+    const r = https.request(options, resp => {
+      let d = '';
+      resp.on('data', c => d += c);
+      resp.on('end', () => { try { resolve({ status: resp.statusCode, body: JSON.parse(d) }); } catch { resolve({ status: resp.statusCode, body: {} }); } });
+    });
+    r.on('error', reject);
+    r.write(payload);
+    r.end();
+  });
+
+  try {
+    const {
+      firstName, lastName, email, phone, password,
+      name, nameAr, licenseNumber, licenseExpiry,
+      pharmacyPhone, address, city, country = 'IQ',
+    } = req.body;
+
+    if (!email || !password || !firstName) {
+      return res.status(422).json({ success: false, error: { title: 'بيانات الحساب ناقصة', status: 422 } });
+    }
+    if (!nameAr || !licenseNumber || !pharmacyPhone || !address) {
+      return res.status(422).json({ success: false, error: { title: 'بيانات الصيدلية ناقصة', status: 422 } });
+    }
+
+    // Step A: create account via auth service
+    const regResp = await callAuth('/api/v1/auth/register', 'POST', {
+      firstName, lastName: lastName || firstName, email, phone, password, role: 'pharmacy_owner',
+    });
+
+    let ownerId = null;
+
+    if (regResp.status === 201) {
+      // new account created — userId is in response
+      ownerId = regResp.body?.data?.userId;
+    } else if (regResp.status === 409) {
+      // email exists — login to get userId
+      const loginResp = await callAuth('/api/v1/auth/login', 'POST', { identifier: email, password });
+      if (loginResp.body?.data?.userId) {
+        ownerId = loginResp.body.data.userId;
+      } else if (loginResp.body?.data?.accessToken) {
+        const jwt = require('jsonwebtoken');
+        ownerId = jwt.decode(loginResp.body.data.accessToken)?.sub;
+      } else {
+        return res.status(401).json({ success: false, error: { title: 'البريد مسجل مسبقاً — تأكد من كلمة المرور الصحيحة', status: 401 } });
+      }
+    } else {
+      return res.status(regResp.status).json({ success: false, error: { title: regResp.body?.error?.title || 'فشل إنشاء الحساب', status: regResp.status } });
+    }
+
+    if (!ownerId) {
+      return res.status(500).json({ success: false, error: { title: 'تعذر تحديد هوية المستخدم', status: 500 } });
+    }
+
+    // Step B: create pharmacy record
+    const pharmacyName = nameAr || name;
+    const expiry = licenseExpiry || '2027-12-31';
+
+    try {
+      const result = await pool.query(`
+        INSERT INTO pharmacies.pharmacies
+          (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
+        RETURNING id, name, name_ar, status
+      `, [ownerId, pharmacyName, pharmacyName, licenseNumber, expiry, pharmacyPhone, address, city || '', country]);
+
+      res.status(201).json({ success: true, data: result.rows[0] });
+    } catch (dbErr) {
+      if (dbErr.code === '23505') {
+        return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً لصيدلية أخرى', status: 409 } });
+      }
+      // If pharmacy insert fails, delete the newly created account to avoid orphan
+      if (regResp.status === 201) {
+        await callAuth('/api/v1/auth/admin/delete-user', 'DELETE', { email, secret: 'mediflow-delete-2026' }).catch(() => {});
+      }
+      throw dbErr;
+    }
+  } catch (err) {
+    console.error('register-full error:', err.message);
+    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
+  }
+});
+
 // ─── REGISTER PHARMACY ───────────────────────────────────────────────────────
 // ─── REGISTER WITH EMAIL+PASSWORD (no JWT needed, for pending-approval users) ─
 app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
