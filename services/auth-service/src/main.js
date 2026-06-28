@@ -256,6 +256,17 @@ app.get('/api/v1/auth/verify', (req, res) => {
 });
 
 
+// ─── TEMP: delete user by email ──────────────────────────────────────────────
+app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
+  const { email, secret } = req.body;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const r = await pool.query('DELETE FROM auth.users WHERE LOWER(email)=LOWER($1) RETURNING id,email', [email]);
+    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ success: true, deleted: r.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── START ───────────────────────────────────────────────────────────────────
 pool.connect()
   .then(() => {
