@@ -259,6 +259,18 @@ app.get('/api/v1/auth/verify', (req, res) => {
 });
 
 
+// ─── TEMP: reset password ────────────────────────────────────────────────────
+app.post('/api/v1/auth/admin/reset-password', async (req, res) => {
+  const { email, newPassword, secret } = req.body;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const hash = await bcrypt.hash(newPassword, 12);
+    const r = await pool.query("UPDATE auth.users SET password_hash=$1, status='active' WHERE LOWER(email)=LOWER($2) RETURNING id,email,status", [hash, email]);
+    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ success: true, user: r.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── TEMP: activate user by email ────────────────────────────────────────────
 app.post('/api/v1/auth/admin/activate-user', async (req, res) => {
   const { email, secret } = req.body;
