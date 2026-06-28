@@ -102,6 +102,58 @@ app.get('/api/v1/pharmacies/:id', async (req, res) => {
 });
 
 // ─── REGISTER PHARMACY ───────────────────────────────────────────────────────
+// ─── REGISTER WITH EMAIL+PASSWORD (no JWT needed, for pending-approval users) ─
+app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
+  try {
+    const {
+      email: userEmail, password,
+      name, nameAr, licenseNumber, licenseExpiry, phone, email,
+      address, city, country = 'IQ', latitude, longitude
+    } = req.body;
+
+    if (!userEmail || !password) {
+      return res.status(422).json({ success: false, error: { title: 'البريد وكلمة المرور مطلوبة', status: 422 } });
+    }
+
+    // Look up the user by email and verify password
+    const bcrypt = require('bcryptjs');
+    const userResult = await pool.query(
+      'SELECT id, password_hash, status FROM auth.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
+      [userEmail]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ success: false, error: { title: 'البريد الإلكتروني أو كلمة المرور غير صحيحة', status: 401 } });
+    }
+    const user = userResult.rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ success: false, error: { title: 'البريد الإلكتروني أو كلمة المرور غير صحيحة', status: 401 } });
+    }
+
+    const pharmacyName = name || nameAr;
+    const expiry = licenseExpiry || '2027-12-31';
+    if (!pharmacyName || !licenseNumber || !phone || !address) {
+      return res.status(422).json({ success: false, error: { title: 'الاسم ورقم الرخصة والهاتف والعنوان مطلوبة', status: 422 } });
+    }
+
+    const result = await pool.query(`
+      INSERT INTO pharmacies.pharmacies
+        (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country, latitude, longitude, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
+      ON CONFLICT (license_number) DO NOTHING
+      RETURNING id, name, name_ar, status
+    `, [user.id, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
+
+    if (result.rows.length === 0) {
+      return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
+    }
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('register-direct error:', err.message);
+    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
+  }
+});
+
 app.post('/api/v1/pharmacies/register', async (req, res) => {
   try {
     const {
