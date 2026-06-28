@@ -272,11 +272,11 @@ app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
 
     const result = await pool.query(`
       INSERT INTO pharmacies.pharmacies
-        (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country, latitude, longitude, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
+        (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
       ON CONFLICT (license_number) DO NOTHING
       RETURNING id, name, name_ar, status
-    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
+    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, address, city || '', country]);
 
     if (result.rows.length === 0) {
       return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
@@ -321,10 +321,10 @@ app.post('/api/v1/pharmacies/register', async (req, res) => {
 
     const result = await pool.query(`
       INSERT INTO pharmacies.pharmacies
-        (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country, latitude, longitude, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
+        (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
       RETURNING id, name, name_ar, status
-    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
+    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, address, city || '', country]);
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
