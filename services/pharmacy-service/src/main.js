@@ -115,18 +115,45 @@ app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
       return res.status(422).json({ success: false, error: { title: 'البريد وكلمة المرور مطلوبة', status: 422 } });
     }
 
-    // Look up the user by email and verify password
-    const bcrypt = require('bcryptjs');
-    const userResult = await pool.query(
-      'SELECT id, password_hash, status FROM auth.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [userEmail]
-    );
-    if (userResult.rows.length === 0) {
-      return res.status(401).json({ success: false, error: { title: 'البريد الإلكتروني أو كلمة المرور غير صحيحة', status: 401 } });
+    // Verify credentials via auth service — no bcrypt dependency needed
+    const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app/api/v1';
+    const https = require('https');
+    const loginBody = JSON.stringify({ identifier: userEmail, password });
+
+    const loginData = await new Promise((resolve, reject) => {
+      const url = new URL(`${AUTH_SERVICE}/auth/login`);
+      const options = {
+        hostname: url.hostname, port: 443, path: url.pathname,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(loginBody) },
+      };
+      const r = https.request(options, resp => {
+        let body = '';
+        resp.on('data', chunk => body += chunk);
+        resp.on('end', () => {
+          try { resolve({ status: resp.statusCode, data: JSON.parse(body) }); }
+          catch { resolve({ status: resp.statusCode, data: {} }); }
+        });
+      });
+      r.on('error', reject);
+      r.write(loginBody);
+      r.end();
+    });
+
+    // Get userId — from success (accessToken) or from pending (403 + data.userId)
+    let ownerId = null;
+    if (loginData.status === 200 && loginData.data?.data?.accessToken) {
+      const jwt = require('jsonwebtoken');
+      try {
+        const decoded = jwt.decode(loginData.data.data.accessToken);
+        ownerId = decoded?.sub;
+      } catch {}
+    } else if (loginData.data?.data?.userId) {
+      // pending_verification → auth service returns userId in data
+      ownerId = loginData.data.data.userId;
     }
-    const user = userResult.rows[0];
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
+
+    if (!ownerId) {
       return res.status(401).json({ success: false, error: { title: 'البريد الإلكتروني أو كلمة المرور غير صحيحة', status: 401 } });
     }
 
@@ -142,7 +169,7 @@ app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_verification')
       ON CONFLICT (license_number) DO NOTHING
       RETURNING id, name, name_ar, status
-    `, [user.id, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
+    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, email || null, address, city || '', country, latitude || null, longitude || null]);
 
     if (result.rows.length === 0) {
       return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
