@@ -258,6 +258,17 @@ app.get('/api/v1/auth/verify', (req, res) => {
 });
 
 
+// ─── TEMP: activate user by email ────────────────────────────────────────────
+app.post('/api/v1/auth/admin/activate-user', async (req, res) => {
+  const { email, secret } = req.body;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const r = await pool.query("UPDATE auth.users SET status='active' WHERE LOWER(email)=LOWER($1) RETURNING id,email,status", [email]);
+    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ success: true, user: r.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── TEMP: delete user by email ──────────────────────────────────────────────
 app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
   const { email, secret } = req.body;
