@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Shield } from 'lucide-react';
+import { startSession } from '@/lib/auditSystem';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 
@@ -29,6 +30,12 @@ export default function AdminLoginPage() {
         throw new Error('ليس لديك صلاحية الوصول إلى لوحة الإدارة');
       }
       localStorage.setItem('admin-token', data.data.accessToken);
+      // Store admin identity so audit log can reference them
+      localStorage.setItem('admin-email', data.data.email || identifier);
+      localStorage.setItem('admin-name', data.data.name || data.data.firstName || 'المشرف');
+      localStorage.setItem('admin-role', role);
+      // Record login in audit trail (respects logAdminActions toggle)
+      startSession();
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message);

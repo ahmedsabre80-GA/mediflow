@@ -31,35 +31,47 @@ export default function LoginPage() {
 
       const token = data.data.accessToken;
 
-      // Step 2: verify pharmacy status
+      // Step 2: MUST verify pharmacy exists and is active — no exceptions
       const phRes = await fetch(`${PHARMACY_API}/my`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (phRes.ok) {
-        const phData = await phRes.json();
-        const status = phData.data?.status;
-        if (status === 'suspended') {
-          throw new Error('حسابك موقوف مؤقتاً. تواصل مع إدارة المنصة.');
-        }
-        if (status === 'rejected') {
-          throw new Error('طلب تسجيل صيدليتك مرفوض. تواصل مع إدارة المنصة.');
-        }
-        if (status === 'pending_verification') {
-          throw new Error('صيدليتك لا تزال قيد المراجعة. ستُعلَم عند الموافقة.');
-        }
-        if (status === 'deleted') {
-          throw new Error('هذا الحساب غير متاح.');
-        }
-        // store pharmacy id
-        if (phData.data?.id) {
-          localStorage.setItem('pharmacy-id', phData.data.id);
-          localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
-        }
-      }
-      // even if /my fails (e.g. network error) we still proceed — backend JWT is the real gate
 
+      if (!phRes.ok) {
+        // 404 = pharmacy not registered / was deleted from system
+        // 403 = access denied
+        if (phRes.status === 404) {
+          throw new Error('لا توجد صيدلية مسجّلة بهذا الحساب في المنصة.');
+        }
+        throw new Error('تعذّر التحقق من حالة الصيدلية. حاول مرة أخرى.');
+      }
+
+      const phData = await phRes.json();
+      const status = phData.data?.status;
+
+      if (status === 'suspended') {
+        throw new Error('حسابك موقوف مؤقتاً. تواصل مع إدارة المنصة.');
+      }
+      if (status === 'rejected') {
+        throw new Error('طلب تسجيل صيدليتك مرفوض. تواصل مع إدارة المنصة.');
+      }
+      if (status === 'deleted') {
+        throw new Error('هذا الحساب محذوف من المنصة.');
+      }
+      if (status === 'pending_verification') {
+        throw new Error('صيدليتك لا تزال قيد المراجعة. ستُعلَم عند الموافقة.');
+      }
+      if (status !== 'active') {
+        throw new Error('حسابك غير مفعّل. تواصل مع إدارة المنصة.');
+      }
+
+      // Store pharmacy info
       localStorage.setItem('pharmacy-token', token);
       localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
+      if (phData.data?.id) localStorage.setItem('pharmacy-id', phData.data.id);
+      if (phData.data?.name_ar || phData.data?.name) {
+        localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name);
+      }
+
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message);
