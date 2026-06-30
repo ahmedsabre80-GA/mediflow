@@ -218,3 +218,12 @@ export function markAllNotificationsRead() {
 export function getUnreadCount(): number {
   return getPlatformNotifications().filter(n => !n.read).length;
 }
+
+export function deleteNotification(id: string) {
+  const notifs = getPlatformNotifications().filter(n => n.id !== id);
+  localStorage.setItem('mediflow-platform-notifs', JSON.stringify(notifs));
+}
+
+export function deleteAllNotifications() {
+  localStorage.setItem('mediflow-platform-notifs', JSON.stringify([]));
+}

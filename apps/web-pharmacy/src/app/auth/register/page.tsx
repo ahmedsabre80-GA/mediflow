@@ -1,8 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Upload, FileCheck } from 'lucide-react';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 
@@ -14,6 +14,10 @@ export default function RegisterPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [requireCertificate, setRequireCertificate] = useState(false);
+  const [certificateData, setCertificateData] = useState<string>('');
+  const [certificateName, setCertificateName] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [account, setAccount] = useState({
     firstName: '', lastName: '', email: '', phone: '', password: '',
@@ -22,38 +26,52 @@ export default function RegisterPage() {
     nameAr: '', licenseNumber: '', licenseExpiry: '', phone: '', address: '', city: '',
   });
 
-  // Step 1: validate locally only — NO API call
+  useEffect(() => {
+    fetch(`${PHARMACY_API}/pharmacies/settings`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setRequireCertificate(!!d.data.require_certificate); })
+      .catch(() => {});
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setError('حجم الملف يجب أن يكون أقل من 5 ميغابايت'); return; }
+    setCertificateName(file.name);
+    const reader = new FileReader();
+    reader.onload = ev => setCertificateData(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
   const handleStep1 = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!account.firstName || !account.email || !account.password) {
-      setError('يرجى تعبئة جميع الحقول المطلوبة');
-      return;
+      setError('يرجى تعبئة جميع الحقول المطلوبة'); return;
     }
     if (account.password.length < 8) {
-      setError('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
-      return;
+      setError('كلمة المرور يجب أن تكون 8 أحرف على الأقل'); return;
     }
     setStep(2);
   };
 
-  // Step 2: send EVERYTHING in one request — account is created only when pharmacy data is ready
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
+    if (requireCertificate && !certificateData) {
+      setError('يجب رفع شهادة التسجيل الرسمية للمتابعة'); return;
+    }
+    setLoading(true);
     try {
       const res = await fetch(`${PHARMACY_API}/pharmacies/register-full`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // account
           firstName: account.firstName,
           lastName: account.lastName || account.firstName,
           email: account.email,
           phone: account.phone,
           password: account.password,
-          // pharmacy
           name: pharmacy.nameAr,
           nameAr: pharmacy.nameAr,
           licenseNumber: pharmacy.licenseNumber,
@@ -62,6 +80,7 @@ export default function RegisterPage() {
           address: pharmacy.address,
           city: pharmacy.city,
           country: 'IQ',
+          certificateData: certificateData || undefined,
         }),
       });
       const data = await res.json();
@@ -177,6 +196,32 @@ export default function RegisterPage() {
                   value={pharmacy.city} onChange={e => setPharmacy(p => ({...p, city: e.target.value}))}
                   placeholder="ديالى" className={rtl} required />
               </div>
+
+              {/* Certificate Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  شهادة التسجيل {requireCertificate ? '*' : '(اختياري)'}
+                </label>
+                <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={handleFileChange} />
+                <button type="button" onClick={() => fileRef.current?.click()}
+                  className={`w-full flex items-center justify-center gap-2 px-3 py-3 border-2 border-dashed rounded-xl text-sm transition-colors ${
+                    certificateData
+                      ? 'border-green-400 bg-green-50 text-green-700'
+                      : requireCertificate
+                        ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
+                        : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  }`}>
+                  {certificateData ? (
+                    <><FileCheck className="w-4 h-4" />{certificateName}</>
+                  ) : (
+                    <><Upload className="w-4 h-4" />رفع الشهادة (PDF أو صورة، حد أقصى 5 ميغابايت)</>
+                  )}
+                </button>
+                {requireCertificate && !certificateData && (
+                  <p className="text-xs text-red-500 mt-1">مطلوب من قبل إدارة المنصة</p>
+                )}
+              </div>
+
               <div className="flex gap-3">
                 <button type="button" onClick={() => { setStep(1); setError(''); }}
                   className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">

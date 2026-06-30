@@ -26,6 +26,115 @@ async function bootstrap() {
 
   const router = Router();
 
+  // ─── PLATFORM SETTINGS (public read, admin write) ──────────────────
+  router.get('/settings', async (_req, res, next) => {
+    try {
+      const result = await pool.query('SELECT key, value FROM public.platform_settings');
+      const settings: Record<string, any> = {};
+      result.rows.forEach(r => { settings[r.key] = r.value === 'true'; });
+      res.json({ success: true, data: settings });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/settings', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
+    try {
+      const allowed = ['require_certificate', 'log_admin_actions'];
+      for (const [key, value] of Object.entries(req.body)) {
+        if (!allowed.includes(key)) continue;
+        await pool.query(
+          'INSERT INTO public.platform_settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()',
+          [key, String(value)]
+        );
+      }
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // ─── REGISTER FULL (atomic: user + pharmacy in one request) ────────
+  router.post('/register-full', async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      const b = req.body;
+      // Check require_certificate setting
+      const settingRow = await client.query("SELECT value FROM public.platform_settings WHERE key='require_certificate'");
+      const requireCert = settingRow.rows[0]?.value === 'true';
+      if (requireCert && !b.certificateData) {
+        return res.status(422).json({ success: false, error: { title: 'يجب رفع شهادة التسجيل', status: 422 } });
+      }
+
+      await client.query('BEGIN');
+
+      // 1. Create user via auth service
+      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app';
+      const authRes = await fetch(`${AUTH_URL}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: b.firstName,
+          lastName: b.lastName || b.firstName,
+          email: b.email,
+          phone: b.phone,
+          password: b.password,
+          role: 'pharmacy_owner',
+        }),
+      });
+      const authData: any = await authRes.json();
+
+      let userId: string;
+      if (!authRes.ok) {
+        // If email exists, try to get the user id via a lookup
+        if (authRes.status === 409) {
+          const existing = await client.query('SELECT id FROM auth.users WHERE email=$1', [b.email]);
+          if (!existing.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ success: false, error: { title: 'البريد الإلكتروني مسجل مسبقاً — تأكد من كلمة المرور الصحيحة', status: 409 } });
+          }
+          userId = existing.rows[0].id;
+        } else {
+          await client.query('ROLLBACK');
+          return res.status(authRes.status).json({ success: false, error: authData?.error || { title: 'فشل إنشاء الحساب' } });
+        }
+      } else {
+        userId = authData.data?.userId;
+      }
+
+      // 2. Create pharmacy
+      const phRes = await client.query(`
+        INSERT INTO pharmacies.pharmacies
+          (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, certificate_data)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING id, name, status
+      `, [
+        userId,
+        b.name || b.nameAr,
+        b.nameAr || b.name,
+        b.licenseNumber?.trim(),
+        b.licenseExpiry,
+        b.pharmacyPhone?.trim() || b.phone,
+        b.address?.trim(),
+        b.city?.trim(),
+        b.country || 'IQ',
+        b.certificateData || null,
+      ]);
+
+      // 3. Store certificate separately if provided
+      if (b.certificateData) {
+        await client.query(
+          'INSERT INTO public.registration_certificates (user_id, certificate_data, entity_type) VALUES ($1,$2,$3)',
+          [userId, b.certificateData, 'pharmacy']
+        );
+      }
+
+      await client.query('COMMIT');
+      res.status(201).json({ success: true, data: phRes.rows[0] });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      next(err);
+    } finally {
+      client.release();
+    }
+  });
+
   // ─── PUBLIC ────────────────────────────────────────────────────────
   router.get('/nearby', async (req, res, next) => {
     try {

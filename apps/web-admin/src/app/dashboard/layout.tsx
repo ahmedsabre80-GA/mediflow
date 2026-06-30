@@ -5,11 +5,12 @@ import Link from 'next/link';
 import {
   LayoutDashboard, Building2, Users, ShoppingCart,
   BarChart3, Shield, Settings, LogOut, Menu, X, Bell,
-  Package, Stethoscope, ClipboardList, UserCog, FlaskConical, MessageSquare
+  Package, Stethoscope, ClipboardList, UserCog, FlaskConical, MessageSquare, Trash2
 } from 'lucide-react';
 import {
   startSession, endSession,
   getPlatformNotifications, markNotificationRead, markAllNotificationsRead, getUnreadCount,
+  deleteNotification, deleteAllNotifications,
   type PlatformNotification,
 } from '@/lib/auditSystem';
 
@@ -167,7 +168,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
                 <div className="absolute left-0 top-10 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
                   <div className="px-4 py-3 border-b flex items-center justify-between">
-                    <button onClick={(e) => { e.stopPropagation(); markAllRead(); }} className="text-xs text-sky-600 hover:underline">تحديد الكل كمقروء</button>
+                    <div className="flex items-center gap-3">
+                      <button onClick={(e) => { e.stopPropagation(); markAllRead(); refreshNotifications(); }} className="text-xs text-sky-600 hover:underline">تحديد الكل كمقروء</button>
+                      {notifications.length > 0 && (
+                        <button onClick={(e) => { e.stopPropagation(); deleteAllNotifications(); refreshNotifications(); }}
+                          className="text-xs text-red-500 hover:underline flex items-center gap-1">
+                          <Trash2 className="w-3 h-3" />حذف الكل
+                        </button>
+                      )}
+                    </div>
                     <h3 className="font-bold text-gray-900 text-sm">
                       الإشعارات {unreadCount > 0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full mr-1">{unreadCount}</span>}
                     </h3>
@@ -178,13 +187,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     ) : notifications.map(n => (
                       <div key={n.id}
                         onClick={(e) => { e.stopPropagation(); handleNotificationClick(n); }}
-                        className={`px-4 py-3 cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition-colors flex items-start gap-3 ${!n.read ? 'bg-sky-50' : ''}`}>
+                        className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors flex items-start gap-3 ${!n.read ? 'bg-sky-50' : ''}`}>
                         {!n.read && <span className="w-2 h-2 bg-sky-500 rounded-full shrink-0 mt-1.5" />}
-                        <div className={!n.read ? '' : 'mr-4'}>
+                        <div className={`flex-1 ${!n.read ? '' : 'mr-4'}`}>
                           <p className="text-sm text-gray-800 font-medium">{n.message}</p>
                           <p className="text-xs text-gray-400 mt-0.5">{n.timestamp}</p>
                           {n.link && <span className="text-xs text-sky-600 font-medium">← اضغط للانتقال للطلب</span>}
                         </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteNotification(n.id); refreshNotifications(); }}
+                          className="p-1 text-gray-300 hover:text-red-500 transition-colors shrink-0 rounded"
+                          title="حذف الإشعار">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
