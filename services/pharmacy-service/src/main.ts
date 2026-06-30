@@ -198,24 +198,23 @@ async function bootstrap() {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      // Soft-delete pharmacy
-      await client.query(
-        "UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1",
-        [req.params.id]
-      );
-      // Also deactivate the owner account
-      await client.query(`
-        UPDATE auth.users SET status='deleted', deleted_at=NOW()
-        WHERE id = (SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)
-      `, [req.params.id]);
+      await client.query("UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1", [req.params.id]);
+      await client.query(`UPDATE auth.users SET status='deleted', deleted_at=NOW() WHERE id=(SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)`, [req.params.id]);
       await client.query('COMMIT');
       res.json({ success: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      next(err);
-    } finally {
-      client.release();
-    }
+    } catch (err) { await client.query('ROLLBACK'); next(err); } finally { client.release(); }
+  });
+
+  // POST fallback for environments that block DELETE method
+  router.post('/admin/:id/delete', async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1", [req.params.id]);
+      await client.query(`UPDATE auth.users SET status='deleted', deleted_at=NOW() WHERE id=(SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)`, [req.params.id]);
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (err) { await client.query('ROLLBACK'); next(err); } finally { client.release(); }
   });
 
   // ─── PHARMACY SELF-SETTINGS (owner updates their own delivery rate) ────────
