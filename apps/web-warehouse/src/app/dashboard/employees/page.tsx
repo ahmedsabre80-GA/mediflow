@@ -50,8 +50,8 @@ export default function WarehouseEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
-  const requesterId = localStorage.getItem('warehouse-id') || 'warehouse-owner';
-  const requesterName = localStorage.getItem('warehouse-name') || 'مدير المستودع';
+  const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('warehouse-id') || 'warehouse-owner' : 'warehouse-owner');
+  const [requesterName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('warehouse-name') || 'مدير المستودع' : 'مدير المستودع');
 
   useEffect(() => {
     fetch(`${API}/admin-requests?requester_id=${requesterId}`)

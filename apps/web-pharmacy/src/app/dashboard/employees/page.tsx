@@ -60,7 +60,7 @@ export default function PharmacyEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
-  const requesterId = localStorage.getItem('pharmacy-id') || 'pharmacy-owner';
+  const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('pharmacy-id') || 'pharmacy-owner' : 'pharmacy-owner');
 
   useEffect(() => {
     // Load requests from API to check for approved permissions

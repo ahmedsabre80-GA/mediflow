@@ -50,8 +50,8 @@ export default function DoctorEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
-  const requesterId = localStorage.getItem('doctor-id') || 'doctor-owner';
-  const requesterName = localStorage.getItem('doctor-name') || 'الطبيب';
+  const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('doctor-id') || 'doctor-owner' : 'doctor-owner');
+  const [requesterName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('doctor-name') || 'الطبيب' : 'الطبيب');
 
   useEffect(() => {
     fetch(`${API}/admin-requests?requester_id=${requesterId}`)
