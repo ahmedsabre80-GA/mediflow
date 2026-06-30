@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Bell, ClipboardList, Send, UserPlus, UserMinus, CheckCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Bell, ClipboardList, Send, UserPlus, UserMinus, CheckCircle, Lock } from 'lucide-react';
 import { addLocalNotification } from '@/lib/portalNotifications';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -15,36 +15,27 @@ const PERMISSION_GROUPS = [
 
 const ROLE_PRESETS: Record<string, string[]> = {
   assistant_manager: ['appointments:read','appointments:manage','appointments:cancel','patients:read','patients:contact','prescriptions:read','reports:read','reports:export','settings:read'],
-  assistant: ['appointments:read','appointments:manage','patients:read','patients:contact','reports:read'],
+  assistant:    ['appointments:read','appointments:manage','patients:read','patients:contact','reports:read'],
   receptionist: ['appointments:read','appointments:manage','appointments:cancel','patients:read','patients:contact'],
-  nurse: ['appointments:read','patients:read','patients:contact','prescriptions:read'],
-  viewer: ['appointments:read','patients:read'],
+  nurse:        ['appointments:read','patients:read','patients:contact','prescriptions:read'],
+  viewer:       ['appointments:read','patients:read'],
 };
 
 const ROLE_LABELS: Record<string, { label: string; badge: string }> = {
-  assistant_manager: { label: 'مدير مساعد', badge: 'bg-purple-100 text-purple-700' },
-  assistant: { label: 'مساعد طبيب', badge: 'bg-teal-100 text-teal-700' },
-  receptionist: { label: 'موظف استقبال', badge: 'bg-blue-100 text-blue-700' },
-  nurse: { label: 'ممرض/ممرضة', badge: 'bg-pink-100 text-pink-700' },
-  viewer: { label: 'مشاهد فقط', badge: 'bg-gray-100 text-gray-600' },
+  assistant_manager: { label: 'مدير مساعد',     badge: 'bg-purple-100 text-purple-700' },
+  assistant:         { label: 'مساعد طبيب',      badge: 'bg-teal-100 text-teal-700'    },
+  receptionist:      { label: 'موظف استقبال',    badge: 'bg-blue-100 text-blue-700'    },
+  nurse:             { label: 'ممرض/ممرضة',      badge: 'bg-pink-100 text-pink-700'    },
+  viewer:            { label: 'مشاهد فقط',       badge: 'bg-gray-100 text-gray-600'   },
 };
 
 interface Employee { id: string; name: string; email: string; role: string; permissions: string[]; status: 'active' | 'suspended'; addedAt: string; }
-
-const MOCK_EMPLOYEES: Employee[] = [
-  { id: '1', name: 'نور الهدى', email: 'nour@clinic.iq', role: 'assistant', permissions: ROLE_PRESETS.assistant, status: 'active', addedAt: '2026-06-01' },
-  { id: '2', name: 'أحمد سعيد', email: 'ahmed@clinic.iq', role: 'receptionist', permissions: ROLE_PRESETS.receptionist, status: 'active', addedAt: '2026-06-10' },
-];
-
-const ACTIVITY_LOG = [
-  { id: '1', action: 'تسجيل دخول', user: 'نور الهدى', time: 'منذ 30 دقيقة' },
-  { id: '2', action: 'إنشاء وصفة للمريض #204', user: 'نور الهدى', time: 'منذ ساعة' },
-  { id: '3', action: 'حجز موعد جديد', user: 'أحمد سعيد', time: 'منذ ساعتين' },
-  { id: '4', action: 'تسجيل خروج', user: 'أحمد سعيد', time: 'أمس 17:00' },
-];
+interface AdminRequest { id: string; action_type: string; status: string; employee_name: string; created_at: string; }
 
 export default function DoctorEmployeesPage() {
-  const [employees, setEmployees] = useState<Employee[]>(MOCK_EMPLOYEES);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [approvedRequestId, setApprovedRequestId] = useState<string | null>(null);
   const [tab, setTab] = useState<'employees' | 'activity' | 'requests'>('employees');
   const [showModal, setShowModal] = useState(false);
   const [editEmp, setEditEmp] = useState<Employee | null>(null);
@@ -59,22 +50,45 @@ export default function DoctorEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
-  const sendNotification = () => {
-    if (!notifTarget || !notifMsg.trim()) return;
-    addLocalNotification(notifMsg, 'الطبيب المسؤول');
-    setNotifTarget(null); setNotifMsg('');
+  const requesterId = localStorage.getItem('doctor-id') || 'doctor-owner';
+  const requesterName = localStorage.getItem('doctor-name') || 'الطبيب';
+
+  useEffect(() => {
+    fetch(`${API}/admin-requests?requester_id=${requesterId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && Array.isArray(d.data)) {
+          setRequests(d.data);
+          const approved = d.data.find((r: AdminRequest) => r.action_type === 'add_employee' && r.status === 'approved');
+          setApprovedRequestId(approved?.id || null);
+        }
+      }).catch(() => {});
+  }, []);
+
+  const canAddEmployee = !!approvedRequestId;
+
+  const consumePermission = async () => {
+    if (!approvedRequestId) return;
+    await fetch(`${API}/admin-requests/${approvedRequestId}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'used' }),
+    }).catch(() => {});
+    setApprovedRequestId(null);
+    setRequests(prev => prev.map(r => r.id === approvedRequestId ? { ...r, status: 'used' } : r));
   };
 
   const submitAdminRequest = async () => {
     setReqLoading(true);
     try {
-      await fetch(`${API}/admin-requests`, {
+      const res = await fetch(`${API}/admin-requests`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalType: 'doctor', requesterId: 'doctor-owner', requesterName: 'الطبيب المسؤول', requesterEntity: 'العيادة', actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
+        body: JSON.stringify({ portalType: 'doctor', requesterId, requesterName, requesterEntity: requesterName, actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
       });
+      const d = await res.json();
+      if (d.success && d.data) setRequests(prev => [d.data, ...prev]);
     } catch {}
     setReqSent(true); setReqLoading(false);
-    setTimeout(() => { setShowAdminReq(false); setReqSent(false); setReqName(''); setReqEmail(''); setReqRole(''); setReqReason(''); }, 2000);
+    setTimeout(() => { setShowAdminReq(false); setReqSent(false); setReqName(''); setReqEmail(''); setReqRole(''); setReqReason(''); }, 2500);
   };
 
   return (
@@ -86,15 +100,30 @@ export default function DoctorEmployeesPage() {
             className="flex items-center gap-2 bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 px-3 py-2 rounded-xl text-sm font-medium">
             <ClipboardList className="w-4 h-4" /> طلب إلى الإدارة
           </button>
-          <button onClick={() => { setEditEmp(null); setShowModal(true); }}
-            className="flex items-center gap-2 bg-teal-500 hover:bg-teal-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
-            <Plus className="w-4 h-4" /> إضافة موظف
-          </button>
+          <div className="relative group">
+            <button onClick={() => { if (canAddEmployee) { setEditEmp(null); setShowModal(true); } }}
+              disabled={!canAddEmployee}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${canAddEmployee ? 'bg-teal-500 hover:bg-teal-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>
+              {canAddEmployee ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />} إضافة موظف
+            </button>
+            {!canAddEmployee && (
+              <div className="absolute bottom-full mb-2 right-0 bg-gray-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                أرسل طلباً للإدارة أولاً
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
+      {canAddEmployee && (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3 text-sm text-green-800">
+          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+          تمت الموافقة على طلبك — يمكنك إضافة موظف واحد الآن.
+        </div>
+      )}
+
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {([['employees', 'الموظفون'], ['activity', 'سجل النشاط'], ['requests', 'الطلبات']] as const).map(([key, label]) => (
+        {([['employees','الموظفون'],['activity','سجل النشاط'],['requests','الطلبات']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === key ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
             {label}
@@ -112,14 +141,15 @@ export default function DoctorEmployeesPage() {
               </div>
             ))}
           </div>
-
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
-                <tr>{['الموظف', 'الدور', 'الصلاحيات', 'الحالة', 'الإجراءات'].map(h => <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+                <tr>{['الموظف','الدور','الصلاحيات','الحالة','الإجراءات'].map(h => <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {employees.map(emp => {
+                {employees.length === 0 ? (
+                  <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">لا يوجد موظفون — أرسل طلباً للإدارة للحصول على إذن إضافة موظف</td></tr>
+                ) : employees.map(emp => {
                   const roleInfo = ROLE_LABELS[emp.role] || { label: emp.role, badge: 'bg-gray-100 text-gray-700' };
                   return (
                     <tr key={emp.id} className="hover:bg-gray-50">
@@ -134,7 +164,7 @@ export default function DoctorEmployeesPage() {
                       <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${emp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{emp.status === 'active' ? 'نشط' : 'موقوف'}</span></td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button onClick={() => setNotifTarget(emp)} title="إرسال إشعار" className="p-1.5 rounded-lg hover:bg-teal-50"><Bell className="w-4 h-4 text-teal-500" /></button>
+                          <button onClick={() => setNotifTarget(emp)} className="p-1.5 rounded-lg hover:bg-teal-50"><Bell className="w-4 h-4 text-teal-500" /></button>
                           <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100"><Edit2 className="w-4 h-4 text-gray-600" /></button>
                           <button onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))} className="p-1.5 rounded-lg hover:bg-gray-100">
                             {emp.status === 'active' ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
@@ -152,22 +182,38 @@ export default function DoctorEmployeesPage() {
       )}
 
       {tab === 'activity' && (
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b"><h2 className="font-semibold text-gray-900">سجل نشاط الموظفين</h2></div>
-          <div className="divide-y">
-            {ACTIVITY_LOG.map(log => (
-              <div key={log.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                <span className="text-xs text-gray-400">{log.time}</span>
-                <div className="text-right"><p className="text-sm font-medium text-gray-900">{log.action}</p><p className="text-xs text-gray-500">{log.user}</p></div>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-2xl shadow-sm p-10 text-center text-gray-400">
+          <ClipboardList className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">سيظهر سجل نشاط الموظفين هنا بعد إضافة الموظفين وبدء العمل.</p>
         </div>
       )}
 
       {tab === 'requests' && (
-        <div className="bg-white rounded-2xl shadow-sm p-6">
-          <p className="text-gray-500 text-sm">استخدم زر "طلب إلى الإدارة" لإرسال طلبات إضافة أو حذف موظفين.</p>
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b"><h2 className="font-semibold text-gray-900">طلباتي إلى الإدارة</h2></div>
+          {requests.length === 0 ? (
+            <div className="p-10 text-center text-gray-400 text-sm">لا توجد طلبات مُرسَلة بعد.</div>
+          ) : (
+            <div className="divide-y">
+              {requests.map(req => (
+                <div key={req.id} className="px-6 py-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {req.action_type === 'add_employee' ? 'إضافة موظف' : 'حذف موظف'}: {req.employee_name}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">{new Date(req.created_at).toLocaleDateString('ar-IQ')}</p>
+                  </div>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                    req.status === 'approved' ? 'bg-green-100 text-green-700' :
+                    req.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                    req.status === 'used' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {req.status === 'approved' ? 'موافق عليه' : req.status === 'rejected' ? 'مرفوض' : req.status === 'used' ? 'مُستخدَم' : 'قيد الانتظار'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -179,7 +225,7 @@ export default function DoctorEmployeesPage() {
             <textarea value={notifMsg} onChange={e => setNotifMsg(e.target.value)} rows={3} placeholder="اكتب رسالة الإشعار هنا..." className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none" />
             <div className="flex gap-3 mt-4">
               <button onClick={() => setNotifTarget(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-              <button onClick={sendNotification} className="flex-1 bg-teal-500 hover:bg-teal-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"><Send className="w-4 h-4" /> إرسال</button>
+              <button onClick={() => { addLocalNotification(notifMsg, requesterName); setNotifTarget(null); setNotifMsg(''); }} className="flex-1 bg-teal-500 hover:bg-teal-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"><Send className="w-4 h-4" /> إرسال</button>
             </div>
           </div>
         </div>
@@ -189,7 +235,11 @@ export default function DoctorEmployeesPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
             {reqSent ? (
-              <div className="text-center py-4"><CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" /><p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p></div>
+              <div className="text-center py-4">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                <p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p>
+                <p className="text-sm text-gray-500 mt-1">ستُفعَّل زر "إضافة موظف" بعد الموافقة</p>
+              </div>
             ) : (
               <>
                 <h2 className="font-bold text-gray-900 mb-4">طلب إلى إدارة المنصة</h2>
@@ -218,15 +268,13 @@ export default function DoctorEmployeesPage() {
       )}
 
       {showModal && (
-        <EmployeeModal
-          employee={editEmp}
+        <EmployeeModal employee={editEmp}
           onClose={() => { setShowModal(false); setEditEmp(null); }}
-          onSave={(emp) => {
+          onSave={async (emp) => {
             if (editEmp) setEmployees(prev => prev.map(e => e.id === emp.id ? emp : e));
-            else setEmployees(prev => [...prev, emp]);
+            else { setEmployees(prev => [...prev, emp]); await consumePermission(); }
             setShowModal(false); setEditEmp(null);
-          }}
-        />
+          }} />
       )}
     </div>
   );
@@ -250,23 +298,14 @@ function EmployeeModal({ employee, onClose, onSave }: { employee: Employee | nul
         </div>
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">الاسم الكامل *</label>
-              <input dir="auto" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">البريد الإلكتروني *</label>
-              <input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-left" />
-            </div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1.5">الاسم الكامل *</label><input dir="auto" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1.5">البريد الإلكتروني *</label><input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-left" /></div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">الدور الوظيفي</label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {Object.entries(ROLE_LABELS).map(([key, val]) => (
-                <button key={key} onClick={() => applyPreset(key)}
-                  className={`px-4 py-3 rounded-xl text-sm font-medium border-2 transition-all text-right ${selectedRole === key ? `${val.badge} border-current` : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}>
-                  {val.label}
-                </button>
+                <button key={key} onClick={() => applyPreset(key)} className={`px-4 py-3 rounded-xl text-sm font-medium border-2 transition-all text-right ${selectedRole === key ? `${val.badge} border-current` : 'bg-white border-gray-200 text-gray-600'}`}>{val.label}</button>
               ))}
             </div>
           </div>
@@ -295,9 +334,7 @@ function EmployeeModal({ employee, onClose, onSave }: { employee: Employee | nul
         <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
           <button onClick={onClose} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
           <button onClick={() => { if (!name || !email) return; onSave({ id: employee?.id || Date.now().toString(), name, email, role: selectedRole, permissions, status: employee?.status || 'active', addedAt: employee?.addedAt || new Date().toISOString().split('T')[0] }); }}
-            className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl text-sm">
-            {employee ? 'حفظ التغييرات' : 'إضافة الموظف'}
-          </button>
+            className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl text-sm">{employee ? 'حفظ التغييرات' : 'إضافة الموظف'}</button>
         </div>
       </div>
     </div>
