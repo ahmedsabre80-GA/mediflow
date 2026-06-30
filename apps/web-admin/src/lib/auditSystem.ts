@@ -51,6 +51,17 @@ export function getCurrentUser() {
 }
 
 // ─── AUDIT LOG ───────────────────────────────────────────────────────────────
+function isLogAdminActionsEnabled(): boolean {
+  try {
+    const s = localStorage.getItem('mediflow-platform-settings');
+    if (s) {
+      const parsed = JSON.parse(s);
+      if ('logAdminActions' in parsed) return !!parsed.logAdminActions;
+    }
+  } catch {}
+  return true; // default on
+}
+
 export function logAction(
   action: string,
   actionAr: string,
@@ -59,6 +70,7 @@ export function logAction(
   targetId?: string,
   link?: string,
 ) {
+  if (!isLogAdminActionsEnabled()) return;
   const user = getCurrentUser();
   const entry: AuditEntry = {
     id: Date.now().toString(),

@@ -17,6 +17,14 @@ async function bootstrap() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 });
   await pool.connect().then((c) => { console.log('PostgreSQL connected'); c.release(); });
 
+  // Run lightweight schema migrations
+  await pool.query(`
+    ALTER TABLE pharmacies.pharmacies
+      ADD COLUMN IF NOT EXISTS delivery_rate_per_km INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_min_fee INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_max_km INTEGER DEFAULT 20
+  `).catch(() => {});
+
   const app = express();
   app.use(helmet());
   app.use(cors({ origin: (process.env.ALLOWED_ORIGINS || '').split(','), credentials: true }));
@@ -154,7 +162,7 @@ async function bootstrap() {
     try {
       const { id } = req.params;
       const { status } = req.body;
-      const allowed = ['active', 'suspended', 'rejected', 'pending_verification'];
+      const allowed = ['active', 'suspended', 'rejected', 'pending_verification', 'deleted'];
       if (!allowed.includes(status)) return res.status(400).json({ success: false, error: { title: 'Invalid status' } });
 
       await client.query('BEGIN');
@@ -210,12 +218,39 @@ async function bootstrap() {
     }
   });
 
+  // ─── PHARMACY SELF-SETTINGS (owner updates their own delivery rate) ────────
+  router.get('/my/settings', authenticate, async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        'SELECT delivery_rate_per_km, delivery_min_fee, delivery_max_km FROM pharmacies.pharmacies WHERE owner_id=$1',
+        [req.user!.sub]
+      );
+      res.json({ success: true, data: r.rows[0] || {} });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/my/settings', authenticate, async (req, res, next) => {
+    try {
+      const b = req.body;
+      await pool.query(`
+        UPDATE pharmacies.pharmacies SET
+          delivery_rate_per_km = COALESCE($1::int, delivery_rate_per_km),
+          delivery_min_fee = COALESCE($2::int, delivery_min_fee),
+          delivery_max_km = COALESCE($3::int, delivery_max_km),
+          updated_at = NOW()
+        WHERE owner_id = $4
+      `, [b.delivery_rate_per_km ?? null, b.delivery_min_fee ?? null, b.delivery_max_km ?? null, req.user!.sub]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   // ─── PUBLIC ────────────────────────────────────────────────────────
   router.get('/nearby', async (req, res, next) => {
     try {
       const { lat, lng, radiusKm = 5, drugId } = req.query;
       const result = await pool.query(`
         SELECT p.id, p.name, p.name_ar, p.phone, p.rating, p.delivery_fee,
+               p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
                ST_Distance(p.location, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
         FROM pharmacies.pharmacies p
         LEFT JOIN inventory.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)

@@ -24,15 +24,28 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
+    // Load from localStorage first as immediate fallback
+    const local = localStorage.getItem('mediflow-platform-settings');
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        setSettings(s => ({ ...s, ...parsed }));
+      } catch {}
+    }
+    // Then sync from API (authoritative)
     fetch(`${PHARMACY_API}/pharmacies/settings`)
       .then(r => r.json())
       .then(d => {
-        if (d.success) {
-          setSettings(s => ({
-            ...s,
-            requireCertificate: !!d.data.require_certificate,
-            logAdminActions: d.data.log_admin_actions !== false,
-          }));
+        if (d.success && d.data) {
+          const fromApi = {
+            requireCertificate: d.data.require_certificate === true,
+            logAdminActions: d.data.log_admin_actions === true,
+          };
+          setSettings(s => ({ ...s, ...fromApi }));
+          // Keep localStorage in sync with API truth
+          const local2 = localStorage.getItem('mediflow-platform-settings');
+          const merged = { ...(local2 ? JSON.parse(local2) : {}), ...fromApi };
+          localStorage.setItem('mediflow-platform-settings', JSON.stringify(merged));
         }
       })
       .catch(() => {});
@@ -42,9 +55,15 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    // Always save to localStorage so toggles survive navigation
+    const toSave = {
+      requireCertificate: settings.requireCertificate,
+      logAdminActions: settings.logAdminActions,
+    };
+    localStorage.setItem('mediflow-platform-settings', JSON.stringify(toSave));
     try {
       const token = localStorage.getItem('admin-token') || '';
-      await fetch(`${PHARMACY_API}/pharmacies/settings`, {
+      const res = await fetch(`${PHARMACY_API}/pharmacies/settings`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -52,14 +71,13 @@ export default function SettingsPage() {
           log_admin_actions: settings.logAdminActions,
         }),
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } finally {
-      setSaving(false);
+      if (!res.ok) console.warn('Settings PATCH returned', res.status);
+    } catch (e) {
+      console.warn('Settings save failed, using localStorage fallback', e);
     }
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
   };
 
   const Toggle = ({ value, onChange }: { value: boolean; onChange: () => void }) => (
