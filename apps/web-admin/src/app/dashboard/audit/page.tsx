@@ -71,6 +71,19 @@ export default function AuditPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
+  const deleteAction = (id: string) => {
+    const updated = auditLog.filter(e => e.id !== id);
+    setAuditLog(updated);
+    localStorage.setItem('mediflow-audit-log', JSON.stringify(updated));
+  };
+
+  const clearAllActions = () => {
+    if (!confirm('هل تريد مسح جميع الإجراءات المسجلة؟')) return;
+    setAuditLog([]);
+    localStorage.setItem('mediflow-audit-log', JSON.stringify([]));
+    showToast('🗑️ تم مسح سجل الإجراءات');
+  };
+
   const forceLogout = (sessionId: string, userName: string) => {
     if (!confirm(`هل تريد إخراج ${userName} من المنصة؟`)) return;
     const updated = sessions.map(s =>
@@ -224,6 +237,14 @@ export default function AuditPage() {
       {/* Actions Log Tab */}
       {tab === 'actions' && (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          {auditLog.length > 0 && (
+            <div className="px-6 py-3 border-b flex justify-end">
+              <button onClick={clearAllActions}
+                className="flex items-center gap-1.5 text-xs text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg font-medium border border-red-200">
+                <Trash2 className="w-3.5 h-3.5" /> مسح الكل
+              </button>
+            </div>
+          )}
           {filteredLog.length === 0 ? (
             <div className="px-6 py-16 text-center text-gray-400">
               <Shield className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -238,12 +259,11 @@ export default function AuditPage() {
                 const colorClass = ACTION_COLORS[actionKey] || 'text-indigo-600 bg-indigo-50';
                 return (
                   <div key={entry.id}
-                    onClick={() => entry.link && router.push(entry.link)}
-                    className={`px-6 py-4 flex items-start gap-4 hover:bg-gray-50 transition-colors ${entry.link ? 'cursor-pointer' : ''}`}>
+                    className="px-6 py-4 flex items-start gap-4 hover:bg-gray-50 transition-colors group">
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${colorClass}`}>
                       <Icon className="w-4 h-4" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0" onClick={() => entry.link && router.push(entry.link)} style={{cursor: entry.link ? 'pointer' : 'default'}}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-bold text-gray-900">{entry.actorName}</span>
                         <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{entry.actorEmail}</span>
@@ -261,6 +281,10 @@ export default function AuditPage() {
                         {entry.link && <span className="text-sky-500 mr-2">← اضغط للعرض</span>}
                       </p>
                     </div>
+                    <button onClick={() => deleteAction(entry.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all shrink-0">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 );
               })}

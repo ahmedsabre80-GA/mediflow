@@ -39,6 +39,10 @@ export default function InventoryPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' });
+  const [addMode, setAddMode] = useState<'new' | 'update'>('new');
+  const [existingItem, setExistingItem] = useState<any | null>(null);
+  const [existingChecking, setExistingChecking] = useState(false);
+  const [addQty, setAddQty] = useState('');
 
   // Seasonal limits
   const [itemLimits, setItemLimits] = useState<Record<string, { summer: number; winter: number }>>({});
@@ -98,6 +102,22 @@ export default function InventoryPage() {
 
   useEffect(() => { fetchInventory(); }, [fetchInventory]);
 
+  const checkExistingDrug = async (drugId: string) => {
+    if (!drugId) { setExistingItem(null); return; }
+    setExistingChecking(true);
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    try {
+      const r = await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory?search=${drugId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      const found = (d.data || []).find((i: any) => i.drug_id === drugId || i.id === drugId);
+      setExistingItem(found || null);
+    } catch { setExistingItem(null); }
+    setExistingChecking(false);
+  };
+
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -110,6 +130,26 @@ export default function InventoryPage() {
     });
     setSaving(false);
     setShowAdd(false);
+    setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' });
+    setExistingItem(null);
+    fetchInventory();
+  };
+
+  const handleUpdateQty = async () => {
+    if (!existingItem || !addQty) return;
+    setSaving(true);
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    const newQty = existingItem.quantity + Number(addQty);
+    await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/${existingItem.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ quantity: newQty }),
+    }).catch(() => {});
+    setSaving(false);
+    setShowAdd(false);
+    setExistingItem(null);
+    setAddQty('');
     setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' });
     fetchInventory();
   };
@@ -464,23 +504,90 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── Add Product Modal ── */}
+      {/* ── Add / Update Product Modal ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md" dir="rtl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900">إضافة منتج للمخزون</h3>
-              <button onClick={() => setShowAdd(false)}><X className="w-5 h-5 text-gray-400" /></button>
+              <h3 className="font-bold text-gray-900">إدارة المخزون</h3>
+              <button onClick={() => { setShowAdd(false); setExistingItem(null); setAddQty(''); setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' }); }}><X className="w-5 h-5 text-gray-400" /></button>
             </div>
+
+            {/* Mode toggle */}
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5">
+              <button onClick={() => { setAddMode('new'); setExistingItem(null); setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' }); }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${addMode === 'new' ? 'bg-white text-sky-600 shadow-sm' : 'text-gray-500'}`}>
+                ➕ إضافة منتج جديد
+              </button>
+              <button onClick={() => { setAddMode('update'); setExistingItem(null); setForm(f => ({ ...f, drugId: '' })); }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${addMode === 'update' ? 'bg-white text-sky-600 shadow-sm' : 'text-gray-500'}`}>
+                🔄 تحديث كمية موجودة
+              </button>
+            </div>
+
+            {addMode === 'update' ? (
+              /* ── Update existing quantity ── */
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                    <Barcode className="w-4 h-4 text-gray-400" /> معرّف الدواء (مسح أو يدوي)
+                  </label>
+                  <input value={form.drugId}
+                    onChange={e => { setForm({ ...form, drugId: e.target.value }); setExistingItem(null); }}
+                    onBlur={e => checkExistingDrug(e.target.value)}
+                    placeholder="امسح الباركود أو أدخل UUID الدواء"
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    dir="ltr" />
+                  {existingChecking && <p className="text-xs text-gray-400 mt-1">جاري البحث...</p>}
+                </div>
+
+                {existingItem ? (
+                  <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">{existingItem.generic_name || existingItem.brand_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">الكمية الحالية: <span className="font-bold text-sky-700">{existingItem.quantity}</span></p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">الكمية المضافة</label>
+                      <input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)}
+                        placeholder="مثال: 50"
+                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                      {addQty && (
+                        <p className="text-xs text-green-600 mt-1 font-medium">
+                          الكمية بعد الإضافة: {existingItem.quantity + Number(addQty)}
+                        </p>
+                      )}
+                    </div>
+                    <button onClick={handleUpdateQty} disabled={saving || !addQty}
+                      className="w-full bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50">
+                      {saving ? 'جاري الحفظ...' : 'تحديث الكمية'}
+                    </button>
+                  </div>
+                ) : form.drugId && !existingChecking ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                    لم يُعثر على هذا الدواء في مخزونك — يمكنك إضافته كمنتج جديد.
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+            /* ── Add new product ── */
             <form onSubmit={handleAdd} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
                   <Barcode className="w-4 h-4 text-gray-400" /> معرّف الدواء (مسح أو يدوي)
                 </label>
-                <input value={form.drugId} onChange={e => setForm({ ...form, drugId: e.target.value })}
+                <input value={form.drugId}
+                  onChange={e => { setForm({ ...form, drugId: e.target.value }); setExistingItem(null); }}
+                  onBlur={e => checkExistingDrug(e.target.value)}
                   placeholder="امسح الباركود أو أدخل UUID الدواء"
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                   dir="ltr" required />
+                {existingItem && (
+                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800 flex items-center justify-between">
+                    <span>هذا الدواء موجود بالفعل ({existingItem.generic_name}) — الكمية: {existingItem.quantity}</span>
+                    <button type="button" onClick={() => setAddMode('update')} className="text-sky-600 font-medium underline mr-2">إضافة كمية؟</button>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -530,6 +637,7 @@ export default function InventoryPage() {
                 </button>
               </div>
             </form>
+            )}
           </div>
         </div>
       )}

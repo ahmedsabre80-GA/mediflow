@@ -133,6 +133,7 @@ export function startSession() {
   localStorage.setItem('mediflow-sessions', JSON.stringify(sessions.slice(0, 100)));
   localStorage.setItem('mediflow-current-session', sessionId);
 
+  if (!isLogAdminActionsEnabled()) return;
   addPlatformNotification({
     id: Date.now().toString(),
     type: 'login',
@@ -160,6 +161,7 @@ export function endSession(forced = false) {
   localStorage.setItem('mediflow-sessions', JSON.stringify(updated));
   localStorage.removeItem('mediflow-current-session');
 
+  if (!isLogAdminActionsEnabled()) return;
   addPlatformNotification({
     id: Date.now().toString(),
     type: forced ? 'forced_out' : 'logout',
