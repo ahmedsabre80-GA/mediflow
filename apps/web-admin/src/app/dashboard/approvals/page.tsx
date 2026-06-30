@@ -5,13 +5,7 @@ import { CheckCircle, XCircle, Clock, Building2, Stethoscope, Package, Truck, Hi
 
 const STORE_KEY = 'admin-approvals';
 
-const INITIAL_REQUESTS = [
-  { id: '1', type: 'doctor_employee', requesterName: 'د. أحمد الراوي', requesterType: 'طبيب', employeeName: 'نور الهدى', employeeRole: 'مساعد طبيب', employeeEmail: 'nour@clinic.iq', status: 'pending', requestedAt: '2026-06-26 10:00', decidedAt: '' },
-  { id: '2', type: 'pharmacy_employee', requesterName: 'صيدلية الأمين', requesterType: 'صيدلية', employeeName: 'حسن الموسى', employeeRole: 'مساعد مدير', employeeEmail: 'hassan@pharmacy.iq', status: 'pending', requestedAt: '2026-06-26 11:30', decidedAt: '' },
-  { id: '3', type: 'warehouse_employee', requesterName: 'مخزن الشفاء', requesterType: 'مخزن', employeeName: 'سارة أحمد', employeeRole: 'مشرف مخزون', employeeEmail: 'sara@warehouse.iq', status: 'pending', requestedAt: '2026-06-26 12:00', decidedAt: '' },
-  { id: '4', type: 'driver', requesterName: 'صيدلية النور', requesterType: 'صيدلية', employeeName: 'علي كريم', employeeRole: 'سائق توصيل', employeeEmail: 'ali@driver.iq', status: 'approved', requestedAt: '2026-06-25 09:00', decidedAt: '2026-06-25 10:00' },
-  { id: '5', type: 'doctor_employee', requesterName: 'د. سارة حسن', requesterType: 'طبيب', employeeName: 'فاطمة جواد', employeeRole: 'ممرضة', employeeEmail: 'fatima@clinic.iq', status: 'rejected', requestedAt: '2026-06-24 14:00', decidedAt: '2026-06-24 15:00' },
-];
+const INITIAL_REQUESTS: any[] = [];
 
 const TYPE_CONFIG: Record<string, { icon: any; color: string; label: string }> = {
   doctor_employee: { icon: Stethoscope, color: 'bg-teal-100 text-teal-700', label: 'موظف طبيب' },

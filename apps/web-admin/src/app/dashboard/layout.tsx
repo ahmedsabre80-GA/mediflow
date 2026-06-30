@@ -15,7 +15,7 @@ import {
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
-  { href: '/dashboard/approvals', label: 'طلبات الموافقة', icon: ClipboardList, badge: true },
+  { href: '/dashboard/approvals', label: 'طلبات الموافقة', icon: ClipboardList },
   { href: '/dashboard/pharmacies', label: 'الصيدليات', icon: Building2 },
   { href: '/dashboard/pharmacists', label: 'الصيادلة', icon: FlaskConical },
   { href: '/dashboard/warehouses', label: 'المذاخر', icon: Package },

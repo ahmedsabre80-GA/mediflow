@@ -5,12 +5,7 @@ import { logAction } from '@/lib/auditSystem';
 
 const STORE_KEY = 'admin-pharmacists-status';
 
-const MOCK_PHARMACISTS = [
-  { id: 1, name: 'حسن الموسى', pharmacyName: 'صيدلية الأمين', license: 'PH-LIC-001', city: 'بغداد', rating: 4.8, status: 'active', createdAt: '2026-06-01' },
-  { id: 2, name: 'مريم علي', pharmacyName: 'صيدلية النور', license: 'PH-LIC-002', city: 'البصرة', rating: 0, status: 'pending_verification', createdAt: '2026-06-20' },
-  { id: 3, name: 'كريم جابر', pharmacyName: 'صيدلية الشفاء', license: 'PH-LIC-003', city: 'الموصل', rating: 4.5, status: 'active', createdAt: '2026-04-15' },
-  { id: 4, name: 'نور الهدى', pharmacyName: 'صيدلية الرشيد', license: 'PH-LIC-004', city: 'أربيل', rating: 0, status: 'pending_verification', createdAt: '2026-06-25' },
-];
+const MOCK_PHARMACISTS: any[] = [];
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_verification: { label: 'معلق', color: 'bg-amber-100 text-amber-700' },

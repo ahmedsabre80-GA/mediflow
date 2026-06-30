@@ -101,26 +101,11 @@ export default function AdminDashboard() {
           <div className="px-6 py-4 border-b">
             <h2 className="font-bold text-gray-900">تنبيهات المنصة</h2>
           </div>
-          <div className="p-6 space-y-3">
-            {[
-              { type: 'warning', msg: 'انتهت صلاحية 3 رخص صيدليات', time: 'منذ ساعة' },
-              { type: 'info', msg: 'تم تسجيل 12 مستخدم جديد اليوم', time: 'منذ 2 ساعة' },
-              { type: 'warning', msg: '5 طلبات تسجيل صيدلية جديدة', time: 'منذ 3 ساعات' },
-            ].map((alert, i) => (
-              <div key={i} className={`flex items-start gap-3 p-3 rounded-xl ${
-                alert.type === 'warning' ? 'bg-amber-50' : 'bg-sky-50'
-              }`}>
-                <AlertTriangle className={`w-5 h-5 mt-0.5 shrink-0 ${
-                  alert.type === 'warning' ? 'text-amber-500' : 'text-sky-500'
-                }`} />
-                <div className="flex-1">
-                  <p className="text-sm text-gray-800">{alert.msg}</p>
-                  <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                    <Clock className="w-3 h-3" /> {alert.time}
-                  </p>
-                </div>
-              </div>
-            ))}
+          <div className="p-6">
+            <div className="text-center py-8 text-gray-400">
+              <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-2" />
+              <p>لا توجد تنبيهات حالياً</p>
+            </div>
           </div>
         </div>
       </div>

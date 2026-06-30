@@ -39,11 +39,25 @@ export default function DoctorRegisterPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
-      if (data.data?.requiresApproval) {
-        router.push('/auth/pending');
+
+      // Email already registered → try login silently
+      if (!res.ok && (res.status === 409 || data?.error?.title?.toLowerCase().includes('email'))) {
+        const loginRes = await fetch(`${AUTH_API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: form.email, password: form.password }),
+        });
+        const loginData = await loginRes.json();
+        if (!loginRes.ok) throw new Error('البريد الإلكتروني مسجل مسبقاً. تأكد من كلمة المرور الصحيحة.');
+        if (loginData.data?.requiresApproval) { router.push('/auth/pending'); return; }
+        localStorage.setItem('doctor-token', loginData.data.accessToken);
+        localStorage.setItem('doctor-id', loginData.data.userId);
+        router.push('/dashboard');
         return;
       }
+
+      if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
+      if (data.data?.requiresApproval) { router.push('/auth/pending'); return; }
       localStorage.setItem('doctor-token', data.data.accessToken);
       localStorage.setItem('doctor-id', data.data.userId);
       router.push('/dashboard');
@@ -73,27 +87,30 @@ export default function DoctorRegisterPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">الاسم الأول</label>
-                <input value={form.firstName} onChange={e => update('firstName', e.target.value)}
+                <input dir="auto" lang="ar" value={form.firstName} onChange={e => update('firstName', e.target.value)}
+                  placeholder="أحمد"
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">الاسم الأخير</label>
-                <input value={form.lastName} onChange={e => update('lastName', e.target.value)}
+                <input dir="auto" lang="ar" value={form.lastName} onChange={e => update('lastName', e.target.value)}
+                  placeholder="الطائي"
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" required />
               </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">البريد الإلكتروني</label>
-              <input type="email" dir="ltr" value={form.email} onChange={e => update('email', e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" required />
+              <input type="email" dir="ltr" inputMode="email" autoComplete="email" value={form.email} onChange={e => update('email', e.target.value)}
+                placeholder="example@email.com"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-left" required />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف</label>
-              <input type="tel" dir="ltr" value={form.phone} onChange={e => update('phone', e.target.value)}
+              <input type="tel" dir="ltr" inputMode="tel" autoComplete="tel" value={form.phone} onChange={e => update('phone', e.target.value)}
                 placeholder="+9647801234567"
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-left" />
             </div>
 
             <div>
@@ -121,8 +138,9 @@ export default function DoctorRegisterPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">كلمة المرور</label>
-              <input type="password" dir="ltr" value={form.password} onChange={e => update('password', e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" required />
+              <input type="password" dir="ltr" autoComplete="new-password" value={form.password} onChange={e => update('password', e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-left" required />
             </div>
 
             <button type="submit" disabled={loading}

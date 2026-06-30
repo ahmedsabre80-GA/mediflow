@@ -5,13 +5,7 @@ import { logAction } from '@/lib/auditSystem';
 
 const STORE_KEY = 'admin-doctors-status';
 
-const MOCK_DOCTORS = [
-  { id: 1, name: 'د. أحمد الراوي', specialization: 'طب القلب', license: 'MED-2024-001', city: 'بغداد', status: 'active', rating: 4.9, consultations: 234, created_at: '2026-06-01' },
-  { id: 2, name: 'د. سارة حسن', specialization: 'طب الأطفال', license: 'MED-2024-002', city: 'البصرة', status: 'pending_verification', rating: 0, consultations: 0, created_at: '2026-06-20' },
-  { id: 3, name: 'د. محمد علي', specialization: 'طب عام', license: 'MED-2024-003', city: 'الموصل', status: 'active', rating: 4.7, consultations: 189, created_at: '2026-05-15' },
-  { id: 4, name: 'د. فاطمة الزهراء', specialization: 'طب النساء والتوليد', license: 'MED-2024-004', city: 'أربيل', status: 'pending_verification', rating: 0, consultations: 0, created_at: '2026-06-25' },
-  { id: 5, name: 'د. علي الجبوري', specialization: 'طب الأعصاب', license: 'MED-2024-005', city: 'كركوك', status: 'suspended', rating: 4.2, consultations: 56, created_at: '2026-04-10' },
-];
+const MOCK_DOCTORS: any[] = [];
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_verification: { label: 'معلق', color: 'bg-amber-100 text-amber-700' },

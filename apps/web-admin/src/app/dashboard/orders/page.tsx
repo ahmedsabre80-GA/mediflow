@@ -20,16 +20,8 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
-    setTimeout(() => {
-      setOrders([
-        { id: 'ORD-001', patient: 'أحمد محمد', pharmacy: 'صيدلية الأمين', total: 17000, status: 'delivered', created_at: '2026-06-26 10:30' },
-        { id: 'ORD-002', patient: 'فاطمة حسن', pharmacy: 'صيدلية النور', total: 25000, status: 'in_transit', created_at: '2026-06-26 11:00' },
-        { id: 'ORD-003', patient: 'محمود علي', pharmacy: 'صيدلية الشفاء', total: 8500, status: 'preparing', created_at: '2026-06-26 11:30' },
-        { id: 'ORD-004', patient: 'سارة إبراهيم', pharmacy: 'صيدلية الأمين', total: 32000, status: 'confirmed', created_at: '2026-06-26 12:00' },
-        { id: 'ORD-005', patient: 'علي كريم', pharmacy: 'صيدلية النور', total: 12000, status: 'cancelled', created_at: '2026-06-26 09:00' },
-      ]);
-      setLoading(false);
-    }, 500);
+    setOrders([]);
+    setLoading(false);
   }, []);
 
   const filtered = orders.filter(o => {

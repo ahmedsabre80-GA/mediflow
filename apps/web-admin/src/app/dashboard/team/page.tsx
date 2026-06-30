@@ -1,27 +1,126 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { Search, Eye, EyeOff, Key, Shield, Plus, Edit2, Trash2, Ban, CheckCircle, X, Copy } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Eye, EyeOff, Key, Shield, Plus, Trash2, Ban, CheckCircle, X, Copy } from 'lucide-react';
 import { logAction } from '@/lib/auditSystem';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 
 const PLATFORM_ROLES = [
-  { key: 'super_admin', label: 'مشرف عام', color: 'bg-red-100 text-red-700' },
-  { key: 'admin', label: 'مدير', color: 'bg-purple-100 text-purple-700' },
-  { key: 'assistant_manager', label: 'مساعد مدير', color: 'bg-indigo-100 text-indigo-700' },
-  { key: 'supervisor', label: 'مشرف', color: 'bg-sky-100 text-sky-700' },
-  { key: 'assistant', label: 'مساعد إداري', color: 'bg-teal-100 text-teal-700' },
-  { key: 'programmer', label: 'مبرمج', color: 'bg-amber-100 text-amber-700' },
-  { key: 'auditor', label: 'مدقق', color: 'bg-gray-100 text-gray-700' },
-  { key: 'support', label: 'دعم فني', color: 'bg-green-100 text-green-700' },
+  { key: 'super_admin',      label: 'مشرف عام',     color: 'bg-red-100 text-red-700' },
+  { key: 'admin',            label: 'مدير',          color: 'bg-purple-100 text-purple-700' },
+  { key: 'assistant_manager',label: 'مساعد مدير',   color: 'bg-indigo-100 text-indigo-700' },
+  { key: 'supervisor',       label: 'مشرف',          color: 'bg-sky-100 text-sky-700' },
+  { key: 'assistant',        label: 'مساعد إداري',  color: 'bg-teal-100 text-teal-700' },
+  { key: 'programmer',       label: 'مبرمج',         color: 'bg-amber-100 text-amber-700' },
+  { key: 'auditor',          label: 'مدقق',          color: 'bg-gray-100 text-gray-700' },
+  { key: 'support',          label: 'دعم فني',       color: 'bg-green-100 text-green-700' },
 ];
 
+const PERMISSION_GROUPS = [
+  {
+    key: 'pharmacies', label: 'الصيدليات',
+    permissions: [
+      { key: 'pharmacies.view',    label: 'عرض' },
+      { key: 'pharmacies.approve', label: 'موافقة' },
+      { key: 'pharmacies.reject',  label: 'رفض' },
+      { key: 'pharmacies.edit',    label: 'تعديل' },
+      { key: 'pharmacies.delete',  label: 'حذف' },
+    ],
+  },
+  {
+    key: 'doctors', label: 'الأطباء',
+    permissions: [
+      { key: 'doctors.view',    label: 'عرض' },
+      { key: 'doctors.approve', label: 'موافقة' },
+      { key: 'doctors.reject',  label: 'رفض' },
+      { key: 'doctors.edit',    label: 'تعديل' },
+      { key: 'doctors.delete',  label: 'حذف' },
+    ],
+  },
+  {
+    key: 'warehouses', label: 'المذاخر',
+    permissions: [
+      { key: 'warehouses.view',    label: 'عرض' },
+      { key: 'warehouses.approve', label: 'موافقة' },
+      { key: 'warehouses.reject',  label: 'رفض' },
+      { key: 'warehouses.edit',    label: 'تعديل' },
+      { key: 'warehouses.delete',  label: 'حذف' },
+    ],
+  },
+  {
+    key: 'orders', label: 'الطلبات',
+    permissions: [
+      { key: 'orders.view',   label: 'عرض' },
+      { key: 'orders.manage', label: 'إدارة' },
+      { key: 'orders.cancel', label: 'إلغاء' },
+    ],
+  },
+  {
+    key: 'analytics', label: 'التحليلات',
+    permissions: [
+      { key: 'analytics.view', label: 'عرض' },
+    ],
+  },
+  {
+    key: 'team', label: 'فريق المنصة',
+    permissions: [
+      { key: 'team.view',   label: 'عرض' },
+      { key: 'team.add',    label: 'إضافة' },
+      { key: 'team.edit',   label: 'تعديل' },
+      { key: 'team.delete', label: 'حذف' },
+    ],
+  },
+  {
+    key: 'messages', label: 'الرسائل',
+    permissions: [
+      { key: 'messages.view', label: 'عرض' },
+      { key: 'messages.send', label: 'إرسال' },
+    ],
+  },
+  {
+    key: 'audit', label: 'سجل المراقبة',
+    permissions: [
+      { key: 'audit.view', label: 'عرض' },
+    ],
+  },
+  {
+    key: 'settings', label: 'الإعدادات',
+    permissions: [
+      { key: 'settings.view', label: 'عرض' },
+      { key: 'settings.edit', label: 'تعديل' },
+    ],
+  },
+];
+
+const ALL_PERMISSIONS = PERMISSION_GROUPS.flatMap(g => g.permissions.map(p => p.key));
+
+const ROLE_DEFAULT_PERMISSIONS: Record<string, string[]> = {
+  super_admin: ALL_PERMISSIONS,
+  admin: ALL_PERMISSIONS.filter(p => !p.endsWith('.delete') || p.startsWith('orders')),
+  assistant_manager: [
+    'pharmacies.view','pharmacies.approve','pharmacies.reject',
+    'doctors.view','doctors.approve','doctors.reject',
+    'warehouses.view','warehouses.approve','warehouses.reject',
+    'orders.view','orders.manage',
+    'analytics.view','messages.view','messages.send','audit.view','team.view',
+  ],
+  supervisor: [
+    'pharmacies.view','doctors.view','warehouses.view',
+    'orders.view','analytics.view','messages.view','audit.view','team.view',
+  ],
+  assistant: ['pharmacies.view','doctors.view','warehouses.view','orders.view','messages.view'],
+  programmer: ['analytics.view','audit.view','settings.view','settings.edit'],
+  auditor: ALL_PERMISSIONS.filter(p => p.endsWith('.view')),
+  support: ['pharmacies.view','doctors.view','orders.view','messages.view','messages.send'],
+};
+
 const INITIAL_TEAM = [
-  { id: '1', name: 'أحمد المشرف', email: 'admin@mediflow.io', role: 'super_admin', password: 'Admin@123456', status: 'active', createdAt: '2026-06-01', permissions: 20 },
-  { id: '2', name: 'سارة المديرة', email: 'sara@mediflow.io', role: 'admin', password: 'Sara@2026!', status: 'active', createdAt: '2026-06-10', permissions: 15 },
-  { id: '3', name: 'محمد المساعد', email: 'mohammed@mediflow.io', role: 'assistant_manager', password: 'Mohammed#99', status: 'active', createdAt: '2026-06-15', permissions: 10 },
-  { id: '4', name: 'علي المشرف', email: 'ali@mediflow.io', role: 'supervisor', password: 'Ali@Sup2026', status: 'active', createdAt: '2026-06-20', permissions: 7 },
-  { id: '5', name: 'كريم المبرمج', email: 'kareem@mediflow.io', role: 'programmer', password: 'Kareem@Dev1', status: 'suspended', createdAt: '2026-06-22', permissions: 5 },
+  {
+    id: '1', name: 'أحمد المشرف', email: 'admin@mediflow.io',
+    role: 'super_admin', password: 'Admin@123456',
+    status: 'active', createdAt: '2026-06-01',
+    permissions: ALL_PERMISSIONS,
+  },
 ];
 
 export default function TeamPage() {
@@ -30,20 +129,42 @@ export default function TeamPage() {
   const [roleFilter, setRoleFilter] = useState('all');
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [showAdd, setShowAdd] = useState(false);
-  const [editMember, setEditMember] = useState<any>(null);
   const [resetPasswordFor, setResetPasswordFor] = useState<any>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toast, setToast] = useState('');
-  const [addForm, setAddForm] = useState({ name: '', email: '', role: 'assistant', password: '' });
+
+  const [addForm, setAddForm] = useState({
+    name: '', email: '', role: 'assistant', password: '',
+    permissions: [...ROLE_DEFAULT_PERMISSIONS['assistant']],
+  });
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
-
   const togglePassword = (id: string) => setShowPasswords(prev => ({ ...prev, [id]: !prev[id] }));
+  const copyPassword = (pw: string) => { navigator.clipboard?.writeText(pw); showToast('✅ تم نسخ كلمة المرور'); };
 
-  const copyPassword = (password: string) => {
-    navigator.clipboard?.writeText(password);
-    showToast('✅ تم نسخ كلمة المرور');
+  const handleRoleChange = (role: string) => {
+    setAddForm(f => ({ ...f, role, permissions: [...(ROLE_DEFAULT_PERMISSIONS[role] || [])] }));
+  };
+
+  const togglePermission = (key: string) => {
+    setAddForm(f => ({
+      ...f,
+      permissions: f.permissions.includes(key)
+        ? f.permissions.filter(p => p !== key)
+        : [...f.permissions, key],
+    }));
+  };
+
+  const toggleGroup = (group: typeof PERMISSION_GROUPS[0]) => {
+    const keys = group.permissions.map(p => p.key);
+    const allSelected = keys.every(k => addForm.permissions.includes(k));
+    setAddForm(f => ({
+      ...f,
+      permissions: allSelected
+        ? f.permissions.filter(p => !keys.includes(p))
+        : Array.from(new Set([...f.permissions, ...keys])),
+    }));
   };
 
   const toggleStatus = (id: string) => {
@@ -74,19 +195,30 @@ export default function TeamPage() {
 
   const addMember = async () => {
     if (!addForm.name || !addForm.email || !addForm.password) { showToast('⚠️ جميع الحقول مطلوبة'); return; }
+    if (addForm.permissions.length === 0) { showToast('⚠️ يجب تحديد صلاحية واحدة على الأقل'); return; }
     try {
       const res = await fetch(`${AUTH_API}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName: addForm.name.split(' ')[0], lastName: addForm.name.split(' ').slice(1).join(' ') || 'Admin', email: addForm.email, password: addForm.password, role: addForm.role }),
+        body: JSON.stringify({
+          firstName: addForm.name.split(' ')[0],
+          lastName: addForm.name.split(' ').slice(1).join(' ') || 'Admin',
+          email: addForm.email, password: addForm.password, role: addForm.role,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
-      const newMember = { id: data.data?.userId || Date.now().toString(), name: addForm.name, email: addForm.email, role: addForm.role, password: addForm.password, status: 'active', createdAt: new Date().toISOString().split('T')[0], permissions: 5 };
+      const newMember = {
+        id: data.data?.userId || Date.now().toString(),
+        name: addForm.name, email: addForm.email,
+        role: addForm.role, password: addForm.password,
+        status: 'active', createdAt: new Date().toISOString().split('T')[0],
+        permissions: addForm.permissions,
+      };
       setTeam(prev => [newMember, ...prev]);
       logAction('add', 'إضافة عضو فريق جديد', 'فريق المنصة', addForm.name, newMember.id, '/dashboard/team');
       setShowAdd(false);
-      setAddForm({ name: '', email: '', role: 'assistant', password: '' });
+      setAddForm({ name: '', email: '', role: 'assistant', password: '', permissions: [...ROLE_DEFAULT_PERMISSIONS['assistant']] });
       showToast('✅ تم إضافة العضو وإنشاء حسابه');
     } catch (err: any) {
       showToast(`⚠️ ${err.message}`);
@@ -108,7 +240,7 @@ export default function TeamPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">فريق المنصة</h1>
-          <p className="text-sm text-gray-500 mt-1">إدارة أعضاء الفريق الداخلي وكلمات المرور</p>
+          <p className="text-sm text-gray-500 mt-1">إدارة أعضاء الفريق الداخلي وصلاحياتهم</p>
         </div>
         <button onClick={() => setShowAdd(true)}
           className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
@@ -149,6 +281,7 @@ export default function TeamPage() {
         {filtered.map(member => {
           const roleInfo = getRoleInfo(member.role);
           const showPass = showPasswords[member.id];
+          const permCount = member.permissions?.length || 0;
           return (
             <div key={member.id} className={`bg-white rounded-2xl shadow-sm p-5 ${member.status === 'suspended' ? 'opacity-75 border border-red-100' : ''}`}>
               <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
@@ -156,6 +289,9 @@ export default function TeamPage() {
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.color}`}>{roleInfo.label}</span>
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${member.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                     {member.status === 'active' ? '● نشط' : '● موقوف'}
+                  </span>
+                  <span className="text-xs bg-sky-50 text-sky-700 px-2.5 py-1 rounded-full flex items-center gap-1">
+                    <Shield className="w-3 h-3" /> {permCount} صلاحية
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
@@ -168,6 +304,15 @@ export default function TeamPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Permissions preview */}
+              {member.permissions && member.permissions.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {PERMISSION_GROUPS.filter(g => g.permissions.some(p => member.permissions.includes(p.key))).map(g => (
+                    <span key={g.key} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{g.label}</span>
+                  ))}
+                </div>
+              )}
 
               {/* Password Row */}
               <div className="bg-gray-50 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
@@ -182,9 +327,7 @@ export default function TeamPage() {
                   </button>
                 </div>
                 <div className="flex items-center gap-2 flex-1 justify-end">
-                  <code className="text-sm font-mono text-gray-800">
-                    {showPass ? member.password : '••••••••••'}
-                  </code>
+                  <code className="text-sm font-mono text-gray-800">{showPass ? member.password : '••••••••••'}</code>
                   <button onClick={() => togglePassword(member.id)} className="text-gray-400 hover:text-gray-600">
                     {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -213,18 +356,20 @@ export default function TeamPage() {
         })}
       </div>
 
-      {/* Add Member Modal */}
+      {/* ─── ADD MEMBER MODAL ─────────────────────────────────────────────── */}
       {showAdd && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-lg my-6 p-6" dir="rtl">
+            <div className="flex items-center justify-between mb-5">
               <button onClick={() => setShowAdd(false)}><X className="w-5 h-5 text-gray-400" /></button>
               <h2 className="text-lg font-bold">إضافة عضو فريق جديد</h2>
             </div>
-            <div className="space-y-3">
+
+            {/* Basic info */}
+            <div className="space-y-3 mb-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">الاسم الكامل *</label>
-                <input value={addForm.name} onChange={e => setAddForm(f => ({...f, name: e.target.value}))}
+                <input dir="auto" value={addForm.name} onChange={e => setAddForm(f => ({...f, name: e.target.value}))}
                   placeholder="أحمد محمد علي"
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
               </div>
@@ -232,26 +377,83 @@ export default function TeamPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">البريد الإلكتروني *</label>
                 <input type="email" dir="ltr" value={addForm.email} onChange={e => setAddForm(f => ({...f, email: e.target.value}))}
                   placeholder="member@mediflow.io"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">الدور الوظيفي</label>
-                <select value={addForm.role} onChange={e => setAddForm(f => ({...f, role: e.target.value}))}
+                <select value={addForm.role} onChange={e => handleRoleChange(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
                   {PLATFORM_ROLES.filter(r => r.key !== 'super_admin').map(r => (
                     <option key={r.key} value={r.key}>{r.label}</option>
                   ))}
                 </select>
+                <p className="text-xs text-gray-400 mt-1">تغيير الدور يُحدّث الصلاحيات تلقائياً — يمكنك تعديلها يدوياً أدناه</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">كلمة المرور *</label>
                 <input type="text" dir="ltr" value={addForm.password} onChange={e => setAddForm(f => ({...f, password: e.target.value}))}
                   placeholder="Password@123"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono" />
-                <p className="text-xs text-gray-500 mt-1">8 أحرف على الأقل، يشمل أحرف كبيرة وأرقام ورموز</p>
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono text-left" />
+                <p className="text-xs text-gray-500 mt-1">8 أحرف على الأقل، أحرف كبيرة وأرقام ورموز</p>
               </div>
             </div>
-            <div className="flex gap-3 mt-5">
+
+            {/* Permissions */}
+            <div className="border border-gray-200 rounded-xl overflow-hidden mb-5">
+              <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
+                <div className="flex gap-2">
+                  <button onClick={() => setAddForm(f => ({...f, permissions: [...ALL_PERMISSIONS]}))}
+                    className="text-xs text-sky-600 hover:underline">تحديد الكل</button>
+                  <span className="text-gray-300">|</span>
+                  <button onClick={() => setAddForm(f => ({...f, permissions: []}))}
+                    className="text-xs text-red-500 hover:underline">إلغاء الكل</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-sky-600" />
+                  <span className="text-sm font-bold text-gray-900">الصلاحيات</span>
+                  <span className="bg-sky-100 text-sky-700 text-xs font-bold px-2 py-0.5 rounded-full">{addForm.permissions.length}</span>
+                </div>
+              </div>
+              <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+                {PERMISSION_GROUPS.map(group => {
+                  const keys = group.permissions.map(p => p.key);
+                  const allSelected = keys.every(k => addForm.permissions.includes(k));
+                  const someSelected = keys.some(k => addForm.permissions.includes(k));
+                  return (
+                    <div key={group.key} className="px-4 py-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <button onClick={() => toggleGroup(group)}
+                          className={`text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
+                            allSelected ? 'bg-sky-500 text-white border-sky-500' :
+                            someSelected ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                            'bg-gray-50 text-gray-500 border-gray-200'
+                          }`}>
+                          {allSelected ? 'إلغاء الكل' : 'تحديد الكل'}
+                        </button>
+                        <span className="text-sm font-semibold text-gray-800">{group.label}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        {group.permissions.map(perm => {
+                          const active = addForm.permissions.includes(perm.key);
+                          return (
+                            <button key={perm.key} onClick={() => togglePermission(perm.key)}
+                              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                                active
+                                  ? 'bg-sky-500 text-white border-sky-500'
+                                  : 'bg-white text-gray-500 border-gray-200 hover:border-sky-300 hover:text-sky-600'
+                              }`}>
+                              {active ? '✓ ' : ''}{perm.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
               <button onClick={() => setShowAdd(false)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
               <button onClick={addMember} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">إضافة وإنشاء حساب</button>
             </div>

@@ -21,13 +21,7 @@ interface Warehouse {
 }
 
 export default function WarehousesPage() {
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([
-    { id: 1, name: 'مخزن الشفاء الطبي', company: 'شركة الشفاء للتوزيع', license: 'WH-2024-001', city: 'بغداد', status: 'active', products: 342, created_at: '2026-05-01' },
-    { id: 2, name: 'مخزن الأمين الدوائي', company: 'مجموعة الأمين', license: 'WH-2024-002', city: 'البصرة', status: 'pending_verification', products: 0, created_at: '2026-06-20' },
-    { id: 3, name: 'مخزن النور للأدوية', company: 'شركة النور', license: 'WH-2024-003', city: 'الموصل', status: 'active', products: 215, created_at: '2026-04-15' },
-    { id: 4, name: 'مخزن بغداد المركزي', company: 'مستودعات بغداد', license: 'WH-2024-004', city: 'بغداد', status: 'pending_verification', products: 0, created_at: '2026-06-25' },
-    { id: 5, name: 'مخزن الرشيد الدوائي', company: 'شركة الرشيد', license: 'WH-2024-005', city: 'كركوك', status: 'suspended', products: 128, created_at: '2026-03-10' },
-  ]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');

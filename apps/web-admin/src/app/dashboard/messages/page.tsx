@@ -4,11 +4,11 @@ import { Send, Mail, MessageCircle, Bell, Mic, Users, Building2, Stethoscope, Pa
 import { logAction } from '@/lib/auditSystem';
 
 const RECIPIENT_GROUPS = [
-  { key: 'all', label: 'الجميع', icon: Users, color: 'bg-gray-100 text-gray-700', count: 150 },
-  { key: 'doctors', label: 'الأطباء', icon: Stethoscope, color: 'bg-teal-100 text-teal-700', count: 5 },
-  { key: 'pharmacies', label: 'الصيدليات', icon: Building2, color: 'bg-sky-100 text-sky-700', count: 5 },
-  { key: 'pharmacists', label: 'الصيادلة', icon: FlaskConical, color: 'bg-indigo-100 text-indigo-700', count: 4 },
-  { key: 'warehouses', label: 'المذاخر', icon: Package, color: 'bg-amber-100 text-amber-700', count: 5 },
+  { key: 'all', label: 'الجميع', icon: Users, color: 'bg-gray-100 text-gray-700', count: 0 },
+  { key: 'doctors', label: 'الأطباء', icon: Stethoscope, color: 'bg-teal-100 text-teal-700', count: 0 },
+  { key: 'pharmacies', label: 'الصيدليات', icon: Building2, color: 'bg-sky-100 text-sky-700', count: 0 },
+  { key: 'pharmacists', label: 'الصيادلة', icon: FlaskConical, color: 'bg-indigo-100 text-indigo-700', count: 0 },
+  { key: 'warehouses', label: 'المذاخر', icon: Package, color: 'bg-amber-100 text-amber-700', count: 0 },
 ];
 
 const CHANNELS = [
@@ -18,11 +18,7 @@ const CHANNELS = [
   { key: 'voice', label: 'رسالة صوتية', icon: Mic, color: 'text-purple-600', desc: 'تسجيل صوتي', free: false },
 ];
 
-const SENT_MESSAGES = [
-  { id: 1, title: 'تحديث سياسة التسعير', recipients: 'الصيدليات', channels: ['inapp', 'email'], sentAt: '2026-06-26 10:00', status: 'sent', count: 5 },
-  { id: 2, title: 'تذكير تجديد الرخصة', recipients: 'الجميع', channels: ['email'], sentAt: '2026-06-25 09:00', status: 'sent', count: 150 },
-  { id: 3, title: 'خدمة جديدة متاحة', recipients: 'الأطباء', channels: ['inapp'], sentAt: '2026-06-24 14:00', status: 'sent', count: 5 },
-];
+const SENT_MESSAGES: any[] = [];
 
 export default function MessagesPage() {
   const [selectedGroups, setSelectedGroups] = useState<string[]>(['all']);
