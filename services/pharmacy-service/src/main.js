@@ -428,6 +428,30 @@ async function bootstrap() {
             next(err);
         }
     });
+    router.delete('/admin-requests/:id', async (req, res, next) => {
+        try {
+            await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.delete('/admin-requests', async (req, res, next) => {
+        try {
+            const { status } = req.query;
+            if (status) {
+                await pool.query('DELETE FROM public.admin_requests WHERE status=$1', [status]);
+            }
+            else {
+                await pool.query('DELETE FROM public.admin_requests WHERE status != $1', ['pending']);
+            }
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
     // ─── PORTAL NOTIFICATIONS ───────────────────────────────────────────
     router.post('/portal-notifications', async (req, res, next) => {
         try {
