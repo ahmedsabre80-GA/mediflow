@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Copy, CheckCircle, Bell, ClipboardList, Send, UserPlus, UserMinus } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Copy, CheckCircle, Bell, ClipboardList, Send, UserPlus, UserMinus, Lock } from 'lucide-react';
 import { addLocalNotification } from '@/lib/portalNotifications';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -39,16 +39,12 @@ function generatePassword() {
 }
 
 interface Employee { id: string; name: string; email: string; role: string; permissions: string[]; status: 'active' | 'suspended'; addedAt: string; }
-
-const ACTIVITY_LOG = [
-  { id: '1', action: 'تسجيل دخول', user: 'محمد أحمد', time: 'منذ ساعتين' },
-  { id: '2', action: 'تعديل مخزون دواء باراسيتامول', user: 'محمد أحمد', time: 'منذ 3 ساعات' },
-  { id: '3', action: 'قبول طلب رقم #1042', user: 'سارة خالد', time: 'منذ 5 ساعات' },
-  { id: '4', action: 'تسجيل خروج', user: 'سارة خالد', time: 'أمس 18:00' },
-];
+interface AdminRequest { id: string; action_type: string; status: string; employee_name: string; created_at: string; }
 
 export default function PharmacyEmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [approvedRequestId, setApprovedRequestId] = useState<string | null>(null);
   const [tab, setTab] = useState<'employees' | 'activity' | 'requests'>('employees');
   const [showModal, setShowModal] = useState(false);
   const [editEmp, setEditEmp] = useState<Employee | null>(null);
@@ -64,6 +60,37 @@ export default function PharmacyEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
+  const requesterId = localStorage.getItem('pharmacy-id') || 'pharmacy-owner';
+
+  useEffect(() => {
+    // Load requests from API to check for approved permissions
+    fetch(`${API}/admin-requests?requester_id=${requesterId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && Array.isArray(d.data)) {
+          setRequests(d.data);
+          // Find an approved add_employee request that hasn't been consumed
+          const approved = d.data.find((r: AdminRequest) => r.action_type === 'add_employee' && r.status === 'approved');
+          setApprovedRequestId(approved?.id || null);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const canAddEmployee = !!approvedRequestId;
+
+  const consumePermission = async () => {
+    if (!approvedRequestId) return;
+    // Mark request as 'used' so permission is single-use
+    await fetch(`${API}/admin-requests/${approvedRequestId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'used' }),
+    }).catch(() => {});
+    setApprovedRequestId(null);
+    setRequests(prev => prev.map(r => r.id === approvedRequestId ? { ...r, status: 'used' } : r));
+  };
+
   const sendNotification = () => {
     if (!notifTarget || !notifMsg.trim()) return;
     addLocalNotification(notifMsg, 'مدير الصيدلية');
@@ -75,12 +102,28 @@ export default function PharmacyEmployeesPage() {
     setReqLoading(true);
     try {
       await fetch(`${API}/admin-requests`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalType: 'pharmacy', requesterId: 'pharmacy-owner', requesterName: 'مدير الصيدلية', requesterEntity: 'الصيدلية', actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portalType: 'pharmacy',
+          requesterId,
+          requesterName: localStorage.getItem('pharmacy-name') || 'مدير الصيدلية',
+          requesterEntity: localStorage.getItem('pharmacy-name') || 'الصيدلية',
+          actionType: reqType === 'add' ? 'add_employee' : 'remove_employee',
+          employeeName: reqName,
+          employeeEmail: reqEmail,
+          employeeRole: reqRole,
+          reason: reqReason,
+        }),
       });
     } catch {}
-    setReqSent(true); setReqLoading(false);
-    setTimeout(() => { setShowAdminReq(false); setReqSent(false); setReqName(''); setReqEmail(''); setReqRole(''); setReqReason(''); }, 2000);
+    setReqSent(true);
+    setReqLoading(false);
+    setTimeout(() => {
+      setShowAdminReq(false);
+      setReqSent(false);
+      setReqName(''); setReqEmail(''); setReqRole(''); setReqReason('');
+    }, 2500);
   };
 
   return (
@@ -92,12 +135,35 @@ export default function PharmacyEmployeesPage() {
             className="flex items-center gap-2 bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 px-3 py-2 rounded-xl text-sm font-medium">
             <ClipboardList className="w-4 h-4" /> طلب إلى الإدارة
           </button>
-          <button onClick={() => { setEditEmp(null); setShowModal(true); }}
-            className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
-            <Plus className="w-4 h-4" /> إضافة موظف
-          </button>
+          <div className="relative group">
+            <button
+              onClick={() => { if (canAddEmployee) { setEditEmp(null); setShowModal(true); } }}
+              disabled={!canAddEmployee}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                canAddEmployee
+                  ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {canAddEmployee ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+              إضافة موظف
+            </button>
+            {!canAddEmployee && (
+              <div className="absolute bottom-full mb-2 right-0 bg-gray-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                أرسل طلباً للإدارة أولاً — ستُفعَّل بعد الموافقة
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Permission banner */}
+      {canAddEmployee && (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3 text-sm text-green-800">
+          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <span>تمت الموافقة على طلبك — يمكنك إضافة موظف واحد الآن.</span>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
@@ -112,7 +178,11 @@ export default function PharmacyEmployeesPage() {
       {tab === 'employees' && (
         <>
           <div className="grid grid-cols-3 gap-4">
-            {[{ label: 'إجمالي الموظفين', value: employees.length }, { label: 'نشط', value: employees.filter(e => e.status === 'active').length }, { label: 'موقوف', value: employees.filter(e => e.status === 'suspended').length }].map(s => (
+            {[
+              { label: 'إجمالي الموظفين', value: employees.length },
+              { label: 'نشط', value: employees.filter(e => e.status === 'active').length },
+              { label: 'موقوف', value: employees.filter(e => e.status === 'suspended').length },
+            ].map(s => (
               <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
                 <p className="text-2xl font-bold text-sky-600">{s.value}</p>
                 <p className="text-sm text-gray-500 mt-1">{s.label}</p>
@@ -123,32 +193,59 @@ export default function PharmacyEmployeesPage() {
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
-                <tr>{['الموظف', 'الدور', 'الصلاحيات', 'الحالة', 'الإجراءات'].map(h => <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+                <tr>{['الموظف', 'الدور', 'الصلاحيات', 'الحالة', 'الإجراءات'].map(h => (
+                  <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>
+                ))}</tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {employees.length === 0 ? (
-                  <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">لا يوجد موظفون — اضغط "إضافة موظف" للبدء</td></tr>
+                  <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                    لا يوجد موظفون — أرسل طلباً للإدارة للحصول على إذن إضافة موظف
+                  </td></tr>
                 ) : employees.map(emp => {
                   const roleInfo = ROLE_LABELS[emp.role] || { label: emp.role, badge: 'bg-gray-100 text-gray-700' };
                   return (
                     <tr key={emp.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 bg-sky-100 rounded-full flex items-center justify-center"><span className="text-sky-700 font-bold text-sm">{emp.name[0]}</span></div>
-                          <div><p className="font-medium text-gray-900 text-sm">{emp.name}</p><p className="text-xs text-gray-500">{emp.email}</p></div>
+                          <div className="w-9 h-9 bg-sky-100 rounded-full flex items-center justify-center">
+                            <span className="text-sky-700 font-bold text-sm">{emp.name[0]}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900 text-sm">{emp.name}</p>
+                            <p className="text-xs text-gray-500">{emp.email}</p>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.badge}`}>{roleInfo.label}</span></td>
-                      <td className="px-6 py-4"><span className="text-xs text-gray-600 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />{emp.permissions.length} صلاحية</span></td>
-                      <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${emp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{emp.status === 'active' ? 'نشط' : 'موقوف'}</span></td>
+                      <td className="px-6 py-4">
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.badge}`}>{roleInfo.label}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-xs text-gray-600 flex items-center gap-1">
+                          <Shield className="w-3.5 h-3.5" />{emp.permissions.length} صلاحية
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${emp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {emp.status === 'active' ? 'نشط' : 'موقوف'}
+                        </span>
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button onClick={() => setNotifTarget(emp)} title="إرسال إشعار" className="p-1.5 rounded-lg hover:bg-sky-50"><Bell className="w-4 h-4 text-sky-500" /></button>
-                          <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100"><Edit2 className="w-4 h-4 text-gray-600" /></button>
-                          <button onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))} className="p-1.5 rounded-lg hover:bg-gray-100">
+                          <button onClick={() => setNotifTarget(emp)} title="إرسال إشعار" className="p-1.5 rounded-lg hover:bg-sky-50">
+                            <Bell className="w-4 h-4 text-sky-500" />
+                          </button>
+                          <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100">
+                            <Edit2 className="w-4 h-4 text-gray-600" />
+                          </button>
+                          <button
+                            onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))}
+                            className="p-1.5 rounded-lg hover:bg-gray-100">
                             {emp.status === 'active' ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
                           </button>
-                          <button onClick={() => setEmployees(prev => prev.filter(e => e.id !== emp.id))} className="p-1.5 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4 text-red-500" /></button>
+                          <button onClick={() => setEmployees(prev => prev.filter(e => e.id !== emp.id))} className="p-1.5 rounded-lg hover:bg-red-50">
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -161,25 +258,45 @@ export default function PharmacyEmployeesPage() {
       )}
 
       {tab === 'activity' && (
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b"><h2 className="font-semibold text-gray-900">سجل نشاط الموظفين</h2></div>
-          <div className="divide-y">
-            {ACTIVITY_LOG.map(log => (
-              <div key={log.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                <span className="text-xs text-gray-400">{log.time}</span>
-                <div className="text-right">
-                  <p className="text-sm font-medium text-gray-900">{log.action}</p>
-                  <p className="text-xs text-gray-500">{log.user}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-2xl shadow-sm p-10 text-center text-gray-400">
+          <ClipboardList className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">سيظهر سجل نشاط الموظفين هنا بعد إضافة الموظفين وبدء العمل.</p>
         </div>
       )}
 
       {tab === 'requests' && (
-        <div className="bg-white rounded-2xl shadow-sm p-6">
-          <p className="text-gray-500 text-sm">استخدم زر "طلب إلى الإدارة" لإرسال طلبات إضافة أو حذف موظفين. ستظهر الطلبات هنا بعد الإرسال.</p>
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h2 className="font-semibold text-gray-900">طلباتي إلى الإدارة</h2>
+          </div>
+          {requests.length === 0 ? (
+            <div className="p-10 text-center text-gray-400 text-sm">
+              لا توجد طلبات مُرسَلة بعد. استخدم زر "طلب إلى الإدارة" للبدء.
+            </div>
+          ) : (
+            <div className="divide-y">
+              {requests.map(req => (
+                <div key={req.id} className="px-6 py-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {req.action_type === 'add_employee' ? 'إضافة موظف' : 'حذف موظف'}: {req.employee_name}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">{new Date(req.created_at).toLocaleDateString('ar-IQ')}</p>
+                  </div>
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                    req.status === 'approved' ? 'bg-green-100 text-green-700' :
+                    req.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                    req.status === 'used' ? 'bg-gray-100 text-gray-500' :
+                    'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {req.status === 'approved' ? 'موافق عليه' :
+                     req.status === 'rejected' ? 'مرفوض' :
+                     req.status === 'used' ? 'مُستخدَم' : 'قيد الانتظار'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -187,7 +304,9 @@ export default function PharmacyEmployeesPage() {
       {credentials && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" dir="rtl">
-            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="w-8 h-8 text-green-600" /></div>
+            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8 text-green-600" />
+            </div>
             <h2 className="text-lg font-bold text-gray-900 mb-1">تم إنشاء الحساب</h2>
             <p className="text-sm text-gray-500 mb-5">احفظ بيانات الدخول وأرسلها للموظف</p>
             <div className="bg-gray-50 rounded-xl p-4 space-y-3 text-right mb-5">
@@ -233,13 +352,18 @@ export default function PharmacyEmployeesPage() {
               <div className="text-center py-4">
                 <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
                 <p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p>
+                <p className="text-sm text-gray-500 mt-1">ستظهر زر "إضافة موظف" بعد موافقة الإدارة</p>
               </div>
             ) : (
               <>
                 <h2 className="font-bold text-gray-900 mb-4">طلب إلى إدارة المنصة</h2>
                 <div className="flex gap-2 mb-4">
-                  <button onClick={() => setReqType('add')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'add' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}><UserPlus className="w-4 h-4" /> إضافة موظف</button>
-                  <button onClick={() => setReqType('remove')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'remove' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600'}`}><UserMinus className="w-4 h-4" /> حذف موظف</button>
+                  <button onClick={() => setReqType('add')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'add' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}>
+                    <UserPlus className="w-4 h-4" /> إضافة موظف
+                  </button>
+                  <button onClick={() => setReqType('remove')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'remove' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600'}`}>
+                    <UserMinus className="w-4 h-4" /> حذف موظف
+                  </button>
                 </div>
                 <div className="space-y-3">
                   <input value={reqName} onChange={e => setReqName(e.target.value)} placeholder="اسم الموظف *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
@@ -265,10 +389,17 @@ export default function PharmacyEmployeesPage() {
         <EmployeeModal
           employee={editEmp}
           onClose={() => { setShowModal(false); setEditEmp(null); }}
-          onSave={(emp, creds) => {
-            if (editEmp) setEmployees(prev => prev.map(e => e.id === emp.id ? emp : e));
-            else { setEmployees(prev => [...prev, emp]); if (creds) setCredentials(creds); }
-            setShowModal(false); setEditEmp(null);
+          onSave={async (emp, creds) => {
+            if (editEmp) {
+              setEmployees(prev => prev.map(e => e.id === emp.id ? emp : e));
+            } else {
+              setEmployees(prev => [...prev, emp]);
+              if (creds) setCredentials(creds);
+              // consume the admin-granted permission (one-time use)
+              await consumePermission();
+            }
+            setShowModal(false);
+            setEditEmp(null);
           }}
         />
       )}
@@ -300,7 +431,8 @@ function EmployeeModal({ employee, onClose, onSave }: {
       if (!employee) {
         const parts = name.trim().split(' ');
         const res = await fetch(`${AUTH_API}/auth/register`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ firstName: parts[0], lastName: parts.slice(1).join(' ') || parts[0], email, password, role: 'pharmacy_employee' }),
         });
         const data = await res.json();

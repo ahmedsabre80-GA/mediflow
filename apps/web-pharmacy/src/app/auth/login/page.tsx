@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://mediflowauth-service-production.up.railway.app/api/v1';
+const AUTH_API = process.env.NEXT_PUBLIC_API_URL || 'https://mediflowauth-service-production.up.railway.app/api/v1';
+const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,14 +20,45 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_URL}/auth/login`, {
+      // Step 1: authenticate
+      const res = await fetch(`${AUTH_API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل تسجيل الدخول');
-      localStorage.setItem('pharmacy-token', data.data.accessToken);
+
+      const token = data.data.accessToken;
+
+      // Step 2: verify pharmacy status
+      const phRes = await fetch(`${PHARMACY_API}/my`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (phRes.ok) {
+        const phData = await phRes.json();
+        const status = phData.data?.status;
+        if (status === 'suspended') {
+          throw new Error('حسابك موقوف مؤقتاً. تواصل مع إدارة المنصة.');
+        }
+        if (status === 'rejected') {
+          throw new Error('طلب تسجيل صيدليتك مرفوض. تواصل مع إدارة المنصة.');
+        }
+        if (status === 'pending_verification') {
+          throw new Error('صيدليتك لا تزال قيد المراجعة. ستُعلَم عند الموافقة.');
+        }
+        if (status === 'deleted') {
+          throw new Error('هذا الحساب غير متاح.');
+        }
+        // store pharmacy id
+        if (phData.data?.id) {
+          localStorage.setItem('pharmacy-id', phData.data.id);
+          localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
+        }
+      }
+      // even if /my fails (e.g. network error) we still proceed — backend JWT is the real gate
+
+      localStorage.setItem('pharmacy-token', token);
       localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
       router.push('/dashboard');
     } catch (err: any) {

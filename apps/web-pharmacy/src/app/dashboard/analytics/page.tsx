@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { TrendingUp, ShoppingBag, DollarSign, Users } from 'lucide-react';
+import { TrendingUp, ShoppingBag, DollarSign, BarChart2 } from 'lucide-react';
 
 const PHARMACY_API = process.env.NEXT_PUBLIC_PHARMACY_API_URL || 'https://mediflow-production-d815.up.railway.app/api/v1';
 
@@ -22,10 +22,10 @@ export default function AnalyticsPage() {
   }, []);
 
   const cards = [
-    { label: 'طلبات اليوم', value: analytics?.today?.orders || 0, icon: ShoppingBag, color: 'bg-sky-500' },
-    { label: 'إيراد اليوم', value: `${Number(analytics?.today?.revenue || 0).toLocaleString()} د.ع`, icon: DollarSign, color: 'bg-green-500' },
-    { label: 'طلبات الشهر', value: analytics?.thisMonth?.orders || 0, icon: TrendingUp, color: 'bg-purple-500' },
-    { label: 'إيراد الشهر', value: `${Number(analytics?.thisMonth?.revenue || 0).toLocaleString()} د.ع`, icon: Users, color: 'bg-orange-500' },
+    { label: 'طلبات اليوم', value: analytics?.today?.orders ?? '—', icon: ShoppingBag, color: 'bg-sky-500' },
+    { label: 'إيراد اليوم', value: analytics?.today?.revenue != null ? `${Number(analytics.today.revenue).toLocaleString()} د.ع` : '—', icon: DollarSign, color: 'bg-green-500' },
+    { label: 'طلبات الشهر', value: analytics?.thisMonth?.orders ?? '—', icon: TrendingUp, color: 'bg-purple-500' },
+    { label: 'إيراد الشهر', value: analytics?.thisMonth?.revenue != null ? `${Number(analytics.thisMonth.revenue).toLocaleString()} د.ع` : '—', icon: BarChart2, color: 'bg-orange-500' },
   ];
 
   return (
@@ -47,26 +47,12 @@ export default function AnalyticsPage() {
         })}
       </div>
 
-      <div className="bg-white rounded-2xl p-6 shadow-sm">
-        <h3 className="font-bold text-gray-900 mb-4">ملخص الأداء</h3>
-        <div className="space-y-4">
-          {[
-            { label: 'معدل إتمام الطلبات', value: '94%', width: '94%' },
-            { label: 'رضا العملاء', value: '4.8/5', width: '96%' },
-            { label: 'معدل الاستجابة للطلبات', value: '87%', width: '87%' },
-          ].map((metric) => (
-            <div key={metric.label}>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-600">{metric.label}</span>
-                <span className="font-medium text-gray-900">{metric.value}</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-sky-500 rounded-full" style={{ width: metric.width }} />
-              </div>
-            </div>
-          ))}
+      {!loading && !analytics && (
+        <div className="bg-white rounded-2xl p-10 shadow-sm text-center text-gray-400">
+          <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">لا توجد بيانات كافية بعد. ستظهر التقارير بعد بدء تلقي الطلبات.</p>
         </div>
-      </div>
+      )}
     </div>
   );
 }

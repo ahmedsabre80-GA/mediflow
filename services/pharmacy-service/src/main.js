@@ -215,6 +215,19 @@ async function bootstrap() {
             client.release();
         }
     });
+    // ─── PHARMACY MY PROFILE (status check for login gate) ────────────────────
+    router.get('/my', shared_middleware_1.authenticate, async (req, res, next) => {
+        var _a, _b;
+        try {
+            const r = await pool.query('SELECT id, name, name_ar, status FROM pharmacies.pharmacies WHERE owner_id=$1', [((_a = req.user) === null || _a === void 0 ? void 0 : _a.sub) || ((_b = req.user) === null || _b === void 0 ? void 0 : _b.userId)]);
+            if (!r.rows.length)
+                return res.status(404).json({ success: false, error: { title: 'الصيدلية غير موجودة' } });
+            res.json({ success: true, data: r.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
     // ─── PHARMACY SELF-SETTINGS (owner updates their own delivery rate) ────────
     router.get('/my/settings', shared_middleware_1.authenticate, async (req, res, next) => {
         try {
@@ -387,8 +400,19 @@ async function bootstrap() {
     });
     router.get('/admin-requests', async (req, res, next) => {
         try {
-            const { status } = req.query;
-            const r = await pool.query(`SELECT * FROM public.admin_requests ${status ? 'WHERE status=$1' : ''} ORDER BY created_at DESC`, status ? [status] : []);
+            const { status, requester_id } = req.query;
+            const conditions = [];
+            const params = [];
+            if (status) {
+                params.push(status);
+                conditions.push(`status=$${params.length}`);
+            }
+            if (requester_id) {
+                params.push(requester_id);
+                conditions.push(`requester_id=$${params.length}`);
+            }
+            const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+            const r = await pool.query(`SELECT * FROM public.admin_requests ${where} ORDER BY created_at DESC`, params);
             res.json({ success: true, data: r.rows });
         }
         catch (err) {
