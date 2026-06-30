@@ -52,24 +52,30 @@ export default function WarehousesPage() {
 
   return (
     <div className="space-y-6" dir="rtl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">إدارة المذاخر</h1>
-        <button onClick={() => setShowAdd(true)}
-          className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
-          <Plus className="w-4 h-4" /> إضافة مخزن
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="bg-sky-100 text-sky-700 text-xs font-medium px-2.5 py-1 rounded-full">{warehouses.length} إجمالي</span>
+          <span className="bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">{warehouses.filter(w=>w.status==='active').length} نشط</span>
+          <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1 rounded-full">{warehouses.filter(w=>w.status==='pending_verification').length} معلق</span>
+          <span className="bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">{warehouses.filter(w=>w.status==='suspended').length} موقوف</span>
+          <button onClick={() => setShowAdd(true)}
+            className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
+            <Plus className="w-4 h-4" /> إضافة مخزن
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'إجمالي المذاخر', value: warehouses.length, color: 'text-indigo-600' },
+          { label: 'إجمالي', value: warehouses.length, color: 'text-sky-600' },
           { label: 'نشط', value: warehouses.filter(w => w.status === 'active').length, color: 'text-green-600' },
-          { label: 'في انتظار التحقق', value: warehouses.filter(w => w.status === 'pending_verification').length, color: 'text-amber-600' },
-          { label: 'إجمالي المنتجات', value: warehouses.reduce((s, w) => s + w.products, 0), color: 'text-sky-600' },
+          { label: 'معلق', value: warehouses.filter(w => w.status === 'pending_verification').length, color: 'text-amber-600' },
+          { label: 'موقوف', value: warehouses.filter(w => w.status === 'suspended').length, color: 'text-red-600' },
         ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
-            <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+          <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm text-center">
+            <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
             <p className="text-xs text-gray-500 mt-1">{s.label}</p>
           </div>
         ))}

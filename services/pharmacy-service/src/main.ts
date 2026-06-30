@@ -135,6 +135,81 @@ async function bootstrap() {
     }
   });
 
+  // ─── ADMIN ENDPOINTS ───────────────────────────────────────────────
+  router.get('/admin/all', async (_req, res, next) => {
+    try {
+      const result = await pool.query(`
+        SELECT p.*, u.email as owner_email, u.phone as owner_phone
+        FROM pharmacies.pharmacies p
+        LEFT JOIN auth.users u ON u.id = p.owner_id
+        WHERE p.status != 'deleted'
+        ORDER BY p.created_at DESC
+      `);
+      res.json({ success: true, data: result.rows });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/admin/:id/status', async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const allowed = ['active', 'suspended', 'rejected', 'pending_verification'];
+      if (!allowed.includes(status)) return res.status(400).json({ success: false, error: { title: 'Invalid status' } });
+
+      await client.query('BEGIN');
+
+      // Update pharmacy status
+      await client.query(
+        'UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2',
+        [status, id]
+      );
+
+      // Also update the owner's auth.users status so they can log in
+      const userStatus = status === 'active' ? 'active'
+        : status === 'suspended' ? 'suspended'
+        : status === 'rejected' ? 'rejected'
+        : 'pending_verification';
+
+      await client.query(`
+        UPDATE auth.users SET status=$1, updated_at=NOW()
+        WHERE id = (SELECT owner_id FROM pharmacies.pharmacies WHERE id=$2)
+      `, [userStatus, id]);
+
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      next(err);
+    } finally {
+      client.release();
+    }
+  });
+
+  router.delete('/admin/:id', async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Soft-delete pharmacy
+      await client.query(
+        "UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1",
+        [req.params.id]
+      );
+      // Also deactivate the owner account
+      await client.query(`
+        UPDATE auth.users SET status='deleted', deleted_at=NOW()
+        WHERE id = (SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)
+      `, [req.params.id]);
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      next(err);
+    } finally {
+      client.release();
+    }
+  });
+
   // ─── PUBLIC ────────────────────────────────────────────────────────
   router.get('/nearby', async (req, res, next) => {
     try {

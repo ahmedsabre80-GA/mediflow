@@ -82,15 +82,33 @@ export default function DoctorsPage() {
     <div className="space-y-6" dir="rtl">
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm font-medium">{toast}</div>}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">إدارة الأطباء</h1>
-        <div className="flex items-center gap-3">
-          <span className="bg-teal-100 text-teal-700 text-sm font-medium px-3 py-1 rounded-full">{doctors.length} طبيب — {pending} معلق</span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="bg-sky-100 text-sky-700 text-xs font-medium px-2.5 py-1 rounded-full">{doctors.length} إجمالي</span>
+          <span className="bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1 rounded-full">{doctors.filter(d=>d.status==='active').length} نشط</span>
+          <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1 rounded-full">{doctors.filter(d=>d.status==='pending_verification').length} معلق</span>
+          <span className="bg-red-100 text-red-700 text-xs font-medium px-2.5 py-1 rounded-full">{doctors.filter(d=>d.status==='suspended').length} موقوف</span>
           <button onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 bg-teal-500 hover:bg-teal-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
             + إضافة طبيب
           </button>
         </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: 'إجمالي', value: doctors.length, color: 'text-sky-600' },
+          { label: 'نشط', value: doctors.filter(d => d.status === 'active').length, color: 'text-green-600' },
+          { label: 'معلق', value: doctors.filter(d => d.status === 'pending_verification').length, color: 'text-amber-600' },
+          { label: 'موقوف', value: doctors.filter(d => d.status === 'suspended').length, color: 'text-red-600' },
+        ].map(s => (
+          <div key={s.label} className="bg-white rounded-2xl shadow-sm p-5 text-center">
+            <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
+            <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+          </div>
+        ))}
       </div>
 
       {/* Add Modal */}
