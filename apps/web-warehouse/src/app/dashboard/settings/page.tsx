@@ -146,7 +146,6 @@ export default function WarehouseSettingsPage() {
                   }`}
                     style={{
                       backgroundColor: preset.value,
-                      ringColor: preset.value,
                     }} />
                   <span className="text-xs text-gray-600">{preset.name}</span>
                 </button>
