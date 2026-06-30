@@ -6,6 +6,7 @@ import { Loader2, Stethoscope, Upload, FileCheck } from 'lucide-react';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
+const REQUESTS_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 const SPECIALIZATIONS = [
   'طب عام', 'طب الأطفال', 'طب القلب', 'طب الأعصاب', 'طب العيون',
@@ -83,7 +84,26 @@ export default function DoctorRegisterPage() {
       }
 
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
-      if (data.data?.requiresApproval) { router.push('/auth/pending'); return; }
+      if (data.data?.requiresApproval) {
+        // Submit approval request to admin portal
+        await fetch(`${REQUESTS_API}/admin-requests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'doctor',
+            requesterId: data.data.userId,
+            requesterName: `${form.firstName} ${form.lastName}`,
+            requesterEntity: form.specialization || 'طبيب',
+            actionType: 'registration',
+            employeeName: `${form.firstName} ${form.lastName}`,
+            employeeEmail: form.email,
+            employeeRole: form.specialization || 'طبيب',
+            reason: `رقم الترخيص: ${form.licenseNumber}`,
+          }),
+        }).catch(() => {});
+        router.push('/auth/pending');
+        return;
+      }
       localStorage.setItem('doctor-token', data.data.accessToken);
       localStorage.setItem('doctor-id', data.data.userId);
       router.push('/dashboard');

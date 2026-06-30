@@ -138,7 +138,17 @@ async function bootstrap() {
 
   const app = express();
   app.use(helmet());
-  app.use(cors({ origin: (process.env.ALLOWED_ORIGINS || '').split(','), credentials: true }));
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // non-browser / server-to-server
+      const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /localhost/.test(origin)) {
+        return cb(null, true);
+      }
+      cb(new Error('CORS: origin not allowed'));
+    },
+    credentials: true,
+  }));
   app.use(express.json({ limit: '50mb' }));
   app.use(traceIdMiddleware);
   app.use(requestLogger);
