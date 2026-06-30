@@ -1,16 +1,18 @@
 'use client';
 import { useState } from 'react';
-import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, UserCog, Copy, CheckCircle } from 'lucide-react';
+import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Copy, CheckCircle, Bell, ClipboardList, Send, UserPlus, UserMinus } from 'lucide-react';
+import { addLocalNotification } from '@/lib/portalNotifications';
 
+const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 
 const PERMISSION_GROUPS = [
-  { group: 'الطلبات', permissions: [{ key: 'orders:read', label: 'عرض الطلبات' }, { key: 'orders:manage', label: 'قبول/رفض الطلبات' }, { key: 'orders:dispatch', label: 'إرسال الطلبات' }, { key: 'orders:cancel', label: 'إلغاء الطلبات' }] },
-  { group: 'المخزون', permissions: [{ key: 'inventory:read', label: 'عرض المخزون' }, { key: 'inventory:write', label: 'تعديل المخزون' }, { key: 'inventory:delete', label: 'حذف من المخزون' }] },
-  { group: 'الوصفات الطبية', permissions: [{ key: 'prescriptions:verify', label: 'التحقق من الوصفات' }, { key: 'prescriptions:dispense', label: 'صرف الوصفات' }] },
-  { group: 'العملاء', permissions: [{ key: 'customers:read', label: 'عرض العملاء' }, { key: 'customers:contact', label: 'التواصل مع العملاء' }] },
-  { group: 'التقارير', permissions: [{ key: 'reports:read', label: 'عرض التقارير' }, { key: 'reports:export', label: 'تصدير التقارير' }] },
-  { group: 'الإعدادات والموظفون', permissions: [{ key: 'settings:read', label: 'عرض الإعدادات' }, { key: 'employees:read', label: 'عرض الموظفين' }, { key: 'employees:manage', label: 'إضافة/تعديل الموظفين' }] },
+  { group: 'الطلبات', permissions: [{ key: 'orders:read', label: 'عرض الطلبات' }, { key: 'orders:manage', label: 'قبول/رفض' }, { key: 'orders:dispatch', label: 'إرسال' }, { key: 'orders:cancel', label: 'إلغاء' }] },
+  { group: 'المخزون', permissions: [{ key: 'inventory:read', label: 'عرض المخزون' }, { key: 'inventory:write', label: 'تعديل' }, { key: 'inventory:delete', label: 'حذف' }] },
+  { group: 'الوصفات', permissions: [{ key: 'prescriptions:verify', label: 'تحقق' }, { key: 'prescriptions:dispense', label: 'صرف' }] },
+  { group: 'العملاء', permissions: [{ key: 'customers:read', label: 'عرض' }, { key: 'customers:contact', label: 'تواصل' }] },
+  { group: 'التقارير', permissions: [{ key: 'reports:read', label: 'عرض' }, { key: 'reports:export', label: 'تصدير' }] },
+  { group: 'الإعدادات والموظفون', permissions: [{ key: 'settings:read', label: 'عرض الإعدادات' }, { key: 'employees:read', label: 'عرض الموظفين' }, { key: 'employees:manage', label: 'إدارة الموظفين' }] },
 ];
 
 const ROLE_PRESETS: Record<string, string[]> = {
@@ -38,29 +40,154 @@ function generatePassword() {
 
 interface Employee { id: string; name: string; email: string; role: string; permissions: string[]; status: 'active' | 'suspended'; addedAt: string; }
 
+const ACTIVITY_LOG = [
+  { id: '1', action: 'تسجيل دخول', user: 'محمد أحمد', time: 'منذ ساعتين' },
+  { id: '2', action: 'تعديل مخزون دواء باراسيتامول', user: 'محمد أحمد', time: 'منذ 3 ساعات' },
+  { id: '3', action: 'قبول طلب رقم #1042', user: 'سارة خالد', time: 'منذ 5 ساعات' },
+  { id: '4', action: 'تسجيل خروج', user: 'سارة خالد', time: 'أمس 18:00' },
+];
+
 export default function PharmacyEmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [tab, setTab] = useState<'employees' | 'activity' | 'requests'>('employees');
   const [showModal, setShowModal] = useState(false);
   const [editEmp, setEditEmp] = useState<Employee | null>(null);
   const [credentials, setCredentials] = useState<{ name: string; email: string; password: string } | null>(null);
+  const [notifTarget, setNotifTarget] = useState<Employee | null>(null);
+  const [notifMsg, setNotifMsg] = useState('');
+  const [showAdminReq, setShowAdminReq] = useState(false);
+  const [reqType, setReqType] = useState<'add' | 'remove'>('add');
+  const [reqName, setReqName] = useState('');
+  const [reqEmail, setReqEmail] = useState('');
+  const [reqRole, setReqRole] = useState('');
+  const [reqReason, setReqReason] = useState('');
+  const [reqSent, setReqSent] = useState(false);
+  const [reqLoading, setReqLoading] = useState(false);
+
+  const sendNotification = () => {
+    if (!notifTarget || !notifMsg.trim()) return;
+    addLocalNotification(notifMsg, 'مدير الصيدلية');
+    setNotifTarget(null);
+    setNotifMsg('');
+  };
+
+  const submitAdminRequest = async () => {
+    setReqLoading(true);
+    try {
+      await fetch(`${API}/admin-requests`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portalType: 'pharmacy', requesterId: 'pharmacy-owner', requesterName: 'مدير الصيدلية', requesterEntity: 'الصيدلية', actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
+      });
+    } catch {}
+    setReqSent(true); setReqLoading(false);
+    setTimeout(() => { setShowAdminReq(false); setReqSent(false); setReqName(''); setReqEmail(''); setReqRole(''); setReqReason(''); }, 2000);
+  };
 
   return (
     <div className="space-y-6" dir="rtl">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">إدارة الموظفين والصلاحيات</h1>
-        <button onClick={() => { setEditEmp(null); setShowModal(true); }}
-          className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
-          <Plus className="w-4 h-4" /> إضافة موظف
-        </button>
+        <h1 className="text-2xl font-bold text-gray-900">الموظفون وإدارة الصلاحيات</h1>
+        <div className="flex gap-2">
+          <button onClick={() => { setShowAdminReq(true); setReqType('add'); }}
+            className="flex items-center gap-2 bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 px-3 py-2 rounded-xl text-sm font-medium">
+            <ClipboardList className="w-4 h-4" /> طلب إلى الإدارة
+          </button>
+          <button onClick={() => { setEditEmp(null); setShowModal(true); }}
+            className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium">
+            <Plus className="w-4 h-4" /> إضافة موظف
+          </button>
+        </div>
       </div>
 
-      {/* Credentials modal shown after adding */}
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {([['employees', 'الموظفون'], ['activity', 'سجل النشاط'], ['requests', 'الطلبات']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === key ? 'bg-white text-sky-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'employees' && (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            {[{ label: 'إجمالي الموظفين', value: employees.length }, { label: 'نشط', value: employees.filter(e => e.status === 'active').length }, { label: 'موقوف', value: employees.filter(e => e.status === 'suspended').length }].map(s => (
+              <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-sky-600">{s.value}</p>
+                <p className="text-sm text-gray-500 mt-1">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>{['الموظف', 'الدور', 'الصلاحيات', 'الحالة', 'الإجراءات'].map(h => <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {employees.length === 0 ? (
+                  <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">لا يوجد موظفون — اضغط "إضافة موظف" للبدء</td></tr>
+                ) : employees.map(emp => {
+                  const roleInfo = ROLE_LABELS[emp.role] || { label: emp.role, badge: 'bg-gray-100 text-gray-700' };
+                  return (
+                    <tr key={emp.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-sky-100 rounded-full flex items-center justify-center"><span className="text-sky-700 font-bold text-sm">{emp.name[0]}</span></div>
+                          <div><p className="font-medium text-gray-900 text-sm">{emp.name}</p><p className="text-xs text-gray-500">{emp.email}</p></div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.badge}`}>{roleInfo.label}</span></td>
+                      <td className="px-6 py-4"><span className="text-xs text-gray-600 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />{emp.permissions.length} صلاحية</span></td>
+                      <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${emp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{emp.status === 'active' ? 'نشط' : 'موقوف'}</span></td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button onClick={() => setNotifTarget(emp)} title="إرسال إشعار" className="p-1.5 rounded-lg hover:bg-sky-50"><Bell className="w-4 h-4 text-sky-500" /></button>
+                          <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100"><Edit2 className="w-4 h-4 text-gray-600" /></button>
+                          <button onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))} className="p-1.5 rounded-lg hover:bg-gray-100">
+                            {emp.status === 'active' ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
+                          </button>
+                          <button onClick={() => setEmployees(prev => prev.filter(e => e.id !== emp.id))} className="p-1.5 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4 text-red-500" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tab === 'activity' && (
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b"><h2 className="font-semibold text-gray-900">سجل نشاط الموظفين</h2></div>
+          <div className="divide-y">
+            {ACTIVITY_LOG.map(log => (
+              <div key={log.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+                <span className="text-xs text-gray-400">{log.time}</span>
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-900">{log.action}</p>
+                  <p className="text-xs text-gray-500">{log.user}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'requests' && (
+        <div className="bg-white rounded-2xl shadow-sm p-6">
+          <p className="text-gray-500 text-sm">استخدم زر "طلب إلى الإدارة" لإرسال طلبات إضافة أو حذف موظفين. ستظهر الطلبات هنا بعد الإرسال.</p>
+        </div>
+      )}
+
+      {/* Credentials modal */}
       {credentials && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" dir="rtl">
-            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-green-600" />
-            </div>
+            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="w-8 h-8 text-green-600" /></div>
             <h2 className="text-lg font-bold text-gray-900 mb-1">تم إنشاء الحساب</h2>
             <p className="text-sm text-gray-500 mb-5">احفظ بيانات الدخول وأرسلها للموظف</p>
             <div className="bg-gray-50 rounded-xl p-4 space-y-3 text-right mb-5">
@@ -74,59 +201,65 @@ export default function PharmacyEmployeesPage() {
               </div>
             </div>
             <p className="text-xs text-red-500 mb-4">⚠️ لن تتمكن من رؤية كلمة المرور مرة أخرى</p>
-            <button onClick={() => setCredentials(null)}
-              className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">
-              حسناً، تم الحفظ
-            </button>
+            <button onClick={() => setCredentials(null)} className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">حسناً، تم الحفظ</button>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
-        {[{ label: 'إجمالي الموظفين', value: employees.length }, { label: 'نشط', value: employees.filter(e => e.status === 'active').length }, { label: 'موقوف', value: employees.filter(e => e.status === 'suspended').length }].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
-            <p className="text-2xl font-bold text-sky-600">{s.value}</p>
-            <p className="text-sm text-gray-500 mt-1">{s.label}</p>
+      {/* Send notification modal */}
+      {notifTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6" dir="rtl">
+            <h2 className="font-bold text-gray-900 mb-1">إرسال إشعار</h2>
+            <p className="text-sm text-gray-500 mb-4">إلى: {notifTarget.name}</p>
+            <textarea value={notifMsg} onChange={e => setNotifMsg(e.target.value)} rows={3}
+              placeholder="اكتب رسالة الإشعار هنا..."
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setNotifTarget(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={sendNotification} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+                <Send className="w-4 h-4" /> إرسال
+              </button>
+            </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b">
-            <tr>{['الموظف', 'الدور', 'الصلاحيات', 'الحالة', 'الإجراءات'].map(h => <th key={h} className="px-6 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {employees.length === 0 ? (
-              <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">لا يوجد موظفون — اضغط "إضافة موظف" للبدء</td></tr>
-            ) : employees.map(emp => {
-              const roleInfo = ROLE_LABELS[emp.role] || { label: emp.role, badge: 'bg-gray-100 text-gray-700' };
-              return (
-                <tr key={emp.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-sky-100 rounded-full flex items-center justify-center"><span className="text-sky-700 font-bold text-sm">{emp.name[0]}</span></div>
-                      <div><p className="font-medium text-gray-900 text-sm">{emp.name}</p><p className="text-xs text-gray-500">{emp.email}</p></div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.badge}`}>{roleInfo.label}</span></td>
-                  <td className="px-6 py-4"><span className="text-xs text-gray-600 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />{emp.permissions.length} صلاحية</span></td>
-                  <td className="px-6 py-4"><span className={`text-xs font-medium px-2.5 py-1 rounded-full ${emp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{emp.status === 'active' ? 'نشط' : 'موقوف'}</span></td>
-                  <td className="px-6 py-4">
-                    <div className="flex gap-2">
-                      <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100"><Edit2 className="w-4 h-4 text-gray-600" /></button>
-                      <button onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))} className="p-1.5 rounded-lg hover:bg-gray-100">
-                        {emp.status === 'active' ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
-                      </button>
-                      <button onClick={() => setEmployees(prev => prev.filter(e => e.id !== emp.id))} className="p-1.5 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4 text-red-500" /></button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {/* Admin request modal */}
+      {showAdminReq && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
+            {reqSent ? (
+              <div className="text-center py-4">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                <p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p>
+              </div>
+            ) : (
+              <>
+                <h2 className="font-bold text-gray-900 mb-4">طلب إلى إدارة المنصة</h2>
+                <div className="flex gap-2 mb-4">
+                  <button onClick={() => setReqType('add')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'add' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}><UserPlus className="w-4 h-4" /> إضافة موظف</button>
+                  <button onClick={() => setReqType('remove')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'remove' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600'}`}><UserMinus className="w-4 h-4" /> حذف موظف</button>
+                </div>
+                <div className="space-y-3">
+                  <input value={reqName} onChange={e => setReqName(e.target.value)} placeholder="اسم الموظف *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  <input type="email" dir="ltr" value={reqEmail} onChange={e => setReqEmail(e.target.value)} placeholder="البريد الإلكتروني *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
+                  <input value={reqRole} onChange={e => setReqRole(e.target.value)} placeholder="الدور الوظيفي (صيدلاني، كاشير...)" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} rows={2} placeholder="سبب الطلب" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+                </div>
+                <div className="flex gap-3 mt-4">
+                  <button onClick={() => setShowAdminReq(false)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+                  <button onClick={submitAdminRequest} disabled={reqLoading || !reqName || !reqEmail}
+                    className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2">
+                    {reqLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    إرسال الطلب
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <EmployeeModal
@@ -162,7 +295,6 @@ function EmployeeModal({ employee, onClose, onSave }: {
 
   const handleSave = async () => {
     if (!name || !email) { setError('الاسم والبريد الإلكتروني مطلوبان'); return; }
-    if (!employee && (!password || password.length < 8)) { setError('كلمة المرور يجب أن تكون 8 أحرف على الأقل'); return; }
     setLoading(true); setError('');
     try {
       if (!employee) {
@@ -191,43 +323,29 @@ function EmployeeModal({ employee, onClose, onSave }: {
         </div>
         <div className="p-6 space-y-5">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{error}</div>}
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">الاسم الكامل *</label>
-              <input dir="auto" value={name} onChange={e => setName(e.target.value)} placeholder="محمد أحمد"
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+              <input dir="auto" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">البريد الإلكتروني * <span className="text-gray-400 font-normal">(اسم المستخدم)</span></label>
-              <input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} placeholder="employee@example.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">البريد الإلكتروني *</label>
+              <input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
             </div>
             {!employee && (
               <div className="col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">كلمة المرور *</label>
                 <div className="flex gap-2">
                   <div className="flex-1 relative">
-                    <input type={showPass ? 'text' : 'password'} dir="ltr" value={password} onChange={e => setPassword(e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono text-left pr-10" />
-                    <button type="button" onClick={() => setShowPass(v => !v)} className="absolute left-3 top-3.5 text-gray-400">
-                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+                    <input type={showPass ? 'text' : 'password'} dir="ltr" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono text-left pr-10" />
+                    <button type="button" onClick={() => setShowPass(v => !v)} className="absolute left-3 top-3.5 text-gray-400">{showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                   </div>
-                  <button type="button" onClick={() => setPassword(generatePassword())}
-                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 whitespace-nowrap">
-                    توليد تلقائي
-                  </button>
-                  <button type="button" onClick={() => navigator.clipboard?.writeText(password)}
-                    className="px-3 py-2 bg-sky-50 hover:bg-sky-100 rounded-xl text-sky-600">
-                    <Copy className="w-4 h-4" />
-                  </button>
+                  <button type="button" onClick={() => setPassword(generatePassword())} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700">توليد تلقائي</button>
+                  <button type="button" onClick={() => navigator.clipboard?.writeText(password)} className="px-3 py-2 bg-sky-50 hover:bg-sky-100 rounded-xl text-sky-600"><Copy className="w-4 h-4" /></button>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">البريد + كلمة المرور هي بيانات دخول الموظف — احفظها وأرسلها له</p>
               </div>
             )}
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">الدور الوظيفي</label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -239,7 +357,6 @@ function EmployeeModal({ employee, onClose, onSave }: {
               ))}
             </div>
           </div>
-
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs text-sky-600 font-medium">{permissions.length} صلاحية محددة</span>
@@ -248,12 +365,7 @@ function EmployeeModal({ employee, onClose, onSave }: {
             <div className="space-y-3">
               {PERMISSION_GROUPS.map(group => (
                 <div key={group.group} className="bg-gray-50 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <button onClick={() => { const keys = group.permissions.map(p => p.key); const all = keys.every(k => permissions.includes(k)); setPermissions(prev => all ? prev.filter(p => !keys.includes(p)) : Array.from(new Set([...prev, ...keys]))); setSelectedRole('custom'); }} className="text-xs text-sky-600 hover:underline">
-                      {group.permissions.every(p => permissions.includes(p.key)) ? 'إلغاء الكل' : 'تحديد الكل'}
-                    </button>
-                    <p className="font-semibold text-gray-800 text-sm">{group.group}</p>
-                  </div>
+                  <p className="font-semibold text-gray-800 text-sm mb-3">{group.group}</p>
                   <div className="grid grid-cols-2 gap-2">
                     {group.permissions.map(perm => (
                       <label key={perm.key} className="flex items-center gap-2 cursor-pointer flex-row-reverse justify-end">

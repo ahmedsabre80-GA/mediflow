@@ -1,9 +1,10 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { logAction } from '@/lib/auditSystem';
-import { CheckCircle, XCircle, Clock, Building2, Stethoscope, Package, Truck, History } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Building2, Stethoscope, Package, Truck, History, RefreshCw } from 'lucide-react';
 
 const STORE_KEY = 'admin-approvals';
+const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 const INITIAL_REQUESTS: any[] = [];
 
@@ -26,13 +27,46 @@ export default function ApprovalsPage() {
   const [toast, setToast] = useState('');
   const [showHistory, setShowHistory] = useState(false);
 
-  // Load from localStorage on mount
-  useEffect(() => {
+  const [loadingApi, setLoadingApi] = useState(false);
+
+  const loadRequests = async () => {
+    // Load localStorage first
     const saved = localStorage.getItem(STORE_KEY);
-    if (saved) {
-      try { setRequests(JSON.parse(saved)); } catch {}
-    }
-  }, []);
+    let local: any[] = [];
+    if (saved) { try { local = JSON.parse(saved); } catch {} }
+
+    // Then fetch from backend and merge (backend requests have no duplicates with local ones)
+    setLoadingApi(true);
+    try {
+      const r = await fetch(`${API}/admin-requests`);
+      const d = await r.json();
+      if (d.success && Array.isArray(d.data)) {
+        const apiReqs = d.data.map((req: any) => ({
+          id: `api-${req.id}`,
+          type: req.portal_type === 'pharmacy' ? 'pharmacy_employee' : req.portal_type === 'doctor' ? 'doctor_employee' : 'warehouse_employee',
+          requesterName: req.requester_name,
+          requesterType: req.requester_entity,
+          employeeName: req.employee_name,
+          employeeEmail: req.employee_email,
+          employeeRole: req.employee_role,
+          status: req.status === 'pending' ? 'pending' : req.status === 'approved' ? 'approved' : 'rejected',
+          requestedAt: new Date(req.created_at).toLocaleString('ar-IQ'),
+          decidedAt: req.decided_at ? new Date(req.decided_at).toLocaleString('ar-IQ') : '',
+          _apiId: req.id,
+          source: 'api',
+        }));
+        // Merge: api requests first, then local ones not already in api
+        const merged = [...apiReqs, ...local.filter((l: any) => !l.source)];
+        setRequests(merged);
+        return;
+      }
+    } catch {}
+    setRequests(local);
+    setLoadingApi(false);
+  };
+
+  // Load from localStorage on mount
+  useEffect(() => { loadRequests(); }, []);
 
   // Save to localStorage on every change
   const saveRequests = (updated: typeof INITIAL_REQUESTS) => {
@@ -42,23 +76,20 @@ export default function ApprovalsPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
-  const approve = (id: string) => {
+  const decide = async (id: string, decision: 'approved' | 'rejected') => {
     const now = new Date().toLocaleString('ar-IQ');
     const req = requests.find(r => r.id === id);
-    const updated = requests.map(r => r.id === id ? { ...r, status: 'approved', decidedAt: now } : r);
+    const updated = requests.map(r => r.id === id ? { ...r, status: decision, decidedAt: now } : r);
     saveRequests(updated);
-    if (req) logAction('approve', 'موافقة على طلب إضافة موظف', req.requesterType, `${req.employeeName} — ${req.requesterName}`, id, '/dashboard/approvals');
-    showToast('✅ تمت الموافقة على الطلب وتم حفظها');
+    if (req?._apiId) {
+      try { await fetch(`${API}/admin-requests/${req._apiId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: decision }) }); } catch {}
+    }
+    if (req) logAction(decision === 'approved' ? 'approve' : 'reject', `${decision === 'approved' ? 'موافقة' : 'رفض'} على طلب موظف`, req.requesterType, `${req.employeeName} — ${req.requesterName}`, id, '/dashboard/approvals');
+    showToast(decision === 'approved' ? '✅ تمت الموافقة على الطلب' : '❌ تم رفض الطلب');
   };
 
-  const reject = (id: string) => {
-    const now = new Date().toLocaleString('ar-IQ');
-    const req = requests.find(r => r.id === id);
-    const updated = requests.map(r => r.id === id ? { ...r, status: 'rejected', decidedAt: now } : r);
-    saveRequests(updated);
-    if (req) logAction('reject', 'رفض طلب إضافة موظف', req.requesterType, `${req.employeeName} — ${req.requesterName}`, id, '/dashboard/approvals');
-    showToast('❌ تم رفض الطلب وتم حفظه');
-  };
+  const approve = (id: string) => decide(id, 'approved');
+  const reject = (id: string) => decide(id, 'rejected');
 
   const filtered = requests.filter(r => filter === 'all' || r.status === filter);
   const pending = requests.filter(r => r.status === 'pending').length;
@@ -77,6 +108,10 @@ export default function ApprovalsPage() {
           <button onClick={() => setShowHistory(!showHistory)}
             className="flex items-center gap-2 border border-gray-300 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
             <History className="w-4 h-4" /> سجل القرارات ({history.length})
+          </button>
+          <button onClick={loadRequests} disabled={loadingApi}
+            className="flex items-center gap-2 border border-gray-300 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            <RefreshCw className={`w-4 h-4 ${loadingApi ? 'animate-spin' : ''}`} />
           </button>
           {pending > 0 && (
             <span className="bg-red-500 text-white text-sm font-bold px-3 py-1.5 rounded-full">
