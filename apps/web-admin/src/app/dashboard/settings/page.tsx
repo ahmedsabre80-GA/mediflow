@@ -51,7 +51,15 @@ export default function SettingsPage() {
       .catch(() => {});
   }, []);
 
-  const update = (key: string, value: any) => setSettings(s => ({ ...s, [key]: value }));
+  const update = (key: string, value: any) => {
+    setSettings(s => {
+      const next = { ...s, [key]: value };
+      // Persist security toggles to localStorage immediately so they survive navigation
+      const toSave = { requireCertificate: next.requireCertificate, logAdminActions: next.logAdminActions };
+      localStorage.setItem('mediflow-platform-settings', JSON.stringify(toSave));
+      return next;
+    });
+  };
 
   const handleSave = async () => {
     setSaving(true);

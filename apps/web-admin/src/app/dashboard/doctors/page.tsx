@@ -96,21 +96,6 @@ export default function DoctorsPage() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-4 gap-4">
-        {[
-          { label: 'إجمالي', value: doctors.length, color: 'text-sky-600' },
-          { label: 'نشط', value: doctors.filter(d => d.status === 'active').length, color: 'text-green-600' },
-          { label: 'معلق', value: doctors.filter(d => d.status === 'pending_verification').length, color: 'text-amber-600' },
-          { label: 'موقوف', value: doctors.filter(d => d.status === 'suspended').length, color: 'text-red-600' },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl shadow-sm p-5 text-center">
-            <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{s.label}</p>
-          </div>
-        ))}
-      </div>
-
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -164,10 +149,10 @@ export default function DoctorsPage() {
 
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'إجمالي', value: doctors.length, color: 'text-teal-600' },
+          { label: 'إجمالي', value: doctors.length, color: 'text-sky-600' },
           { label: 'نشط', value: doctors.filter(d => d.status === 'active').length, color: 'text-green-600' },
           { label: 'معلق', value: pending, color: 'text-amber-600' },
-          { label: 'إجمالي الاستشارات', value: doctors.reduce((s, d) => s + d.consultations, 0), color: 'text-sky-600' },
+          { label: 'موقوف', value: doctors.filter(d => d.status === 'suspended').length, color: 'text-red-600' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
             <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
