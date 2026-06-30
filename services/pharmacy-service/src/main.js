@@ -1,531 +1,448 @@
-require('dotenv').config();
-const express = require('express');
-const helmet = require('helmet');
-const cors = require('cors');
-const { Pool } = require('pg');
-
-const app = express();
-const PORT = process.env.PORT || 8005;
-
-app.use(helmet());
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '50mb' }));
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
-    ? { rejectUnauthorized: false } : false,
-  max: 10,
-});
-
-// Auth middleware
-function authenticate(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, error: { title: 'Unauthorized', status: 401 } });
-  }
-  try {
-    const jwt = require('jsonwebtoken');
-    const secret = process.env.JWT_SECRET || 'mediflow-secret-key-change-in-production';
-    req.user = jwt.verify(auth.slice(7), secret);
-    next();
-  } catch {
-    return res.status(401).json({ success: false, error: { title: 'Invalid token', status: 401 } });
-  }
-}
-
-// ─── HEALTH ──────────────────────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/health/live', (req, res) => {
-  res.json({ status: 'healthy', service: 'pharmacy-service' });
-});
-
-// ─── HAVERSINE DISTANCE (no PostGIS needed) ──────────────────────────────────
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)**2 +
-    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-
-// ─── NEARBY PHARMACIES ───────────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/nearby', async (req, res) => {
-  try {
-    const { lat = 33.3152, lng = 44.3661, radiusKm = 10, limit = 20 } = req.query;
-    const userLat = parseFloat(lat);
-    const userLng = parseFloat(lng);
-    const radius = parseFloat(radiusKm);
-    const maxLimit = parseInt(limit);
-
-    // Get all active pharmacies with coordinates
-    const result = await pool.query(`
-      SELECT id, name, name_ar, phone, address, city, latitude, longitude,
-             rating, status
-      FROM pharmacies.pharmacies
-      WHERE status = 'active'
-        AND latitude IS NOT NULL
-        AND longitude IS NOT NULL
-    `);
-
-    // Calculate distance in JS (no PostGIS needed)
-    const pharmaciesWithDistance = result.rows
-      .map(p => ({
-        ...p,
-        distance_km: parseFloat(haversineKm(userLat, userLng, parseFloat(p.latitude), parseFloat(p.longitude)).toFixed(2))
-      }))
-      .filter(p => p.distance_km <= radius)
-      .sort((a, b) => a.distance_km - b.distance_km)
-      .slice(0, maxLimit);
-
-    res.json({ success: true, data: pharmaciesWithDistance });
-  } catch (err) {
-    console.error('Nearby error:', err);
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
-  }
-});
-
-// ─── GET PHARMACY BY ID ───────────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/:id', async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM pharmacies.pharmacies WHERE id = $1 AND status != $2',
-      [req.params.id, 'deleted']
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: { title: 'Pharmacy not found', status: 404 } });
-    }
-    res.json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── ADMIN: get ALL pharmacies (any status) ──────────────────────────────────
-app.get('/api/v1/pharmacies/admin/all', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT p.id, p.name, p.name_ar, p.license_number, p.phone,
-             p.address, p.city, p.status, p.rating, p.created_at,
-             u.email AS owner_email,
-             pr.first_name, pr.last_name
-      FROM pharmacies.pharmacies p
-      LEFT JOIN auth.users u ON u.id = p.owner_id
-      LEFT JOIN users.profiles pr ON pr.id = p.owner_id
-      WHERE p.status != 'deleted'
-      ORDER BY p.created_at DESC
-    `);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
-  }
-});
-
-// ─── ADMIN: update pharmacy status ───────────────────────────────────────────
-app.patch('/api/v1/pharmacies/admin/:id/status', async (req, res) => {
-  try {
-    const { status } = req.body;
-    if (!['active','suspended','rejected','pending_verification'].includes(status)) {
-      return res.status(422).json({ success: false, error: { title: 'Invalid status' } });
-    }
-    const result = await pool.query(
-      'UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING id, name_ar, status',
-      [status, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ success: false, error: { title: 'Not found' } });
-    res.json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
-  }
-});
-
-// ─── ADMIN: set pharmacy coordinates ─────────────────────────────────────────
-app.patch('/api/v1/pharmacies/admin/:id/location', async (req, res) => {
-  try {
-    const { lat, lng } = req.body;
-    const result = await pool.query(
-      'UPDATE pharmacies.pharmacies SET latitude=$1, longitude=$2, updated_at=NOW() WHERE id=$3 RETURNING id, latitude, longitude',
-      [lat, lng, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ success: false, error: { title: 'Not found' } });
-    res.json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', detail: err.message } });
-  }
-});
-
-// ─── TEMP: cleanup user+pharmacy by email ────────────────────────────────────
-app.delete('/api/v1/pharmacies/admin/cleanup', async (req, res) => {
-  const { email, secret } = req.body;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
-  try {
-    const u = await pool.query('SELECT id FROM auth.users WHERE LOWER(email)=LOWER($1)', [email]);
-    if (!u.rows.length) return res.status(404).json({ error: 'user not found' });
-    const uid = u.rows[0].id;
-    const p = await pool.query('DELETE FROM pharmacies.pharmacies WHERE owner_id=$1 RETURNING id', [uid]);
-    const r = await pool.query('DELETE FROM auth.users WHERE id=$1 RETURNING email', [uid]);
-    res.json({ success: true, deletedUser: r.rows[0], deletedPharmacies: p.rowCount });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ─── REGISTER FULL: creates account + pharmacy atomically in one request ──────
-app.post('/api/v1/pharmacies/register-full', async (req, res) => {
-  const https = require('https');
-  const AUTH = 'mediflowauth-service-production.up.railway.app';
-
-  const callAuth = (path, method, body) => new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const options = {
-      hostname: AUTH, port: 443, path, method,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
-    };
-    const r = https.request(options, resp => {
-      let d = '';
-      resp.on('data', c => d += c);
-      resp.on('end', () => { try { resolve({ status: resp.statusCode, body: JSON.parse(d) }); } catch { resolve({ status: resp.statusCode, body: {} }); } });
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+require("dotenv/config");
+const express_1 = __importDefault(require("express"));
+const helmet_1 = __importDefault(require("helmet"));
+const cors_1 = __importDefault(require("cors"));
+const pg_1 = require("pg");
+const shared_middleware_1 = require("@mediflow/shared-middleware");
+const express_2 = require("express");
+async function bootstrap() {
+    const pool = new pg_1.Pool({ connectionString: process.env.DATABASE_URL, max: 20 });
+    await pool.connect().then((c) => { console.log('PostgreSQL connected'); c.release(); });
+    // Run lightweight schema migrations
+    await pool.query(`
+    ALTER TABLE pharmacies.pharmacies
+      ADD COLUMN IF NOT EXISTS delivery_rate_per_km INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_min_fee INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_max_km INTEGER DEFAULT 20
+  `).catch(() => { });
+    const app = (0, express_1.default)();
+    app.use((0, helmet_1.default)());
+    app.use((0, cors_1.default)({ origin: (process.env.ALLOWED_ORIGINS || '').split(','), credentials: true }));
+    app.use(express_1.default.json({ limit: '50mb' }));
+    app.use(shared_middleware_1.traceIdMiddleware);
+    app.use(shared_middleware_1.requestLogger);
+    const router = (0, express_2.Router)();
+    // ─── PLATFORM SETTINGS (public read, admin write) ──────────────────
+    router.get('/settings', async (_req, res, next) => {
+        try {
+            const result = await pool.query('SELECT key, value FROM public.platform_settings');
+            const settings = {};
+            result.rows.forEach(r => { settings[r.key] = r.value === 'true'; });
+            res.json({ success: true, data: settings });
+        }
+        catch (err) {
+            next(err);
+        }
     });
-    r.on('error', reject);
-    r.write(payload);
-    r.end();
-  });
-
-  try {
-    const {
-      firstName, lastName, email, phone, password,
-      name, nameAr, licenseNumber, licenseExpiry,
-      pharmacyPhone, address, city, country = 'IQ',
-    } = req.body;
-
-    if (!email || !password || !firstName) {
-      return res.status(422).json({ success: false, error: { title: 'بيانات الحساب ناقصة', status: 422 } });
-    }
-    if (!nameAr || !licenseNumber || !pharmacyPhone || !address) {
-      return res.status(422).json({ success: false, error: { title: 'بيانات الصيدلية ناقصة', status: 422 } });
-    }
-
-    // Step A: create account via auth service
-    const regResp = await callAuth('/api/v1/auth/register', 'POST', {
-      firstName, lastName: lastName || firstName, email, phone, password, role: 'pharmacy_owner',
+    router.patch('/settings', shared_middleware_1.authenticate, (0, shared_middleware_1.requireRole)('admin', 'super_admin'), async (req, res, next) => {
+        try {
+            const allowed = ['require_certificate', 'log_admin_actions'];
+            for (const [key, value] of Object.entries(req.body)) {
+                if (!allowed.includes(key))
+                    continue;
+                await pool.query('INSERT INTO public.platform_settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()', [key, String(value)]);
+            }
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
     });
-
-    let ownerId = null;
-
-    if (regResp.status === 201) {
-      // new account created — userId is in response
-      ownerId = regResp.body?.data?.userId;
-    } else if (regResp.status === 409) {
-      // email exists — login to get userId
-      const loginResp = await callAuth('/api/v1/auth/login', 'POST', { identifier: email, password });
-      if (loginResp.body?.data?.userId) {
-        ownerId = loginResp.body.data.userId;
-      } else if (loginResp.body?.data?.accessToken) {
-        const jwt = require('jsonwebtoken');
-        ownerId = jwt.decode(loginResp.body.data.accessToken)?.sub;
-      } else {
-        return res.status(401).json({ success: false, error: { title: 'البريد مسجل مسبقاً — تأكد من كلمة المرور الصحيحة', status: 401 } });
-      }
-    } else {
-      return res.status(regResp.status).json({ success: false, error: { title: regResp.body?.error?.title || 'فشل إنشاء الحساب', status: regResp.status } });
-    }
-
-    if (!ownerId) {
-      return res.status(500).json({ success: false, error: { title: 'تعذر تحديد هوية المستخدم', status: 500 } });
-    }
-
-    // Step B: create pharmacy record
-    const pharmacyName = nameAr || name;
-    const expiry = licenseExpiry || '2027-12-31';
-
-    try {
-      const result = await pool.query(`
+    // ─── REGISTER FULL (atomic: user + pharmacy in one request) ────────
+    router.post('/register-full', async (req, res, next) => {
+        var _a, _b, _c, _d, _e, _f;
+        const client = await pool.connect();
+        try {
+            const b = req.body;
+            // Check require_certificate setting
+            const settingRow = await client.query("SELECT value FROM public.platform_settings WHERE key='require_certificate'");
+            const requireCert = ((_a = settingRow.rows[0]) === null || _a === void 0 ? void 0 : _a.value) === 'true';
+            if (requireCert && !b.certificateData) {
+                return res.status(422).json({ success: false, error: { title: 'يجب رفع شهادة التسجيل', status: 422 } });
+            }
+            await client.query('BEGIN');
+            // 1. Create user via auth service
+            const AUTH_URL = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app';
+            const authRes = await fetch(`${AUTH_URL}/api/v1/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    firstName: b.firstName,
+                    lastName: b.lastName || b.firstName,
+                    email: b.email,
+                    phone: b.phone,
+                    password: b.password,
+                    role: 'pharmacy_owner',
+                }),
+            });
+            const authData = await authRes.json();
+            let userId;
+            if (!authRes.ok) {
+                // If email exists, try to get the user id via a lookup
+                if (authRes.status === 409) {
+                    const existing = await client.query('SELECT id FROM auth.users WHERE email=$1', [b.email]);
+                    if (!existing.rows.length) {
+                        await client.query('ROLLBACK');
+                        return res.status(409).json({ success: false, error: { title: 'البريد الإلكتروني مسجل مسبقاً — تأكد من كلمة المرور الصحيحة', status: 409 } });
+                    }
+                    userId = existing.rows[0].id;
+                }
+                else {
+                    await client.query('ROLLBACK');
+                    return res.status(authRes.status).json({ success: false, error: (authData === null || authData === void 0 ? void 0 : authData.error) || { title: 'فشل إنشاء الحساب' } });
+                }
+            }
+            else {
+                userId = (_b = authData.data) === null || _b === void 0 ? void 0 : _b.userId;
+            }
+            // 2. Create pharmacy
+            const phRes = await client.query(`
         INSERT INTO pharmacies.pharmacies
-          (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
-        RETURNING id, name, name_ar, status
-      `, [ownerId, pharmacyName, pharmacyName, licenseNumber, expiry, pharmacyPhone, address, city || '', country]);
-
-      res.status(201).json({ success: true, data: result.rows[0] });
-    } catch (dbErr) {
-      if (dbErr.code === '23505') {
-        return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً لصيدلية أخرى', status: 409 } });
-      }
-      // If pharmacy insert fails, delete the newly created account to avoid orphan
-      if (regResp.status === 201) {
-        await callAuth('/api/v1/auth/admin/delete-user', 'DELETE', { email, secret: 'mediflow-delete-2026' }).catch(() => {});
-      }
-      throw dbErr;
-    }
-  } catch (err) {
-    console.error('register-full error:', err.message);
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
-  }
-});
-
-// ─── REGISTER PHARMACY ───────────────────────────────────────────────────────
-// ─── REGISTER WITH EMAIL+PASSWORD (no JWT needed, for pending-approval users) ─
-app.post('/api/v1/pharmacies/register-direct', async (req, res) => {
-  try {
-    const {
-      email: userEmail, password,
-      name, nameAr, licenseNumber, licenseExpiry, phone, email,
-      address, city, country = 'IQ', latitude, longitude
-    } = req.body;
-
-    if (!userEmail || !password) {
-      return res.status(422).json({ success: false, error: { title: 'البريد وكلمة المرور مطلوبة', status: 422 } });
-    }
-
-    // Verify credentials via auth service — no bcrypt dependency needed
-    const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app/api/v1';
-    const https = require('https');
-    const loginBody = JSON.stringify({ identifier: userEmail, password });
-
-    const loginData = await new Promise((resolve, reject) => {
-      const url = new URL(`${AUTH_SERVICE}/auth/login`);
-      const options = {
-        hostname: url.hostname, port: 443, path: url.pathname,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(loginBody) },
-      };
-      const r = https.request(options, resp => {
-        let body = '';
-        resp.on('data', chunk => body += chunk);
-        resp.on('end', () => {
-          try { resolve({ status: resp.statusCode, data: JSON.parse(body) }); }
-          catch { resolve({ status: resp.statusCode, data: {} }); }
-        });
-      });
-      r.on('error', reject);
-      r.write(loginBody);
-      r.end();
+          (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, certificate_data)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING id, name, status
+      `, [
+                userId,
+                b.name || b.nameAr,
+                b.nameAr || b.name,
+                (_c = b.licenseNumber) === null || _c === void 0 ? void 0 : _c.trim(),
+                b.licenseExpiry,
+                ((_d = b.pharmacyPhone) === null || _d === void 0 ? void 0 : _d.trim()) || b.phone,
+                (_e = b.address) === null || _e === void 0 ? void 0 : _e.trim(),
+                (_f = b.city) === null || _f === void 0 ? void 0 : _f.trim(),
+                b.country || 'IQ',
+                b.certificateData || null,
+            ]);
+            // 3. Store certificate separately if provided
+            if (b.certificateData) {
+                await client.query('INSERT INTO public.registration_certificates (user_id, certificate_data, entity_type) VALUES ($1,$2,$3)', [userId, b.certificateData, 'pharmacy']);
+            }
+            await client.query('COMMIT');
+            res.status(201).json({ success: true, data: phRes.rows[0] });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            next(err);
+        }
+        finally {
+            client.release();
+        }
     });
-
-    // Get userId — from success (accessToken) or from pending (403 + data.userId)
-    let ownerId = null;
-    if (loginData.status === 200 && loginData.data?.data?.accessToken) {
-      const jwt = require('jsonwebtoken');
-      try {
-        const decoded = jwt.decode(loginData.data.data.accessToken);
-        ownerId = decoded?.sub;
-      } catch {}
-    } else if (loginData.data?.data?.userId) {
-      // pending_verification → auth service returns userId in data
-      ownerId = loginData.data.data.userId;
-    }
-
-    if (!ownerId) {
-      return res.status(401).json({ success: false, error: { title: 'البريد الإلكتروني أو كلمة المرور غير صحيحة', status: 401 } });
-    }
-
-    const pharmacyName = name || nameAr;
-    const expiry = licenseExpiry || '2027-12-31';
-    if (!pharmacyName || !licenseNumber || !phone || !address) {
-      return res.status(422).json({ success: false, error: { title: 'الاسم ورقم الرخصة والهاتف والعنوان مطلوبة', status: 422 } });
-    }
-
-    const result = await pool.query(`
-      INSERT INTO pharmacies.pharmacies
-        (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
-      ON CONFLICT (license_number) DO NOTHING
-      RETURNING id, name, name_ar, status
-    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, address, city || '', country]);
-
-    if (result.rows.length === 0) {
-      return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
-    }
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    console.error('register-direct error:', err.message);
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
-  }
-});
-
-app.post('/api/v1/pharmacies/register', async (req, res) => {
-  try {
-    const {
-      name, nameAr, licenseNumber, licenseExpiry, phone, email,
-      address, city, country = 'IQ', latitude, longitude, userId
-    } = req.body;
-
-    // Resolve owner_id: from JWT or from userId in body (pending-approval flow)
-    let ownerId = userId || null;
-    const auth = req.headers.authorization;
-    if (auth && auth.startsWith('Bearer ')) {
-      try {
-        const jwt = require('jsonwebtoken');
-        const secret = process.env.JWT_SECRET || 'mediflow-secret-key-change-in-production';
-        const decoded = jwt.verify(auth.slice(7), secret);
-        ownerId = decoded.sub;
-      } catch {
-        // JWT invalid — fall back to userId in body
-      }
-    }
-    if (!ownerId) {
-      return res.status(401).json({ success: false, error: { title: 'Unauthorized', status: 401 } });
-    }
-
-    const pharmacyName = name || nameAr;
-    const expiry = licenseExpiry || '2027-12-31';
-
-    if (!pharmacyName || !licenseNumber || !phone || !address) {
-      return res.status(422).json({ success: false, error: { title: 'الاسم ورقم الرخصة والهاتف والعنوان مطلوبة', status: 422 } });
-    }
-
-    const result = await pool.query(`
-      INSERT INTO pharmacies.pharmacies
-        (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_verification')
-      RETURNING id, name, name_ar, status
-    `, [ownerId, pharmacyName, nameAr || pharmacyName, licenseNumber, expiry, phone, address, city || '', country]);
-
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ success: false, error: { title: 'رقم الرخصة مسجل مسبقاً', status: 409 } });
-    }
-    console.error('Register error:', err.message, err.detail);
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500, detail: err.message } });
-  }
-});
-
-// ─── GET PHARMACY INVENTORY ───────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/:id/inventory', authenticate, async (req, res) => {
-  try {
-    const { search, page = 1, limit = 20 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const result = await pool.query(`
-      SELECT s.*, d.generic_name, d.generic_name_ar, d.brand_name, d.requires_prescription
-      FROM inventory.pharmacy_stock s
-      JOIN products.drugs d ON d.id = s.drug_id
-      WHERE s.pharmacy_id = $1
-        AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
-      ORDER BY d.generic_name
-      LIMIT $3 OFFSET $4
-    `, [req.params.id, search ? `%${search}%` : null, limit, offset]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── ADD INVENTORY ────────────────────────────────────────────────────────────
-app.post('/api/v1/pharmacies/:id/inventory', authenticate, async (req, res) => {
-  try {
-    const { drugId, quantity, sellingPrice, currency = 'IQD', reorderLevel = 10 } = req.body;
-    const result = await pool.query(`
-      INSERT INTO inventory.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      ON CONFLICT (pharmacy_id, drug_id) DO UPDATE
-        SET quantity = EXCLUDED.quantity, selling_price = EXCLUDED.selling_price, updated_at = NOW()
-      RETURNING *
-    `, [req.params.id, drugId, quantity, sellingPrice, currency, reorderLevel]);
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── GET PHARMACY ORDERS ──────────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/:id/orders', authenticate, async (req, res) => {
-  try {
-    const { status, page = 1, limit = 20 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const result = await pool.query(`
-      SELECT o.*, u.email as patient_email
-      FROM orders.orders o
-      JOIN auth.users u ON u.id = o.patient_id
-      WHERE o.pharmacy_id = $1
-        AND ($2::text IS NULL OR o.status = $2)
-      ORDER BY o.created_at DESC
-      LIMIT $3 OFFSET $4
-    `, [req.params.id, status || null, limit, offset]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── GET PHARMACY ANALYTICS ───────────────────────────────────────────────────
-app.get('/api/v1/pharmacies/:id/analytics', authenticate, async (req, res) => {
-  try {
-    const [today, month] = await Promise.all([
-      pool.query(`
-        SELECT COUNT(*) as orders, COALESCE(SUM(total_amount), 0) as revenue
-        FROM orders.orders WHERE pharmacy_id = $1 AND DATE(created_at) = CURRENT_DATE AND status = 'delivered'
-      `, [req.params.id]),
-      pool.query(`
-        SELECT COUNT(*) as orders, COALESCE(SUM(total_amount), 0) as revenue
-        FROM orders.orders WHERE pharmacy_id = $1
-          AND created_at >= DATE_TRUNC('month', NOW()) AND status = 'delivered'
-      `, [req.params.id]),
-    ]);
-    res.json({ success: true, data: { today: today.rows[0], thisMonth: month.rows[0] } });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── SEARCH DRUGS ─────────────────────────────────────────────────────────────
-app.get('/api/v1/medications/search', async (req, res) => {
-  try {
-    const { q, limit = 20 } = req.query;
-    if (!q || q.length < 2) {
-      return res.json({ success: true, data: [] });
-    }
-    const result = await pool.query(`
-      SELECT d.*, c.name as category_name, c.name_ar as category_name_ar
-      FROM products.drugs d
-      LEFT JOIN products.categories c ON c.id = d.category_id
-      WHERE d.is_active = true
-        AND (d.generic_name ILIKE $1 OR d.brand_name ILIKE $1 OR d.generic_name_ar ILIKE $1)
-      ORDER BY d.generic_name
-      LIMIT $2
-    `, [`%${q}%`, limit]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── GET ALL DRUGS ────────────────────────────────────────────────────────────
-app.get('/api/v1/medications', async (req, res) => {
-  try {
-    const { category, limit = 50 } = req.query;
-    const result = await pool.query(`
-      SELECT d.*, c.name as category_name
-      FROM products.drugs d
-      LEFT JOIN products.categories c ON c.id = d.category_id
-      WHERE d.is_active = true
-        AND ($1::uuid IS NULL OR d.category_id = $1::uuid)
-      ORDER BY d.generic_name
-      LIMIT $2
-    `, [category || null, limit]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── GET CATEGORIES ───────────────────────────────────────────────────────────
-app.get('/api/v1/categories', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM products.categories WHERE is_active = true ORDER BY sort_order');
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: { title: 'Server error', status: 500 } });
-  }
-});
-
-// ─── START ───────────────────────────────────────────────────────────────────
-pool.connect()
-  .then(() => {
-    console.log('Database connected');
-    app.listen(PORT, () => console.log(`Pharmacy service running on port ${PORT}`));
-  })
-  .catch((err) => {
-    console.error('DB connection failed:', err);
-    process.exit(1);
-  });
-
-process.on('SIGTERM', async () => { await pool.end(); process.exit(0); });
+    // ─── ADMIN ENDPOINTS ───────────────────────────────────────────────
+    router.get('/admin/all', async (_req, res, next) => {
+        try {
+            const result = await pool.query(`
+        SELECT p.*, u.email as owner_email, u.phone as owner_phone
+        FROM pharmacies.pharmacies p
+        LEFT JOIN auth.users u ON u.id = p.owner_id
+        WHERE p.status != 'deleted'
+        ORDER BY p.created_at DESC
+      `);
+            res.json({ success: true, data: result.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.patch('/admin/:id/status', async (req, res, next) => {
+        const client = await pool.connect();
+        try {
+            const { id } = req.params;
+            const { status } = req.body;
+            const allowed = ['active', 'suspended', 'rejected', 'pending_verification', 'deleted'];
+            if (!allowed.includes(status))
+                return res.status(400).json({ success: false, error: { title: 'Invalid status' } });
+            await client.query('BEGIN');
+            // Update pharmacy status
+            await client.query('UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2', [status, id]);
+            // Also update the owner's auth.users status so they can log in
+            const userStatus = status === 'active' ? 'active'
+                : status === 'suspended' ? 'suspended'
+                    : status === 'rejected' ? 'rejected'
+                        : 'pending_verification';
+            await client.query(`
+        UPDATE auth.users SET status=$1, updated_at=NOW()
+        WHERE id = (SELECT owner_id FROM pharmacies.pharmacies WHERE id=$2)
+      `, [userStatus, id]);
+            await client.query('COMMIT');
+            res.json({ success: true });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            next(err);
+        }
+        finally {
+            client.release();
+        }
+    });
+    router.delete('/admin/:id', async (req, res, next) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query("UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1", [req.params.id]);
+            await client.query(`UPDATE auth.users SET status='deleted', deleted_at=NOW() WHERE id=(SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)`, [req.params.id]);
+            await client.query('COMMIT');
+            res.json({ success: true });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            next(err);
+        }
+        finally {
+            client.release();
+        }
+    });
+    // POST fallback for environments that block DELETE method
+    router.post('/admin/:id/delete', async (req, res, next) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query("UPDATE pharmacies.pharmacies SET status='deleted', deleted_at=NOW() WHERE id=$1", [req.params.id]);
+            await client.query(`UPDATE auth.users SET status='deleted', deleted_at=NOW() WHERE id=(SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1)`, [req.params.id]);
+            await client.query('COMMIT');
+            res.json({ success: true });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            next(err);
+        }
+        finally {
+            client.release();
+        }
+    });
+    // ─── PHARMACY SELF-SETTINGS (owner updates their own delivery rate) ────────
+    router.get('/my/settings', shared_middleware_1.authenticate, async (req, res, next) => {
+        try {
+            const r = await pool.query('SELECT delivery_rate_per_km, delivery_min_fee, delivery_max_km FROM pharmacies.pharmacies WHERE owner_id=$1', [req.user.sub]);
+            res.json({ success: true, data: r.rows[0] || {} });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.patch('/my/settings', shared_middleware_1.authenticate, async (req, res, next) => {
+        var _a, _b, _c;
+        try {
+            const b = req.body;
+            await pool.query(`
+        UPDATE pharmacies.pharmacies SET
+          delivery_rate_per_km = COALESCE($1::int, delivery_rate_per_km),
+          delivery_min_fee = COALESCE($2::int, delivery_min_fee),
+          delivery_max_km = COALESCE($3::int, delivery_max_km),
+          updated_at = NOW()
+        WHERE owner_id = $4
+      `, [(_a = b.delivery_rate_per_km) !== null && _a !== void 0 ? _a : null, (_b = b.delivery_min_fee) !== null && _b !== void 0 ? _b : null, (_c = b.delivery_max_km) !== null && _c !== void 0 ? _c : null, req.user.sub]);
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    // ─── PUBLIC ────────────────────────────────────────────────────────
+    router.get('/nearby', async (req, res, next) => {
+        try {
+            const { lat, lng, radiusKm = 5, drugId } = req.query;
+            const result = await pool.query(`
+        SELECT p.id, p.name, p.name_ar, p.phone, p.rating, p.delivery_fee,
+               p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
+               ST_Distance(p.location, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
+        FROM pharmacies.pharmacies p
+        LEFT JOIN inventory.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
+        WHERE p.status = 'active'
+          AND ST_DWithin(p.location, ST_MakePoint($2,$1)::geography, $4::float * 1000)
+        ORDER BY distance_km ASC
+        LIMIT 20
+      `, [lat, lng, drugId || null, radiusKm]);
+            res.json({ success: true, data: result.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/:id', async (req, res, next) => {
+        try {
+            const result = await pool.query('SELECT * FROM pharmacies.pharmacies WHERE id = $1 AND status != $2', [req.params.id, 'deleted']);
+            if (result.rows.length === 0)
+                return res.status(404).json({ success: false });
+            res.json({ success: true, data: result.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    // ─── PROTECTED ─────────────────────────────────────────────────────
+    router.post('/register', shared_middleware_1.authenticate, async (req, res, next) => {
+        try {
+            const body = req.body;
+            const result = await pool.query(`
+        INSERT INTO pharmacies.pharmacies
+          (owner_id, name, name_ar, license_number, license_expiry, phone, email, address, city, country)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING id, name, status
+      `, [
+                req.user.sub, body.name, body.nameAr, body.licenseNumber, body.licenseExpiry,
+                body.phone, body.email, body.address, body.city, body.country || 'IQ',
+            ]);
+            res.status(201).json({ success: true, data: result.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/:id/inventory', shared_middleware_1.authenticate, async (req, res, next) => {
+        try {
+            const { search, lowStock, nearExpiry, page = 1, limit = 20 } = req.query;
+            const offset = (Number(page) - 1) * Number(limit);
+            const result = await pool.query(`
+        SELECT s.*, d.generic_name, d.brand_name, d.requires_prescription
+        FROM inventory.pharmacy_stock s
+        JOIN products.drugs d ON d.id = s.drug_id
+        WHERE s.pharmacy_id = $1
+          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
+          AND ($3::boolean IS NULL OR (s.quantity - s.reserved_qty) <= s.reorder_level)
+        ORDER BY d.generic_name
+        LIMIT $4 OFFSET $5
+      `, [req.params.id, search ? `%${search}%` : null, lowStock || null, limit, offset]);
+            res.json({ success: true, data: result.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.post('/:id/inventory', shared_middleware_1.authenticate, (0, shared_middleware_1.requireRole)('pharmacy_manager', 'pharmacy_pharmacist', 'admin'), async (req, res, next) => {
+        try {
+            const body = req.body;
+            const result = await pool.query(`
+        INSERT INTO inventory.pharmacy_stock
+          (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        ON CONFLICT (pharmacy_id, drug_id, branch_id) DO UPDATE
+          SET quantity = EXCLUDED.quantity, selling_price = EXCLUDED.selling_price, updated_at = NOW()
+        RETURNING *
+      `, [req.params.id, body.drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]);
+            res.status(201).json({ success: true, data: result.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/:id/orders', shared_middleware_1.authenticate, async (req, res, next) => {
+        try {
+            const { status, page = 1, limit = 20 } = req.query;
+            const offset = (Number(page) - 1) * Number(limit);
+            const result = await pool.query(`
+        SELECT o.*, u.email as patient_email
+        FROM orders.orders o
+        JOIN auth.users u ON u.id = o.patient_id
+        WHERE o.pharmacy_id = $1
+          AND ($2::text IS NULL OR o.status = $2)
+        ORDER BY o.created_at DESC
+        LIMIT $3 OFFSET $4
+      `, [req.params.id, status || null, limit, offset]);
+            res.json({ success: true, data: result.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/:id/analytics', shared_middleware_1.authenticate, async (req, res, next) => {
+        try {
+            const [todayResult, monthResult] = await Promise.all([
+                pool.query(`
+          SELECT COUNT(*) as orders, COALESCE(SUM(total_amount), 0) as revenue
+          FROM orders.orders WHERE pharmacy_id = $1 AND DATE(created_at) = CURRENT_DATE AND status = 'delivered'
+        `, [req.params.id]),
+                pool.query(`
+          SELECT COUNT(*) as orders, COALESCE(SUM(total_amount), 0) as revenue
+          FROM orders.orders WHERE pharmacy_id = $1
+            AND created_at >= DATE_TRUNC('month', NOW()) AND status = 'delivered'
+        `, [req.params.id]),
+            ]);
+            res.json({ success: true, data: { today: todayResult.rows[0], thisMonth: monthResult.rows[0] } });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    // ─── ADMIN REQUESTS (employee add/remove from portals) ─────────────
+    router.post('/admin-requests', async (req, res, next) => {
+        try {
+            const b = req.body;
+            const r = await pool.query(`
+        INSERT INTO public.admin_requests
+          (portal_type, requester_id, requester_name, requester_entity, action_type, employee_name, employee_email, employee_role, reason)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
+      `, [b.portalType, b.requesterId, b.requesterName, b.requesterEntity, b.actionType, b.employeeName, b.employeeEmail, b.employeeRole, b.reason]);
+            res.status(201).json({ success: true, data: r.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/admin-requests', async (req, res, next) => {
+        try {
+            const { status } = req.query;
+            const r = await pool.query(`SELECT * FROM public.admin_requests ${status ? 'WHERE status=$1' : ''} ORDER BY created_at DESC`, status ? [status] : []);
+            res.json({ success: true, data: r.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.patch('/admin-requests/:id/status', async (req, res, next) => {
+        try {
+            await pool.query('UPDATE public.admin_requests SET status=$1, decided_at=NOW() WHERE id=$2', [req.body.status, req.params.id]);
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    // ─── PORTAL NOTIFICATIONS ───────────────────────────────────────────
+    router.post('/portal-notifications', async (req, res, next) => {
+        try {
+            const b = req.body;
+            const r = await pool.query(`
+        INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+        VALUES ($1,$2,$3,$4) RETURNING *
+      `, [b.portalType, b.recipientId, b.senderName, b.message]);
+            res.status(201).json({ success: true, data: r.rows[0] });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/portal-notifications', async (req, res, next) => {
+        try {
+            const { portalType, recipientId } = req.query;
+            const r = await pool.query('SELECT * FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2 ORDER BY created_at DESC LIMIT 50', [portalType, recipientId]);
+            res.json({ success: true, data: r.rows });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.patch('/portal-notifications/:id/read', async (req, res, next) => {
+        try {
+            await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);
+            res.json({ success: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    });
+    router.get('/health/live', (_req, res) => res.json({ status: 'healthy' }));
+    router.get('/health/ready', (_req, res) => res.json({ status: 'ready' }));
+    app.use('/api/v1/pharmacies', router);
+    app.use(shared_middleware_1.notFoundHandler);
+    app.use(shared_middleware_1.errorHandler);
+    const port = parseInt(process.env.PORT || '8005', 10);
+    app.listen(port, () => console.log(`Pharmacy service running on :${port}`));
+}
+bootstrap().catch(console.error);
