@@ -791,6 +791,17 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  router.delete('/:id/inventory/:stockId', authenticate, async (req, res, next) => {
+    try {
+      const result = await pool.query(
+        'DELETE FROM public.pharmacy_stock WHERE id=$1 AND pharmacy_id=$2 RETURNING id',
+        [req.params.stockId, req.params.id]
+      );
+      if (!result.rows.length) return res.status(404).json({ success: false });
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   router.get('/:id/orders', authenticate, async (req, res, next) => {
     try {
       const { status, page = 1, limit = 20 } = req.query;

@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Search, Plus, AlertTriangle, Package, Settings2, Camera, X,
-  Sun, Snowflake, ChevronDown, ShoppingCart, RefreshCw, Edit3, QrCode, PenLine,
+  Sun, Snowflake, ChevronDown, ShoppingCart, RefreshCw, Edit3, QrCode, PenLine, Trash2,
 } from 'lucide-react';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
@@ -416,6 +416,17 @@ export default function InventoryPage() {
                       </button>
                       <button onClick={() => openEditLimit(item)} title="حدود الموسم" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
                         <Settings2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={async () => {
+                        if (!confirm('حذف هذا الدواء من المخزون؟')) return;
+                        const token = localStorage.getItem('pharmacy-token');
+                        const pharmacyId = localStorage.getItem('pharmacy-id');
+                        await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/${item.id}`, {
+                          method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+                        });
+                        fetchInventory();
+                      }} title="حذف" className="p-1.5 hover:bg-red-50 rounded-lg text-red-400">
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
