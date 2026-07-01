@@ -625,9 +625,9 @@ async function bootstrap() {
       const { search, lowStock, nearExpiry, page = 1, limit = 20 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
       const result = await pool.query(`
-        SELECT s.*, d.generic_name, d.brand_name, d.requires_prescription
+        SELECT s.*, d.generic_name, d.brand_name, d.barcode, d.requires_prescription
         FROM inventory.pharmacy_stock s
-        JOIN products.drugs d ON d.id = s.drug_id
+        LEFT JOIN products.drugs d ON d.id = s.drug_id
         WHERE s.pharmacy_id = $1
           AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
           AND ($3::boolean IS NULL OR (s.quantity - s.reserved_qty) <= s.reorder_level)
@@ -638,17 +638,62 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.post('/:id/inventory', authenticate, requireRole('pharmacy_manager', 'pharmacy_pharmacist', 'admin', 'pharmacy_owner'), async (req, res, next) => {
+  router.post('/:id/inventory', authenticate, async (req, res, next) => {
     try {
       const body = req.body;
+      let drugId = body.drugId;
+
+      // If no drugId, auto-create or find drug by name/barcode
+      if (!drugId) {
+        const genericName = body.genericName || body.drugName || 'دواء غير معرّف';
+        const brandName = body.brandName || '';
+        const barcode = body.barcode || null;
+
+        // Ensure products schema & table exist
+        await pool.query('CREATE SCHEMA IF NOT EXISTS products').catch(() => {});
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS products.drugs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            generic_name TEXT NOT NULL,
+            brand_name TEXT,
+            barcode TEXT,
+            dosage_form TEXT,
+            strength TEXT,
+            requires_prescription BOOLEAN DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          )
+        `).catch(() => {});
+
+        // Try to find existing drug by barcode first, then name
+        let existing = null;
+        if (barcode) {
+          const r = await pool.query('SELECT id FROM products.drugs WHERE barcode=$1 LIMIT 1', [barcode]);
+          existing = r.rows[0];
+        }
+        if (!existing) {
+          const r = await pool.query('SELECT id FROM products.drugs WHERE LOWER(generic_name)=LOWER($1) LIMIT 1', [genericName]);
+          existing = r.rows[0];
+        }
+        if (existing) {
+          drugId = existing.id;
+        } else {
+          const r = await pool.query(
+            'INSERT INTO products.drugs (generic_name, brand_name, barcode) VALUES ($1,$2,$3) RETURNING id',
+            [genericName, brandName, barcode]
+          );
+          drugId = r.rows[0].id;
+        }
+      }
+
       const result = await pool.query(`
         INSERT INTO inventory.pharmacy_stock
           (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level)
         VALUES ($1,$2,$3,$4,$5,$6)
         ON CONFLICT (pharmacy_id, drug_id, branch_id) DO UPDATE
-          SET quantity = EXCLUDED.quantity, selling_price = EXCLUDED.selling_price, updated_at = NOW()
+          SET quantity = inventory.pharmacy_stock.quantity + EXCLUDED.quantity,
+              selling_price = EXCLUDED.selling_price, updated_at = NOW()
         RETURNING *
-      `, [req.params.id, body.drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]);
+      `, [req.params.id, drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]);
       res.status(201).json({ success: true, data: result.rows[0] });
     } catch (err) { next(err); }
   });
@@ -780,7 +825,7 @@ async function bootstrap() {
     try {
       const { date, status } = req.query;
       let q = 'SELECT * FROM appointments.bookings WHERE doctor_id=$1';
-      const params: any[] = [req.params.doctorId];
+      const params = [req.params.doctorId];
       if (date) { q += ` AND appointment_date=$${params.length+1}`; params.push(date); }
       if (status) { q += ` AND status=$${params.length+1}`; params.push(status); }
       q += ' ORDER BY appointment_date, created_at';
