@@ -305,10 +305,16 @@ app.get('/api/v1/auth/admin/users', async (req, res) => {
   const { secret, role } = req.query;
   if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
   try {
-    let q = "SELECT id, email, phone, first_name, last_name, role, status, created_at FROM auth.users WHERE 1=1";
+    let q = `
+      SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at,
+             p.first_name, p.last_name
+      FROM auth.users u
+      LEFT JOIN users.profiles p ON p.id = u.id
+      WHERE 1=1
+    `;
     const params = [];
-    if (role) { q += ` AND role=$${params.length+1}`; params.push(role); }
-    q += ' ORDER BY created_at DESC';
+    if (role) { q += ` AND u.role=$${params.length+1}`; params.push(role); }
+    q += ' ORDER BY u.created_at DESC';
     const r = await pool.query(q, params);
     res.json({ success: true, data: r.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
