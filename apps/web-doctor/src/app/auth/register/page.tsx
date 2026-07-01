@@ -94,7 +94,7 @@ export default function DoctorRegisterPage() {
             requesterId: data.data.userId,
             requesterName: `${form.firstName} ${form.lastName}`,
             requesterEntity: form.specialization || 'طبيب',
-            actionType: 'registration',
+            actionType: 'add_employee',
             employeeName: `${form.firstName} ${form.lastName}`,
             employeeEmail: form.email,
             employeeRole: form.specialization || 'طبيب',
