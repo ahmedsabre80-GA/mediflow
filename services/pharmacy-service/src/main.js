@@ -141,9 +141,8 @@ async function bootstrap() {
   `).catch(() => {});
 
   // Ensure products schema and drugs table with barcode column exist
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS products.drugs (
+    CREATE TABLE IF NOT EXISTS public.drugs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       generic_name TEXT NOT NULL,
       brand_name TEXT,
@@ -154,12 +153,11 @@ async function bootstrap() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `).catch(() => {});
-  await pool.query(`ALTER TABLE products.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE public.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
 
   // Ensure inventory schema and pharmacy_stock table exist
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS inventory`).catch(() => {});
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+    CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       pharmacy_id UUID NOT NULL,
       drug_id UUID NOT NULL,
@@ -176,9 +174,8 @@ async function bootstrap() {
   `).catch(() => {});
 
   // Create products schema and drugs table if not exists
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS products.drugs (
+    CREATE TABLE IF NOT EXISTS public.drugs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       generic_name TEXT NOT NULL,
       brand_name TEXT,
@@ -190,10 +187,10 @@ async function bootstrap() {
   `).catch(() => {});
 
   // Seed common drugs if table is empty
-  const { rows: drugCount } = await pool.query('SELECT COUNT(*) FROM products.drugs').catch(() => ({ rows: [{ count: '1' }] }));
+  const { rows: drugCount } = await pool.query('SELECT COUNT(*) FROM public.drugs').catch(() => ({ rows: [{ count: '1' }] }));
   if (drugCount[0]?.count === '0') {
     await pool.query(`
-      INSERT INTO products.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
+      INSERT INTO public.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
       ('باراسيتامول', 'بنادول', 'أقراص', '500 مغ', false),
       ('باراسيتامول', 'تايلينول', 'أقراص', '500 مغ', false),
       ('أيبوبروفين', 'بروفين', 'أقراص', '400 مغ', false),
@@ -441,9 +438,8 @@ async function bootstrap() {
   router.get('/drugs/search', async (req, res, next) => {
     try {
       // Ensure schema/table exist (swallow errors — bootstrap handles this idempotently)
-      await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS products.drugs (
+        CREATE TABLE IF NOT EXISTS public.drugs (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           generic_name TEXT NOT NULL,
           brand_name TEXT,
@@ -454,11 +450,11 @@ async function bootstrap() {
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `).catch(() => {});
-      await pool.query(`ALTER TABLE products.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
-      const { rows: cnt } = await pool.query('SELECT COUNT(*) FROM products.drugs').catch(() => ({ rows: [{ count: '1' }] }));
+      await pool.query(`ALTER TABLE public.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
+      const { rows: cnt } = await pool.query('SELECT COUNT(*) FROM public.drugs').catch(() => ({ rows: [{ count: '1' }] }));
       if (cnt[0]?.count === '0') {
         await pool.query(`
-          INSERT INTO products.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
+          INSERT INTO public.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
           ('باراسيتامول', 'بنادول', 'أقراص', '500 مغ', false),
           ('باراسيتامول', 'تايلينول', 'أقراص', '500 مغ', false),
           ('أيبوبروفين', 'بروفين', 'أقراص', '400 مغ', false),
@@ -504,7 +500,7 @@ async function bootstrap() {
       const { q = '', limit = 20 } = req.query;
       const result = await pool.query(
         `SELECT id, generic_name, brand_name, dosage_form, strength, requires_prescription
-         FROM products.drugs
+         FROM public.drugs
          WHERE generic_name ILIKE $1 OR brand_name ILIKE $1
          ORDER BY generic_name LIMIT $2`,
         [`%${q}%`, Number(limit)]
@@ -522,7 +518,7 @@ async function bootstrap() {
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
                ST_Distance(p.location, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
         FROM pharmacies.pharmacies p
-        LEFT JOIN inventory.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
+        LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
         WHERE p.status = 'active'
           AND ST_DWithin(p.location, ST_MakePoint($2,$1)::geography, $4::float * 1000)
         ORDER BY distance_km ASC
@@ -659,9 +655,8 @@ async function bootstrap() {
 
   router.get('/:id/inventory', authenticate, async (req, res, next) => {
     try {
-      await pool.query('CREATE SCHEMA IF NOT EXISTS inventory').catch(() => {});
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+        CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           pharmacy_id UUID NOT NULL,
           drug_id UUID NOT NULL,
@@ -681,8 +676,8 @@ async function bootstrap() {
       const offset = (Number(page) - 1) * Number(limit);
       const result = await pool.query(`
         SELECT s.*, d.generic_name, d.brand_name, d.barcode, d.requires_prescription
-        FROM inventory.pharmacy_stock s
-        LEFT JOIN products.drugs d ON d.id = s.drug_id
+        FROM public.pharmacy_stock s
+        LEFT JOIN public.drugs d ON d.id = s.drug_id
         WHERE s.pharmacy_id = $1
           AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
         ORDER BY COALESCE(d.generic_name, '')
@@ -695,10 +690,8 @@ async function bootstrap() {
   router.post('/:id/inventory', authenticate, async (req, res, next) => {
     try {
       // Ensure schemas/tables exist
-      await pool.query('CREATE SCHEMA IF NOT EXISTS products').catch(() => {});
-      await pool.query('CREATE SCHEMA IF NOT EXISTS inventory').catch(() => {});
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+        CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           pharmacy_id UUID NOT NULL,
           drug_id UUID NOT NULL,
@@ -724,7 +717,7 @@ async function bootstrap() {
         const barcode = body.barcode || null;
 
         await pool.query(`
-          CREATE TABLE IF NOT EXISTS products.drugs (
+          CREATE TABLE IF NOT EXISTS public.drugs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             generic_name TEXT NOT NULL,
             brand_name TEXT,
@@ -739,18 +732,18 @@ async function bootstrap() {
         // Try to find existing drug by barcode first, then name
         let existing = null;
         if (barcode) {
-          const r = await pool.query('SELECT id FROM products.drugs WHERE barcode=$1 LIMIT 1', [barcode]);
+          const r = await pool.query('SELECT id FROM public.drugs WHERE barcode=$1 LIMIT 1', [barcode]);
           existing = r.rows[0];
         }
         if (!existing) {
-          const r = await pool.query('SELECT id FROM products.drugs WHERE LOWER(generic_name)=LOWER($1) LIMIT 1', [genericName]);
+          const r = await pool.query('SELECT id FROM public.drugs WHERE LOWER(generic_name)=LOWER($1) LIMIT 1', [genericName]);
           existing = r.rows[0];
         }
         if (existing) {
           drugId = existing.id;
         } else {
           const r = await pool.query(
-            'INSERT INTO products.drugs (generic_name, brand_name, barcode) VALUES ($1,$2,$3) RETURNING id',
+            'INSERT INTO public.drugs (generic_name, brand_name, barcode) VALUES ($1,$2,$3) RETURNING id',
             [genericName, brandName, barcode]
           );
           drugId = r.rows[0].id;
@@ -759,18 +752,18 @@ async function bootstrap() {
 
       // Check if drug already in this pharmacy's stock
       const existing = await pool.query(
-        'SELECT id, quantity FROM inventory.pharmacy_stock WHERE pharmacy_id=$1 AND drug_id=$2 LIMIT 1',
+        'SELECT id, quantity FROM public.pharmacy_stock WHERE pharmacy_id=$1 AND drug_id=$2 LIMIT 1',
         [req.params.id, drugId]
       );
       let result;
       if (existing.rows.length) {
         result = await pool.query(
-          'UPDATE inventory.pharmacy_stock SET quantity=quantity+$1, selling_price=$2, updated_at=NOW() WHERE id=$3 RETURNING *',
+          'UPDATE public.pharmacy_stock SET quantity=quantity+$1, selling_price=$2, updated_at=NOW() WHERE id=$3 RETURNING *',
           [body.quantity, body.sellingPrice, existing.rows[0].id]
         );
       } else {
         result = await pool.query(
-          'INSERT INTO inventory.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+          'INSERT INTO public.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
           [req.params.id, drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]
         );
       }
@@ -790,7 +783,7 @@ async function bootstrap() {
       sets.push('updated_at=NOW()');
       vals.push(req.params.stockId, req.params.id);
       const result = await pool.query(
-        `UPDATE inventory.pharmacy_stock SET ${sets.join(',')} WHERE id=$${vals.length-1} AND pharmacy_id=$${vals.length} RETURNING *`,
+        `UPDATE public.pharmacy_stock SET ${sets.join(',')} WHERE id=$${vals.length-1} AND pharmacy_id=$${vals.length} RETURNING *`,
         vals
       );
       if (!result.rows.length) return res.status(404).json({ success: false });
