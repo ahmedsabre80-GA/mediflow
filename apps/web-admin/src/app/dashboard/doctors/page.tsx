@@ -36,13 +36,21 @@ export default function DoctorsPage() {
   useEffect(() => { load(); }, []);
 
   const decide = async (id: string, status: 'approved' | 'rejected') => {
+    const doc = doctors.find(d => d.id === id);
     await fetch(`${PHARMACY_API}/admin-requests/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     }).catch(() => {});
+    // Activate the auth account so the doctor can actually log in
+    if (status === 'approved' && doc?.employee_email) {
+      await fetch(`${AUTH_API}/auth/admin/activate-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: doc.employee_email, secret: 'mediflow-delete-2026' }),
+      }).catch(() => {});
+    }
     setDoctors(prev => prev.map(d => d.id === id ? { ...d, status } : d));
-    const doc = doctors.find(d => d.id === id);
     logAction(status, status === 'approved' ? 'موافقة على طبيب' : 'رفض طبيب', 'طبيب', doc?.employee_name || id, id, '/dashboard/doctors');
     showToast(status === 'approved' ? '✅ تمت الموافقة على الطبيب' : '❌ تم رفض الطبيب');
     setSelected(null);
