@@ -123,7 +123,7 @@ function errorHandler(err, req, res, _next) {
   console.error({ err, traceId, path: req.path }, 'Unhandled error');
   return res.status(500).json({
     success: false,
-    error: { title: 'Internal Server Error', status: 500, detail: 'An unexpected error occurred', traceId },
+    error: { title: 'Internal Server Error', status: 500, detail: err.message || 'An unexpected error occurred', traceId },
   });
 }
 
