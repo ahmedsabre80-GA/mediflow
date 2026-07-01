@@ -689,7 +689,6 @@ async function bootstrap() {
 
   router.post('/:id/inventory', authenticate, async (req, res, next) => {
     try {
-      console.log('[INVENTORY POST] pharmacyId:', req.params.id, 'body:', JSON.stringify(req.body));
       // Ensure schemas/tables exist
       await pool.query(`
         CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
