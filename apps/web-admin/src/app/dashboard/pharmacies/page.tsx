@@ -4,6 +4,7 @@ import { Search, CheckCircle, XCircle, Eye, Ban, Trash2, X } from 'lucide-react'
 import { logAction } from '@/lib/auditSystem';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
+const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const STORE_KEY = 'admin-pharmacies-status';
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -79,6 +80,7 @@ export default function PharmaciesPage() {
     const pharmacy = pharmacies.find(p => p.id === id);
     setPharmacies(prev => prev.filter(p => p.id !== id));
     setConfirmDelete(null);
+    // Delete from pharmacy DB
     try {
       await fetch(`${PHARMACY_API}/pharmacies/admin/${id}/status`, {
         method: 'PATCH',
@@ -86,8 +88,16 @@ export default function PharmaciesPage() {
         body: JSON.stringify({ status: 'deleted' }),
       });
     } catch {}
+    // Wipe auth account so they can re-register with same email
+    if (pharmacy?.owner_email || pharmacy?.email) {
+      fetch(`${AUTH_API}/auth/admin/delete-user`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pharmacy.owner_email || pharmacy.email, secret: 'mediflow-delete-2026' }),
+      }).catch(() => {});
+    }
     logAction('delete', 'حذف صيدلية', 'صيدلية', pharmacy?.name_ar || pharmacy?.name || id, id, '/dashboard/pharmacies');
-    showToast('🗑️ تم حذف الصيدلية');
+    showToast('🗑️ تم حذف الصيدلية بالكامل');
   };
 
   const filtered = pharmacies.filter(p => {
