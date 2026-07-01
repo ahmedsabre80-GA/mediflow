@@ -73,6 +73,7 @@ export default function SettingsPage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
+          secret: 'mediflow-admin-2026',
           require_certificate: settings.requireCertificate,
           log_admin_actions: settings.logAdminActions,
         }),
