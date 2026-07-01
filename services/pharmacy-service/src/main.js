@@ -724,10 +724,18 @@ async function bootstrap() {
 
   router.patch('/:id/inventory/:stockId', authenticate, async (req, res, next) => {
     try {
-      const { quantity } = req.body;
+      const { quantity, sellingPrice, reorderLevel } = req.body;
+      const sets = [];
+      const vals = [];
+      if (quantity !== undefined) { sets.push(`quantity=$${vals.length+1}`); vals.push(quantity); }
+      if (sellingPrice !== undefined) { sets.push(`selling_price=$${vals.length+1}`); vals.push(sellingPrice); }
+      if (reorderLevel !== undefined) { sets.push(`reorder_level=$${vals.length+1}`); vals.push(reorderLevel); }
+      if (!sets.length) return res.status(422).json({ success: false, error: { title: 'Nothing to update' } });
+      sets.push('updated_at=NOW()');
+      vals.push(req.params.stockId, req.params.id);
       const result = await pool.query(
-        'UPDATE inventory.pharmacy_stock SET quantity=$1, updated_at=NOW() WHERE id=$2 AND pharmacy_id=$3 RETURNING *',
-        [quantity, req.params.stockId, req.params.id]
+        `UPDATE inventory.pharmacy_stock SET ${sets.join(',')} WHERE id=$${vals.length-1} AND pharmacy_id=$${vals.length} RETURNING *`,
+        vals
       );
       if (!result.rows.length) return res.status(404).json({ success: false });
       res.json({ success: true, data: result.rows[0] });
