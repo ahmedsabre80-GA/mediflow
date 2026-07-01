@@ -352,6 +352,18 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Public lookup by owner (used by pharmacy login — avoids JWT dependency)
+  router.get('/by-owner/:userId', async (req, res, next) => {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM pharmacies.pharmacies WHERE owner_id = $1 AND status != 'deleted' LIMIT 1`,
+        [req.params.userId]
+      );
+      if (!result.rows.length) return res.status(404).json({ success: false });
+      res.json({ success: true, data: result.rows[0] });
+    } catch (err) { next(err); }
+  });
+
   // ─── ADMIN REQUESTS ───────────────────────────────────────────────────
   router.post('/admin-requests', async (req, res, next) => {
     try {

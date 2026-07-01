@@ -30,15 +30,12 @@ export default function LoginPage() {
       if (!res.ok) throw new Error(data?.error?.title || 'فشل تسجيل الدخول');
 
       const token = data.data.accessToken;
+      const userId = data.data.userId;
 
-      // Step 2: MUST verify pharmacy exists and is active — no exceptions
-      const phRes = await fetch(`${PHARMACY_API}/my`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // Step 2: verify pharmacy exists and is active using public by-owner endpoint
+      const phRes = await fetch(`${PHARMACY_API}/by-owner/${userId}`);
 
       if (!phRes.ok) {
-        // 404 = pharmacy not registered / was deleted from system
-        // 403 = access denied
         if (phRes.status === 404) {
           throw new Error('لا توجد صيدلية مسجّلة بهذا الحساب في المنصة.');
         }

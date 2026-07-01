@@ -75,14 +75,18 @@ export default function PharmaciesPage() {
     } catch { showToast('⚠️ فشل تحديث الحالة'); }
   };
 
-  const deletePharmacy = (id: string) => {
-    const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    saved[id] = 'deleted';
-    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
+  const deletePharmacy = async (id: string) => {
     const pharmacy = pharmacies.find(p => p.id === id);
-    logAction('delete', 'حذف صيدلية', 'صيدلية', pharmacy?.name_ar || pharmacy?.name || id, id, '/dashboard/pharmacies');
     setPharmacies(prev => prev.filter(p => p.id !== id));
     setConfirmDelete(null);
+    try {
+      await fetch(`${PHARMACY_API}/pharmacies/admin/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'deleted' }),
+      });
+    } catch {}
+    logAction('delete', 'حذف صيدلية', 'صيدلية', pharmacy?.name_ar || pharmacy?.name || id, id, '/dashboard/pharmacies');
     showToast('🗑️ تم حذف الصيدلية');
   };
 

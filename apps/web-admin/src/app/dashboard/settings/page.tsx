@@ -32,23 +32,21 @@ export default function SettingsPage() {
         setSettings(s => ({ ...s, ...parsed }));
       } catch {}
     }
-    // Then sync from API (authoritative)
-    fetch(`${PHARMACY_API}/pharmacies/settings`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.data) {
-          const fromApi = {
-            requireCertificate: d.data.require_certificate === true,
-            logAdminActions: d.data.log_admin_actions === true,
-          };
-          setSettings(s => ({ ...s, ...fromApi }));
-          // Keep localStorage in sync with API truth
-          const local2 = localStorage.getItem('mediflow-platform-settings');
-          const merged = { ...(local2 ? JSON.parse(local2) : {}), ...fromApi };
-          localStorage.setItem('mediflow-platform-settings', JSON.stringify(merged));
-        }
-      })
-      .catch(() => {});
+    // Only use API as fallback if localStorage has no saved value
+    if (!local) {
+      fetch(`${PHARMACY_API}/pharmacies/settings`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.success && d.data) {
+            setSettings(s => ({
+              ...s,
+              requireCertificate: d.data.require_certificate === true,
+              logAdminActions: d.data.log_admin_actions === true,
+            }));
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const update = (key: string, value: any) => {
