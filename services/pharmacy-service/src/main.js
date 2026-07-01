@@ -352,6 +352,96 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // ─── ADMIN REQUESTS ───────────────────────────────────────────────────
+  router.post('/admin-requests', async (req, res, next) => {
+    try {
+      const b = req.body;
+      const r = await pool.query(`
+        INSERT INTO public.admin_requests
+          (portal_type, requester_id, requester_name, requester_entity, action_type, employee_name, employee_email, employee_role, reason)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
+      `, [b.portalType, b.requesterId, b.requesterName, b.requesterEntity,
+          b.actionType, b.employeeName, b.employeeEmail, b.employeeRole, b.reason]);
+      res.status(201).json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  router.get('/admin-requests', async (req, res, next) => {
+    try {
+      const { requester_id, portal_type, status } = req.query;
+      const conditions = [];
+      const params = [];
+      if (requester_id) { conditions.push(`requester_id = $${params.length + 1}`); params.push(requester_id); }
+      if (portal_type)  { conditions.push(`portal_type = $${params.length + 1}`); params.push(portal_type); }
+      if (status)       { conditions.push(`status = $${params.length + 1}`); params.push(status); }
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+      const r = await pool.query(`SELECT * FROM public.admin_requests ${where} ORDER BY created_at DESC`, params);
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/admin-requests/:id/status', async (req, res, next) => {
+    try {
+      await pool.query('UPDATE public.admin_requests SET status=$1, decided_at=NOW() WHERE id=$2',
+        [req.body.status, req.params.id]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  router.delete('/admin-requests/:id', async (req, res, next) => {
+    try {
+      await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  router.delete('/admin-requests', async (req, res, next) => {
+    try {
+      const { status } = req.query;
+      if (status) {
+        await pool.query('DELETE FROM public.admin_requests WHERE status=$1', [status]);
+      } else {
+        await pool.query("DELETE FROM public.admin_requests WHERE status != 'pending'");
+      }
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // ─── PORTAL NOTIFICATIONS ─────────────────────────────────────────────
+  router.post('/portal-notifications', async (req, res, next) => {
+    try {
+      const b = req.body;
+      const r = await pool.query(`
+        INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+        VALUES ($1,$2,$3,$4) RETURNING *
+      `, [b.portalType, b.recipientId, b.senderName, b.message]);
+      res.status(201).json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  router.get('/portal-notifications', async (req, res, next) => {
+    try {
+      const { portalType, recipientId } = req.query;
+      const r = await pool.query(
+        'SELECT * FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2 ORDER BY created_at DESC LIMIT 50',
+        [portalType, recipientId]
+      );
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/portal-notifications/:id/read', async (req, res, next) => {
+    try {
+      await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // ─── HEALTH ───────────────────────────────────────────────────────────
+  router.get('/health/live',  (_req, res) => res.json({ status: 'healthy' }));
+  router.get('/health/ready', (_req, res) => res.json({ status: 'ready'   }));
+
   router.get('/:id', async (req, res, next) => {
     try {
       const result = await pool.query('SELECT * FROM pharmacies.pharmacies WHERE id = $1 AND status != $2', [req.params.id, 'deleted']);
@@ -451,96 +541,6 @@ async function bootstrap() {
       res.json({ success: true, data: { today: todayResult.rows[0], thisMonth: monthResult.rows[0] } });
     } catch (err) { next(err); }
   });
-
-  // ─── ADMIN REQUESTS ───────────────────────────────────────────────────
-  router.post('/admin-requests', async (req, res, next) => {
-    try {
-      const b = req.body;
-      const r = await pool.query(`
-        INSERT INTO public.admin_requests
-          (portal_type, requester_id, requester_name, requester_entity, action_type, employee_name, employee_email, employee_role, reason)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        RETURNING *
-      `, [b.portalType, b.requesterId, b.requesterName, b.requesterEntity,
-          b.actionType, b.employeeName, b.employeeEmail, b.employeeRole, b.reason]);
-      res.status(201).json({ success: true, data: r.rows[0] });
-    } catch (err) { next(err); }
-  });
-
-  router.get('/admin-requests', async (req, res, next) => {
-    try {
-      const { requester_id, portal_type, status } = req.query;
-      const conditions = [];
-      const params = [];
-      if (requester_id) { conditions.push(`requester_id = $${params.length + 1}`); params.push(requester_id); }
-      if (portal_type)  { conditions.push(`portal_type = $${params.length + 1}`); params.push(portal_type); }
-      if (status)       { conditions.push(`status = $${params.length + 1}`); params.push(status); }
-      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-      const r = await pool.query(`SELECT * FROM public.admin_requests ${where} ORDER BY created_at DESC`, params);
-      res.json({ success: true, data: r.rows });
-    } catch (err) { next(err); }
-  });
-
-  router.patch('/admin-requests/:id/status', async (req, res, next) => {
-    try {
-      await pool.query('UPDATE public.admin_requests SET status=$1, decided_at=NOW() WHERE id=$2',
-        [req.body.status, req.params.id]);
-      res.json({ success: true });
-    } catch (err) { next(err); }
-  });
-
-  router.delete('/admin-requests/:id', async (req, res, next) => {
-    try {
-      await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
-      res.json({ success: true });
-    } catch (err) { next(err); }
-  });
-
-  router.delete('/admin-requests', async (req, res, next) => {
-    try {
-      const { status } = req.query;
-      if (status) {
-        await pool.query('DELETE FROM public.admin_requests WHERE status=$1', [status]);
-      } else {
-        await pool.query("DELETE FROM public.admin_requests WHERE status != 'pending'");
-      }
-      res.json({ success: true });
-    } catch (err) { next(err); }
-  });
-
-  // ─── PORTAL NOTIFICATIONS ─────────────────────────────────────────────
-  router.post('/portal-notifications', async (req, res, next) => {
-    try {
-      const b = req.body;
-      const r = await pool.query(`
-        INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
-        VALUES ($1,$2,$3,$4) RETURNING *
-      `, [b.portalType, b.recipientId, b.senderName, b.message]);
-      res.status(201).json({ success: true, data: r.rows[0] });
-    } catch (err) { next(err); }
-  });
-
-  router.get('/portal-notifications', async (req, res, next) => {
-    try {
-      const { portalType, recipientId } = req.query;
-      const r = await pool.query(
-        'SELECT * FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2 ORDER BY created_at DESC LIMIT 50',
-        [portalType, recipientId]
-      );
-      res.json({ success: true, data: r.rows });
-    } catch (err) { next(err); }
-  });
-
-  router.patch('/portal-notifications/:id/read', async (req, res, next) => {
-    try {
-      await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);
-      res.json({ success: true });
-    } catch (err) { next(err); }
-  });
-
-  // ─── HEALTH ───────────────────────────────────────────────────────────
-  router.get('/health/live',  (_req, res) => res.json({ status: 'healthy' }));
-  router.get('/health/ready', (_req, res) => res.json({ status: 'ready'   }));
 
   app.use('/api/v1/pharmacies', router);
   app.use(notFoundHandler);
