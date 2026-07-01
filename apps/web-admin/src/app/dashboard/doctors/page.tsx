@@ -84,9 +84,16 @@ export default function DoctorsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${PHARMACY_API}/admin-requests?portal_type=doctor`);
-      const d = await r.json();
-      if (d.success) setDoctors(d.data);
+      const [reqRes, authRes] = await Promise.all([
+        fetch(`${PHARMACY_API}/admin-requests?portal_type=doctor`).then(r => r.json()),
+        fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}&role=doctor`).then(r => r.json()).catch(() => ({ data: [] })),
+      ]);
+      const authUsers: any[] = authRes.data || [];
+      const docs = (reqRes.data || []).map((d: any) => {
+        const authUser = authUsers.find((u: any) => u.email?.toLowerCase() === d.employee_email?.toLowerCase());
+        return { ...d, authStatus: authUser?.status || null };
+      });
+      if (reqRes.success) setDoctors(docs);
     } catch {}
     setLoading(false);
   };
@@ -231,16 +238,16 @@ export default function DoctorsPage() {
         <table className="w-full">
           <thead className="bg-gray-50 border-b">
             <tr>
-              {['الطبيب','التخصص','البريد الإلكتروني','الترخيص','الحالة','إجراءات'].map(h => (
+              {['الطبيب','التخصص','البريد الإلكتروني','الترخيص','حالة الطلب','حالة الحساب','إجراءات'].map(h => (
                 <th key={h} className="px-4 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              [...Array(3)].map((_, i) => <tr key={i}>{[...Array(6)].map((_, j) => <td key={j} className="px-4 py-4"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>)}</tr>)
+              [...Array(3)].map((_, i) => <tr key={i}>{[...Array(7)].map((_, j) => <td key={j} className="px-4 py-4"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>)}</tr>)
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">لا يوجد أطباء مسجلون</td></tr>
+              <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-500">لا يوجد أطباء مسجلون</td></tr>
             ) : filtered.map(doc => {
               const status = STATUS_LABELS[doc.status] || STATUS_LABELS.pending;
               const isSuspended = doc.authStatus === 'suspended';
@@ -259,6 +266,22 @@ export default function DoctorsPage() {
                   <td className="px-4 py-3 text-sm text-gray-500">{doc.reason?.replace('رقم الترخيص: ','') || '—'}</td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${status.color}`}>{status.label}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {doc.authStatus ? (
+                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                        doc.authStatus === 'active' ? 'bg-green-100 text-green-700' :
+                        doc.authStatus === 'suspended' ? 'bg-red-100 text-red-700' :
+                        doc.authStatus === 'force_logout' ? 'bg-gray-100 text-gray-500' :
+                        doc.authStatus === 'pending_verification' ? 'bg-amber-100 text-amber-700' :
+                        'bg-gray-100 text-gray-500'
+                      }`}>
+                        {doc.authStatus === 'active' ? 'نشط' :
+                         doc.authStatus === 'suspended' ? 'موقوف' :
+                         doc.authStatus === 'force_logout' ? 'مسجّل خروج' :
+                         doc.authStatus === 'pending_verification' ? 'معلق' : doc.authStatus}
+                      </span>
+                    ) : <span className="text-xs text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
