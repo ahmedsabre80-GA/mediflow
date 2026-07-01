@@ -341,6 +341,21 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // ─── DRUG CATALOG SEARCH ──────────────────────────────────────────────
+  router.get('/drugs/search', async (req, res, next) => {
+    try {
+      const { q = '', limit = 20 } = req.query;
+      const result = await pool.query(
+        `SELECT id, generic_name, brand_name, dosage_form, strength, requires_prescription
+         FROM products.drugs
+         WHERE generic_name ILIKE $1 OR brand_name ILIKE $1
+         ORDER BY generic_name LIMIT $2`,
+        [`%${q}%`, Number(limit)]
+      );
+      res.json({ success: true, data: result.rows });
+    } catch (err) { next(err); }
+  });
+
   // ─── PUBLIC ───────────────────────────────────────────────────────────
   router.get('/nearby', async (req, res, next) => {
     try {

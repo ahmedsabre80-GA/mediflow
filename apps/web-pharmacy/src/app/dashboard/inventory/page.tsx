@@ -3,8 +3,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { Search, Plus, AlertTriangle, Package, Settings2, Barcode, ShoppingCart, X, Sun, Snowflake, ChevronDown } from 'lucide-react';
 
 const PHARMACY_API = process.env.NEXT_PUBLIC_PHARMACY_API_URL || 'https://mediflow-production-d815.up.railway.app/api/v1';
-const LIMITS_KEY = 'pharmacy-stock-limits';    // { [stockId]: { summer: N, winter: N } }
-const SEASON_KEY = 'pharmacy-season-config';   // { summerMonths: number[] }
+const LIMITS_KEY = 'pharmacy-stock-limits';
+const SEASON_KEY = 'pharmacy-season-config';
 const ORDERS_KEY = 'pharmacy-reorder-log';
 
 const MONTH_NAMES = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -43,6 +43,10 @@ export default function InventoryPage() {
   const [existingItem, setExistingItem] = useState<any | null>(null);
   const [existingChecking, setExistingChecking] = useState(false);
   const [addQty, setAddQty] = useState('');
+  const [drugSearch, setDrugSearch] = useState('');
+  const [drugResults, setDrugResults] = useState<any[]>([]);
+  const [selectedDrug, setSelectedDrug] = useState<any | null>(null);
+  const [drugSearching, setDrugSearching] = useState(false);
 
   // Seasonal limits
   const [itemLimits, setItemLimits] = useState<Record<string, { summer: number; winter: number }>>({});
@@ -116,6 +120,28 @@ export default function InventoryPage() {
       setExistingItem(found || null);
     } catch { setExistingItem(null); }
     setExistingChecking(false);
+  };
+
+  const searchDrugs = async (q: string) => {
+    setDrugSearch(q);
+    setSelectedDrug(null);
+    setForm(f => ({ ...f, drugId: '' }));
+    if (!q || q.length < 2) { setDrugResults([]); return; }
+    setDrugSearching(true);
+    try {
+      const r = await fetch(`${PHARMACY_API}/pharmacies/drugs/search?q=${encodeURIComponent(q)}&limit=8`);
+      const d = await r.json();
+      setDrugResults(d.data || []);
+    } catch { setDrugResults([]); }
+    setDrugSearching(false);
+  };
+
+  const pickDrug = (drug: any) => {
+    setSelectedDrug(drug);
+    setForm(f => ({ ...f, drugId: drug.id }));
+    setDrugSearch(drug.generic_name || drug.brand_name);
+    setDrugResults([]);
+    checkExistingDrug(drug.id);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -510,7 +536,7 @@ export default function InventoryPage() {
           <div className="bg-white rounded-2xl p-6 w-full max-w-md" dir="rtl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-gray-900">إدارة المخزون</h3>
-              <button onClick={() => { setShowAdd(false); setExistingItem(null); setAddQty(''); setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' }); }}><X className="w-5 h-5 text-gray-400" /></button>
+              <button onClick={() => { setShowAdd(false); setExistingItem(null); setAddQty(''); setForm({ drugId: '', quantity: '', sellingPrice: '', reorderLevel: '10' }); setDrugSearch(''); setDrugResults([]); setSelectedDrug(null); }}><X className="w-5 h-5 text-gray-400" /></button>
             </div>
 
             {/* Mode toggle */}
@@ -572,19 +598,37 @@ export default function InventoryPage() {
             ) : (
             /* ── Add new product ── */
             <form onSubmit={handleAdd} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                  <Barcode className="w-4 h-4 text-gray-400" /> معرّف الدواء (مسح أو يدوي)
-                </label>
-                <input value={form.drugId}
-                  onChange={e => { setForm({ ...form, drugId: e.target.value }); setExistingItem(null); }}
-                  onBlur={e => checkExistingDrug(e.target.value)}
-                  placeholder="امسح الباركود أو أدخل UUID الدواء"
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-1">اسم الدواء</label>
+                <input value={drugSearch}
+                  onChange={e => searchDrugs(e.target.value)}
+                  placeholder="ابحث باسم الدواء..."
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  dir="ltr" required />
+                  required={!form.drugId} />
+                {drugSearching && <p className="text-xs text-gray-400 mt-1">جاري البحث...</p>}
+                {drugResults.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                    {drugResults.map(drug => (
+                      <button key={drug.id} type="button" onClick={() => pickDrug(drug)}
+                        className="w-full text-right px-4 py-2.5 hover:bg-sky-50 text-sm border-b border-gray-100 last:border-0">
+                        <p className="font-medium text-gray-900">{drug.generic_name}</p>
+                        <p className="text-xs text-gray-500">{drug.brand_name} · {drug.dosage_form} {drug.strength}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {drugSearch.length >= 2 && !drugSearching && drugResults.length === 0 && !selectedDrug && (
+                  <p className="text-xs text-amber-600 mt-1">لم يُعثر على دواء بهذا الاسم</p>
+                )}
+                {selectedDrug && (
+                  <div className="mt-1 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 text-xs text-sky-800">
+                    ✓ {selectedDrug.generic_name} — {selectedDrug.brand_name}
+                    {selectedDrug.requires_prescription && <span className="mr-2 text-amber-600">يستلزم وصفة</span>}
+                  </div>
+                )}
                 {existingItem && (
                   <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800 flex items-center justify-between">
-                    <span>هذا الدواء موجود بالفعل ({existingItem.generic_name}) — الكمية: {existingItem.quantity}</span>
+                    <span>هذا الدواء موجود بالفعل — الكمية: {existingItem.quantity}</span>
                     <button type="button" onClick={() => setAddMode('update')} className="text-sky-600 font-medium underline mr-2">إضافة كمية؟</button>
                   </div>
                 )}
