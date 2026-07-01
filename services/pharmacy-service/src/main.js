@@ -701,15 +701,23 @@ async function bootstrap() {
         }
       }
 
-      const result = await pool.query(`
-        INSERT INTO inventory.pharmacy_stock
-          (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level)
-        VALUES ($1,$2,$3,$4,$5,$6)
-        ON CONFLICT (pharmacy_id, drug_id, branch_id) DO UPDATE
-          SET quantity = inventory.pharmacy_stock.quantity + EXCLUDED.quantity,
-              selling_price = EXCLUDED.selling_price, updated_at = NOW()
-        RETURNING *
-      `, [req.params.id, drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]);
+      // Check if drug already in this pharmacy's stock
+      const existing = await pool.query(
+        'SELECT id, quantity FROM inventory.pharmacy_stock WHERE pharmacy_id=$1 AND drug_id=$2 LIMIT 1',
+        [req.params.id, drugId]
+      );
+      let result;
+      if (existing.rows.length) {
+        result = await pool.query(
+          'UPDATE inventory.pharmacy_stock SET quantity=quantity+$1, selling_price=$2, updated_at=NOW() WHERE id=$3 RETURNING *',
+          [body.quantity, body.sellingPrice, existing.rows[0].id]
+        );
+      } else {
+        result = await pool.query(
+          'INSERT INTO inventory.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+          [req.params.id, drugId, body.quantity, body.sellingPrice, body.currency || 'IQD', body.reorderLevel || 10]
+        );
+      }
       res.status(201).json({ success: true, data: result.rows[0] });
     } catch (err) { next(err); }
   });
