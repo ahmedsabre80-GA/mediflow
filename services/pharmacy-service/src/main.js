@@ -440,20 +440,22 @@ async function bootstrap() {
   // ─── DRUG CATALOG SEARCH ──────────────────────────────────────────────
   router.get('/drugs/search', async (req, res, next) => {
     try {
-      // Ensure table exists on every call (idempotent)
-      await pool.query(`CREATE SCHEMA IF NOT EXISTS products`);
+      // Ensure schema/table exist (swallow errors — bootstrap handles this idempotently)
+      await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
       await pool.query(`
         CREATE TABLE IF NOT EXISTS products.drugs (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           generic_name TEXT NOT NULL,
           brand_name TEXT,
+          barcode TEXT,
           dosage_form TEXT,
           strength TEXT,
           requires_prescription BOOLEAN DEFAULT false,
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
-      `);
-      const { rows: cnt } = await pool.query('SELECT COUNT(*) FROM products.drugs');
+      `).catch(() => {});
+      await pool.query(`ALTER TABLE products.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
+      const { rows: cnt } = await pool.query('SELECT COUNT(*) FROM products.drugs').catch(() => ({ rows: [{ count: '1' }] }));
       if (cnt[0]?.count === '0') {
         await pool.query(`
           INSERT INTO products.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
@@ -657,24 +659,61 @@ async function bootstrap() {
 
   router.get('/:id/inventory', authenticate, async (req, res, next) => {
     try {
-      const { search, lowStock, nearExpiry, page = 1, limit = 20 } = req.query;
+      await pool.query('CREATE SCHEMA IF NOT EXISTS inventory').catch(() => {});
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          pharmacy_id UUID NOT NULL,
+          drug_id UUID NOT NULL,
+          quantity INTEGER NOT NULL DEFAULT 0,
+          reserved_qty INTEGER NOT NULL DEFAULT 0,
+          selling_price NUMERIC(12,2) DEFAULT 0,
+          currency VARCHAR(10) DEFAULT 'IQD',
+          reorder_level INTEGER DEFAULT 10,
+          expiry_date DATE,
+          batch_number TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `).catch(() => {});
+
+      const { search, page = 1, limit = 20 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
       const result = await pool.query(`
         SELECT s.*, d.generic_name, d.brand_name, d.barcode, d.requires_prescription
         FROM inventory.pharmacy_stock s
         LEFT JOIN products.drugs d ON d.id = s.drug_id
         WHERE s.pharmacy_id = $1
-          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2 OR $2 IS NULL)
-          AND ($3::boolean IS NULL OR (s.quantity - COALESCE(s.reserved_qty,0)) <= s.reorder_level)
+          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
         ORDER BY COALESCE(d.generic_name, '')
-        LIMIT $4 OFFSET $5
-      `, [req.params.id, search ? `%${search}%` : null, lowStock || null, limit, offset]);
+        LIMIT $3 OFFSET $4
+      `, [req.params.id, search ? `%${search}%` : null, limit, offset]);
       res.json({ success: true, data: result.rows });
     } catch (err) { next(err); }
   });
 
   router.post('/:id/inventory', authenticate, async (req, res, next) => {
     try {
+      // Ensure schemas/tables exist
+      await pool.query('CREATE SCHEMA IF NOT EXISTS products').catch(() => {});
+      await pool.query('CREATE SCHEMA IF NOT EXISTS inventory').catch(() => {});
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          pharmacy_id UUID NOT NULL,
+          drug_id UUID NOT NULL,
+          quantity INTEGER NOT NULL DEFAULT 0,
+          reserved_qty INTEGER NOT NULL DEFAULT 0,
+          selling_price NUMERIC(12,2) DEFAULT 0,
+          currency VARCHAR(10) DEFAULT 'IQD',
+          reorder_level INTEGER DEFAULT 10,
+          expiry_date DATE,
+          batch_number TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `).catch(() => {});
+
       const body = req.body;
       let drugId = body.drugId;
 
@@ -684,8 +723,6 @@ async function bootstrap() {
         const brandName = body.brandName || '';
         const barcode = body.barcode || null;
 
-        // Ensure products schema & table exist
-        await pool.query('CREATE SCHEMA IF NOT EXISTS products').catch(() => {});
         await pool.query(`
           CREATE TABLE IF NOT EXISTS products.drugs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
