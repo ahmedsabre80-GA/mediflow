@@ -698,6 +698,141 @@ async function bootstrap() {
   });
 
   app.use('/api/v1/pharmacies', router);
+
+  // ─── APPOINTMENTS API ────────────────────────────────────────────────────────
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS appointments`).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS appointments.doctor_schedules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      doctor_id TEXT NOT NULL,
+      day_of_week SMALLINT NOT NULL, -- 0=Sun 1=Mon ... 6=Sat
+      start_time TIME NOT NULL,
+      end_time TIME NOT NULL,
+      max_patients INTEGER NOT NULL DEFAULT 10,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(doctor_id, day_of_week)
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS appointments.bookings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      doctor_id TEXT NOT NULL,
+      patient_name TEXT NOT NULL,
+      patient_phone TEXT,
+      patient_email TEXT,
+      appointment_date DATE NOT NULL,
+      appointment_time TIME,
+      notes TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  const apptRouter = express.Router();
+
+  // GET doctor schedule
+  apptRouter.get('/:doctorId/schedule', async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        'SELECT * FROM appointments.doctor_schedules WHERE doctor_id=$1 ORDER BY day_of_week',
+        [req.params.doctorId]
+      );
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  // PUT (upsert) doctor schedule for a day
+  apptRouter.put('/:doctorId/schedule', async (req, res, next) => {
+    try {
+      const { day_of_week, start_time, end_time, max_patients, is_active } = req.body;
+      const r = await pool.query(`
+        INSERT INTO appointments.doctor_schedules (doctor_id, day_of_week, start_time, end_time, max_patients, is_active)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        ON CONFLICT (doctor_id, day_of_week) DO UPDATE
+          SET start_time=$3, end_time=$4, max_patients=$5, is_active=$6
+        RETURNING *
+      `, [req.params.doctorId, day_of_week, start_time, end_time, max_patients ?? 10, is_active ?? true]);
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // GET available slots for a date
+  apptRouter.get('/:doctorId/availability', async (req, res, next) => {
+    try {
+      const { date } = req.query;
+      if (!date) return res.status(400).json({ success: false, error: { title: 'date required' } });
+      const d = new Date(date);
+      const dow = d.getDay(); // 0=Sun
+      const [sched, booked] = await Promise.all([
+        pool.query('SELECT * FROM appointments.doctor_schedules WHERE doctor_id=$1 AND day_of_week=$2 AND is_active=true', [req.params.doctorId, dow]),
+        pool.query("SELECT COUNT(*) FROM appointments.bookings WHERE doctor_id=$1 AND appointment_date=$2 AND status!='cancelled'", [req.params.doctorId, date]),
+      ]);
+      if (!sched.rows.length) return res.json({ success: true, data: { available: false, reason: 'no_schedule' } });
+      const s = sched.rows[0];
+      const bookedCount = parseInt(booked.rows[0].count);
+      res.json({ success: true, data: { available: bookedCount < s.max_patients, bookedCount, maxPatients: s.max_patients, startTime: s.start_time, endTime: s.end_time } });
+    } catch (err) { next(err); }
+  });
+
+  // GET bookings for a doctor
+  apptRouter.get('/:doctorId/bookings', async (req, res, next) => {
+    try {
+      const { date, status } = req.query;
+      let q = 'SELECT * FROM appointments.bookings WHERE doctor_id=$1';
+      const params: any[] = [req.params.doctorId];
+      if (date) { q += ` AND appointment_date=$${params.length+1}`; params.push(date); }
+      if (status) { q += ` AND status=$${params.length+1}`; params.push(status); }
+      q += ' ORDER BY appointment_date, created_at';
+      const r = await pool.query(q, params);
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  // POST create booking (public — patient books)
+  apptRouter.post('/:doctorId/bookings', async (req, res, next) => {
+    try {
+      const { patient_name, patient_phone, patient_email, appointment_date, notes } = req.body;
+      // Check availability
+      const d = new Date(appointment_date);
+      const dow = d.getDay();
+      const [sched, booked] = await Promise.all([
+        pool.query('SELECT * FROM appointments.doctor_schedules WHERE doctor_id=$1 AND day_of_week=$2 AND is_active=true', [req.params.doctorId, dow]),
+        pool.query("SELECT COUNT(*) FROM appointments.bookings WHERE doctor_id=$1 AND appointment_date=$2 AND status!='cancelled'", [req.params.doctorId, appointment_date]),
+      ]);
+      if (!sched.rows.length) return res.status(400).json({ success: false, error: { title: 'الطبيب غير متاح في هذا اليوم' } });
+      if (parseInt(booked.rows[0].count) >= sched.rows[0].max_patients) {
+        return res.status(400).json({ success: false, error: { title: 'الطاقة الاستيعابية ممتلئة لهذا اليوم' } });
+      }
+      const r = await pool.query(`
+        INSERT INTO appointments.bookings (doctor_id, patient_name, patient_phone, patient_email, appointment_date, appointment_time, notes)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
+      `, [req.params.doctorId, patient_name, patient_phone, patient_email, appointment_date, sched.rows[0].start_time, notes]);
+      res.status(201).json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // PATCH booking status
+  apptRouter.patch('/:doctorId/bookings/:bookingId', async (req, res, next) => {
+    try {
+      const { status } = req.body;
+      const r = await pool.query(
+        "UPDATE appointments.bookings SET status=$1 WHERE id=$2 AND doctor_id=$3 RETURNING *",
+        [status, req.params.bookingId, req.params.doctorId]
+      );
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // DELETE booking
+  apptRouter.delete('/:doctorId/bookings/:bookingId', async (req, res, next) => {
+    try {
+      await pool.query('DELETE FROM appointments.bookings WHERE id=$1 AND doctor_id=$2', [req.params.bookingId, req.params.doctorId]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  app.use('/api/v1/appointments/doctors', apptRouter);
   app.use(notFoundHandler);
   app.use(errorHandler);
 
