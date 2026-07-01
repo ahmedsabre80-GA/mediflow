@@ -140,6 +140,22 @@ async function bootstrap() {
       ADD COLUMN IF NOT EXISTS delivery_max_km INTEGER DEFAULT 20
   `).catch(() => {});
 
+  // Ensure products schema and drugs table with barcode column exist
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS products.drugs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      generic_name TEXT NOT NULL,
+      brand_name TEXT,
+      barcode TEXT,
+      dosage_form TEXT,
+      strength TEXT,
+      requires_prescription BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`ALTER TABLE products.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
+
   // Create products schema and drugs table if not exists
   await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
   await pool.query(`
@@ -629,9 +645,9 @@ async function bootstrap() {
         FROM inventory.pharmacy_stock s
         LEFT JOIN products.drugs d ON d.id = s.drug_id
         WHERE s.pharmacy_id = $1
-          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
-          AND ($3::boolean IS NULL OR (s.quantity - s.reserved_qty) <= s.reorder_level)
-        ORDER BY d.generic_name
+          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2 OR $2 IS NULL)
+          AND ($3::boolean IS NULL OR (s.quantity - COALESCE(s.reserved_qty,0)) <= s.reorder_level)
+        ORDER BY COALESCE(d.generic_name, '')
         LIMIT $4 OFFSET $5
       `, [req.params.id, search ? `%${search}%` : null, lowStock || null, limit, offset]);
       res.json({ success: true, data: result.rows });
