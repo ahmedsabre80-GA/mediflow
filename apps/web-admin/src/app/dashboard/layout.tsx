@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/pharmacists', label: 'الصيادلة', icon: FlaskConical },
   { href: '/dashboard/warehouses', label: 'المذاخر', icon: Package },
   { href: '/dashboard/doctors', label: 'الأطباء', icon: Stethoscope },
+  { href: '/dashboard/users', label: 'المستخدمون', icon: Users },
   { href: '/dashboard/team', label: 'فريق المنصة', icon: UserCog },
   { href: '/dashboard/orders', label: 'الطلبات', icon: ShoppingCart },
   { href: '/dashboard/analytics', label: 'التحليلات', icon: BarChart3 },

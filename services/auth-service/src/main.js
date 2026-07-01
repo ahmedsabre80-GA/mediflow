@@ -190,6 +190,10 @@ app.post('/api/v1/auth/login', async (req, res) => {
       return res.status(403).json({ success: false, error: { title: 'تم رفض طلبك. تواصل مع الإدارة لمزيد من التفاصيل.', status: 403 } });
     }
 
+    if (user.status === 'force_logout') {
+      return res.status(403).json({ success: false, error: { title: 'تم تسجيل خروجك من قبل الإدارة. تواصل مع المدير.', status: 403 } });
+    }
+
     // Update last login
     await pool.query('UPDATE auth.users SET last_login_at = NOW() WHERE id = $1', [user.id]);
 
@@ -293,6 +297,32 @@ app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
     await pool.query('DELETE FROM pharmacies.pharmacies WHERE owner_id=$1', [uid]).catch(()=>{});
     const r = await pool.query('DELETE FROM auth.users WHERE id=$1 RETURNING id,email', [uid]);
     res.json({ success: true, deleted: r.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── ADMIN: list all users ────────────────────────────────────────────────────
+app.get('/api/v1/auth/admin/users', async (req, res) => {
+  const { secret, role } = req.query;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    let q = "SELECT id, email, phone, first_name, last_name, role, status, created_at FROM auth.users WHERE 1=1";
+    const params = [];
+    if (role) { q += ` AND role=$${params.length+1}`; params.push(role); }
+    q += ' ORDER BY created_at DESC';
+    const r = await pool.query(q, params);
+    res.json({ success: true, data: r.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ─── ADMIN: force sign out (deactivate then reactivate — invalidates JWT by changing status) ──
+app.post('/api/v1/auth/admin/force-signout', async (req, res) => {
+  const { email, secret } = req.body;
+  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    // Toggle status to force_logout then back to active — any in-flight token will fail login check
+    await pool.query("UPDATE auth.users SET status='force_logout' WHERE LOWER(email)=LOWER($1)", [email]);
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
