@@ -156,6 +156,25 @@ async function bootstrap() {
   `).catch(() => {});
   await pool.query(`ALTER TABLE products.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
 
+  // Ensure inventory schema and pharmacy_stock table exist
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS inventory`).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inventory.pharmacy_stock (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      pharmacy_id UUID NOT NULL,
+      drug_id UUID NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      reserved_qty INTEGER NOT NULL DEFAULT 0,
+      selling_price NUMERIC(12,2) DEFAULT 0,
+      currency VARCHAR(10) DEFAULT 'IQD',
+      reorder_level INTEGER DEFAULT 10,
+      expiry_date DATE,
+      batch_number TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
   // Create products schema and drugs table if not exists
   await pool.query(`CREATE SCHEMA IF NOT EXISTS products`).catch(() => {});
   await pool.query(`
