@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Search, Plus, AlertTriangle, Package, Settings2, Camera, X,
   Sun, Snowflake, ChevronDown, ShoppingCart, RefreshCw, Edit3, QrCode, PenLine,
@@ -30,6 +31,7 @@ function saveItemLimits(l: Record<string, { summer: number; winter: number }>) {
 }
 
 export default function InventoryPage() {
+  const router = useRouter();
   const [inventory, setInventory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -88,8 +90,17 @@ export default function InventoryPage() {
     fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory?search=${encodeURIComponent(search)}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(r => r.json())
+      .then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem('pharmacy-token');
+          localStorage.removeItem('pharmacy-id');
+          router.push('/auth/login');
+          return null;
+        }
+        return r.json();
+      })
       .then(d => {
+        if (!d) return;
         const items = d.data || [];
         setInventory(items);
         const limits = getItemLimits();
@@ -220,6 +231,12 @@ export default function InventoryPage() {
     });
     const data = await res.json();
     setSaving(false);
+    if (res.status === 401) {
+      localStorage.removeItem('pharmacy-token');
+      localStorage.removeItem('pharmacy-id');
+      router.push('/auth/login');
+      return;
+    }
     if (!res.ok) { setSaveError(data?.error?.title || data?.error || 'فشلت العملية'); return; }
     closeModal();
     fetchInventory();

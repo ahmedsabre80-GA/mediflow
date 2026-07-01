@@ -25,7 +25,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const token = localStorage.getItem('pharmacy-token');
-    if (!token) router.push('/auth/login');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (!token || !pharmacyId) {
+      router.push('/auth/login');
+      return;
+    }
+    // Validate token by hitting the inventory endpoint — redirect to login on 401
+    fetch(`https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${pharmacyId}/inventory?limit=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => {
+      if (r.status === 401) {
+        localStorage.removeItem('pharmacy-token');
+        localStorage.removeItem('pharmacy-id');
+        router.push('/auth/login');
+      }
+    }).catch(() => {});
     refresh();
     const iv = setInterval(refresh, 30000);
     return () => clearInterval(iv);
