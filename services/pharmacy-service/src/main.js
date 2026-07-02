@@ -291,6 +291,28 @@ async function bootstrap() {
         return res.status(422).json({ success: false, error: { title: 'يجب رفع شهادة التسجيل', status: 422 } });
       }
       await client.query('BEGIN');
+
+      // Only reject duplicates on certificate number and certificate holder name
+      if (b.licenseNumber?.trim()) {
+        const dupLicense = await client.query(
+          "SELECT id FROM pharmacies.pharmacies WHERE license_number=$1 AND status != 'deleted'",
+          [b.licenseNumber.trim()]
+        );
+        if (dupLicense.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: { title: 'رقم الشهادة مسجّل مسبقاً في المنصة', status: 409 } });
+        }
+      }
+      if (b.licenseHolderName?.trim()) {
+        const dupHolder = await client.query(
+          "SELECT id FROM pharmacies.pharmacies WHERE license_holder_name=$1 AND status != 'deleted'",
+          [b.licenseHolderName.trim()]
+        );
+        if (dupHolder.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: { title: 'الاسم على الشهادة مسجّل مسبقاً في المنصة', status: 409 } });
+        }
+      }
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app';
       const authRes = await fetch(`${AUTH_URL}/api/v1/auth/register`, {
         method: 'POST',
@@ -317,12 +339,16 @@ async function bootstrap() {
       } else {
         userId = authData.data?.userId;
       }
+      // Ensure license_holder_name column exists
+      await client.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS license_holder_name TEXT`).catch(() => {});
+
       const phRes = await client.query(`
         INSERT INTO pharmacies.pharmacies
-          (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, certificate_data)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          (owner_id, name, name_ar, license_number, license_holder_name, license_expiry, phone, address, city, country, certificate_data)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         RETURNING id, name, status
-      `, [userId, b.name || b.nameAr, b.nameAr || b.name, b.licenseNumber?.trim(), b.licenseExpiry,
+      `, [userId, b.name || b.nameAr, b.nameAr || b.name, b.licenseNumber?.trim(),
+          b.licenseHolderName?.trim() || null, b.licenseExpiry,
           b.pharmacyPhone?.trim() || b.phone, b.address?.trim(), b.city?.trim(), b.country || 'IQ', b.certificateData || null]);
       if (b.certificateData) {
         await client.query('INSERT INTO public.registration_certificates (user_id, certificate_data, entity_type) VALUES ($1,$2,$3)',

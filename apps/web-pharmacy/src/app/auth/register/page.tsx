@@ -23,7 +23,7 @@ export default function RegisterPage() {
     firstName: '', lastName: '', email: '', phone: '', password: '',
   });
   const [pharmacy, setPharmacy] = useState({
-    nameAr: '', licenseNumber: '', licenseExpiry: '', phone: '', address: '', city: '',
+    nameAr: '', licenseNumber: '', licenseHolderName: '', licenseExpiry: '', phone: '', address: '', city: '',
   });
 
   useEffect(() => {
@@ -75,6 +75,7 @@ export default function RegisterPage() {
           name: pharmacy.nameAr,
           nameAr: pharmacy.nameAr,
           licenseNumber: pharmacy.licenseNumber,
+          licenseHolderName: pharmacy.licenseHolderName,
           licenseExpiry: pharmacy.licenseExpiry,
           pharmacyPhone: pharmacy.phone,
           address: pharmacy.address,
@@ -167,10 +168,17 @@ export default function RegisterPage() {
                   placeholder="صيدلية الأمين" className={rtl} required />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">رقم الرخصة *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">رقم الرخصة / الشهادة *</label>
                 <input dir="ltr"
                   value={pharmacy.licenseNumber} onChange={e => setPharmacy(p => ({...p, licenseNumber: e.target.value}))}
                   placeholder="PH-2024-001234" className={ltr} required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">الاسم على الشهادة *</label>
+                <input dir="auto" lang="ar"
+                  value={pharmacy.licenseHolderName} onChange={e => setPharmacy(p => ({...p, licenseHolderName: e.target.value}))}
+                  placeholder="الاسم كما هو مكتوب في الشهادة الرسمية" className={rtl} required />
+                <p className="text-xs text-gray-400 mt-1">يجب أن يكون فريداً — لا يمكن تسجيل شهادتين بنفس الاسم</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ انتهاء الرخصة *</label>
