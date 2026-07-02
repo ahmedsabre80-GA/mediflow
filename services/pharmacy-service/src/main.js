@@ -155,6 +155,29 @@ async function bootstrap() {
     )
   `).catch(() => {});
   await pool.query(`ALTER TABLE public.drugs ADD COLUMN IF NOT EXISTS barcode TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE public.drugs ADD COLUMN IF NOT EXISTS generic_name_en TEXT`).catch(() => {});
+  await pool.query(`
+    UPDATE public.drugs SET generic_name_en = CASE generic_name
+      WHEN 'باراسيتامول'    THEN 'paracetamol'   WHEN 'أيبوبروفين'     THEN 'ibuprofen'
+      WHEN 'أموكسيسيلين'   THEN 'amoxicillin'   WHEN 'أزيثروميسين'   THEN 'azithromycin'
+      WHEN 'ميتفورمين'      THEN 'metformin'      WHEN 'أتورفاستاتين'  THEN 'atorvastatin'
+      WHEN 'أومبرازول'      THEN 'omeprazole'     WHEN 'بانتوبرازول'   THEN 'pantoprazole'
+      WHEN 'لوراتادين'     THEN 'loratadine'     WHEN 'سيتيريزين'     THEN 'cetirizine'
+      WHEN 'ديكسامثازون'   THEN 'dexamethasone'  WHEN 'بريدنيزولون'   THEN 'prednisolone'
+      WHEN 'ميترونيدازول'  THEN 'metronidazole'  WHEN 'سيبروفلوكساسين' THEN 'ciprofloxacin'
+      WHEN 'إنالابريل'     THEN 'enalapril'      WHEN 'أملوديبين'     THEN 'amlodipine'
+      WHEN 'ليفوثيروكسين'  THEN 'levothyroxine'  WHEN 'فيتامين D3'    THEN 'vitamin d3'
+      WHEN 'فيتامين C'     THEN 'vitamin c'      WHEN 'أسبرين'        THEN 'aspirin'
+      WHEN 'كلوبيدوغريل'  THEN 'clopidogrel'    WHEN 'راميبريل'      THEN 'ramipril'
+      WHEN 'ميلوكسيكام'   THEN 'meloxicam'      WHEN 'ديكلوفيناك'   THEN 'diclofenac'
+      WHEN 'غابابنتين'     THEN 'gabapentin'     WHEN 'سيرترالين'     THEN 'sertraline'
+      WHEN 'كلاريثروميسين' THEN 'clarithromycin' WHEN 'فيتامين B12'   THEN 'vitamin b12'
+      WHEN 'حديد'          THEN 'iron'           WHEN 'كالسيوم + D3'  THEN 'calcium d3'
+      WHEN 'بيسوبرولول'    THEN 'bisoprolol'     WHEN 'فاموتيدين'     THEN 'famotidine'
+      WHEN 'ترامادول'      THEN 'tramadol'       WHEN 'أسيكلوفير'     THEN 'acyclovir'
+      WHEN 'فلوكونازول'    THEN 'fluconazole'
+      ELSE NULL END WHERE generic_name_en IS NULL
+  `).catch(() => {});
 
   // Ensure inventory schema and pharmacy_stock table exist
   await pool.query(`
@@ -520,13 +543,65 @@ async function bootstrap() {
       }
       const { q = '', limit = 20 } = req.query;
       const result = await pool.query(
-        `SELECT id, generic_name, brand_name, dosage_form, strength, requires_prescription
+        `SELECT id, generic_name, generic_name_en, brand_name, dosage_form, strength, requires_prescription
          FROM public.drugs
-         WHERE generic_name ILIKE $1 OR brand_name ILIKE $1
-         ORDER BY generic_name LIMIT $2`,
+         WHERE generic_name ILIKE $1
+            OR generic_name_en ILIKE $1
+            OR brand_name ILIKE $1
+         ORDER BY
+           CASE WHEN generic_name ILIKE $1 THEN 0
+                WHEN brand_name ILIKE $1 THEN 1
+                ELSE 2 END,
+           generic_name
+         LIMIT $2`,
         [`%${q}%`, Number(limit)]
       );
       res.json({ success: true, data: result.rows });
+    } catch (err) { next(err); }
+  });
+
+  // ─── UNIFIED SMART SEARCH (drugs + pharmacies) ────────────────────────
+  router.get('/search', async (req, res, next) => {
+    try {
+      const { q = '', lat, lng, radiusKm = 20 } = req.query;
+      const pattern = `%${q}%`;
+
+      // Search drugs (Arabic name, English name, brand name)
+      const drugsResult = await pool.query(
+        `SELECT id, generic_name, generic_name_en, brand_name, dosage_form, strength, requires_prescription,
+                'drug' AS result_type
+         FROM public.drugs
+         WHERE generic_name ILIKE $1 OR generic_name_en ILIKE $1 OR brand_name ILIKE $1
+         ORDER BY
+           CASE WHEN generic_name ILIKE $1 THEN 0 WHEN brand_name ILIKE $1 THEN 1 ELSE 2 END
+         LIMIT 10`,
+        [pattern]
+      );
+
+      // Search pharmacies by name
+      let pharmacyResult = { rows: [] };
+      if (lat && lng) {
+        pharmacyResult = await pool.query(
+          `SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
+                  p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
+                  ST_Distance(p.location, ST_MakePoint($3,$2)::geography) / 1000 AS distance_km,
+                  'pharmacy' AS result_type
+           FROM pharmacies.pharmacies p
+           WHERE p.status = 'active'
+             AND ST_DWithin(p.location, ST_MakePoint($3,$2)::geography, $4::float * 1000)
+             AND (p.name ILIKE $1 OR p.name_ar ILIKE $1)
+           ORDER BY distance_km ASC LIMIT 5`,
+          [pattern, lat, lng, radiusKm]
+        );
+      }
+
+      res.json({
+        success: true,
+        data: {
+          drugs: drugsResult.rows,
+          pharmacies: pharmacyResult.rows,
+        }
+      });
     } catch (err) { next(err); }
   });
 
@@ -535,7 +610,7 @@ async function bootstrap() {
     try {
       const { lat, lng, radiusKm = 5, drugId } = req.query;
       const result = await pool.query(`
-        SELECT p.id, p.name, p.name_ar, p.phone, p.rating, p.delivery_fee,
+        SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
                ST_Distance(p.location, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
         FROM pharmacies.pharmacies p
