@@ -138,7 +138,7 @@ export default function PharmacyEmployeesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           portalType: 'pharmacy',
-          requesterId,
+          requesterId: pharmacyId,
           requesterName: localStorage.getItem('pharmacy-name') || 'مدير الصيدلية',
           requesterEntity: localStorage.getItem('pharmacy-name') || 'الصيدلية',
           actionType: reqType === 'add' ? 'add_employee' : 'remove_employee',
