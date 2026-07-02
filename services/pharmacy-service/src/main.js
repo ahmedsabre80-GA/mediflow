@@ -600,19 +600,38 @@ async function bootstrap() {
   router.post('/portal-notifications', async (req, res, next) => {
     try {
       const b = req.body;
-      const r = await pool.query(`
-        INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
-        VALUES ($1,$2,$3,$4) RETURNING *
-      `, [b.portalType, b.recipientId, b.senderName, b.message]);
-      res.status(201).json({ success: true, data: r.rows[0] });
+      // Support bulk send: portalTypes array + recipientId, or single portalType
+      const types = Array.isArray(b.portalTypes) ? b.portalTypes : [b.portalType];
+      const rows = [];
+      for (const pt of types) {
+        const r = await pool.query(`
+          INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+          VALUES ($1,$2,$3,$4) RETURNING *
+        `, [pt, b.recipientId, b.senderName, b.message]);
+        rows.push(r.rows[0]);
+      }
+      res.status(201).json({ success: true, data: rows });
+    } catch (err) { next(err); }
+  });
+
+  // Admin: view all sent notifications
+  router.get('/portal-notifications/admin-log', async (_req, res, next) => {
+    try {
+      const r = await pool.query(
+        `SELECT * FROM public.portal_notifications ORDER BY created_at DESC LIMIT 100`
+      );
+      res.json({ success: true, data: r.rows });
     } catch (err) { next(err); }
   });
 
   router.get('/portal-notifications', async (req, res, next) => {
     try {
       const { portalType, recipientId } = req.query;
+      // Return both targeted and broadcast messages for this portal type
       const r = await pool.query(
-        'SELECT * FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2 ORDER BY created_at DESC LIMIT 50',
+        `SELECT * FROM public.portal_notifications
+         WHERE portal_type=$1 AND (recipient_id=$2 OR recipient_id='broadcast')
+         ORDER BY created_at DESC LIMIT 50`,
         [portalType, recipientId]
       );
       res.json({ success: true, data: r.rows });
