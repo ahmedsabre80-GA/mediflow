@@ -598,6 +598,19 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  router.patch('/admin-requests/:id', async (req, res, next) => {
+    try {
+      const { requester_entity, requester_name } = req.body;
+      const sets = []; const params = [];
+      if (requester_entity !== undefined) { sets.push(`requester_entity=$${params.length+1}`); params.push(requester_entity); }
+      if (requester_name   !== undefined) { sets.push(`requester_name=$${params.length+1}`);   params.push(requester_name); }
+      if (!sets.length) return res.status(400).json({ success: false, error: 'nothing to update' });
+      params.push(req.params.id);
+      const r = await pool.query(`UPDATE public.admin_requests SET ${sets.join(',')} WHERE id=$${params.length} RETURNING *`, params);
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
   router.delete('/admin-requests/:id', async (req, res, next) => {
     try {
       await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
