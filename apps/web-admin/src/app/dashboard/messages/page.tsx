@@ -21,7 +21,7 @@ const CHANNELS = [
   { key: 'voice',     label: 'رسالة صوتية',    icon: Mic,           desc: 'تسجيل صوتي',            free: false },
 ];
 
-interface Pharmacy { id: string; name: string; name_ar: string; phone: string; city: string; }
+interface Pharmacy { id: string; owner_id: string; name: string; name_ar: string; phone: string; city: string; }
 interface SentMsg   { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
 
 export default function MessagesPage() {
@@ -101,7 +101,7 @@ export default function MessagesPage() {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ portalType: 'pharmacy', recipientId: selectedUser.id, senderName, message: fullMessage }),
+          body: JSON.stringify({ portalType: 'pharmacy', recipientId: selectedUser.owner_id, senderName, message: fullMessage }),
         });
       } else {
         // Broadcast to selected group portal types
