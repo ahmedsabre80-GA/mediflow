@@ -139,6 +139,7 @@ async function bootstrap() {
       ADD COLUMN IF NOT EXISTS delivery_min_fee INTEGER DEFAULT 0,
       ADD COLUMN IF NOT EXISTS delivery_max_km INTEGER DEFAULT 20
   `).catch(() => {});
+  await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS license_holder_name TEXT`).catch(() => {});
 
   // Ensure products schema and drugs table with barcode column exist
   await pool.query(`
@@ -357,7 +358,7 @@ async function bootstrap() {
   router.get('/admin/all', async (_req, res, next) => {
     try {
       const result = await pool.query(`
-        SELECT p.id, p.owner_id, p.name, p.name_ar, p.license_number, p.license_holder_name,
+        SELECT p.id, p.owner_id, p.name, p.name_ar, p.license_number,
                p.license_expiry, p.phone, p.address, p.city, p.country, p.status,
                p.rating, p.latitude, p.longitude, p.created_at, p.updated_at,
                u.email as owner_email, u.phone as owner_phone
