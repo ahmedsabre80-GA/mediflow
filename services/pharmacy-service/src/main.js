@@ -679,6 +679,29 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Admin: delete a notification by id (removes from both sides)
+  router.delete('/portal-notifications/:id', async (req, res, next) => {
+    try {
+      await pool.query('DELETE FROM public.portal_notifications WHERE id=$1', [req.params.id]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // Admin: delete all notifications sent by a specific sender_name
+  router.delete('/portal-notifications', async (req, res, next) => {
+    try {
+      const { sender_name, message_prefix } = req.query;
+      if (sender_name) {
+        await pool.query('DELETE FROM public.portal_notifications WHERE sender_name=$1', [sender_name]);
+      } else if (message_prefix) {
+        await pool.query('DELETE FROM public.portal_notifications WHERE message LIKE $1', [`${message_prefix}%`]);
+      } else {
+        return res.status(400).json({ success: false, error: 'sender_name or message_prefix required' });
+      }
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   // ─── STAFF (sub-users / pharmacist employees) ────────────────────────
 
   // Ensure table exists on startup
