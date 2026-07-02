@@ -178,7 +178,7 @@ export default function RegisterPage() {
                 <input dir="auto" lang="ar"
                   value={pharmacy.licenseHolderName} onChange={e => setPharmacy(p => ({...p, licenseHolderName: e.target.value}))}
                   placeholder="الاسم كما هو مكتوب في الشهادة الرسمية" className={rtl} required />
-                <p className="text-xs text-gray-400 mt-1">يجب أن يكون فريداً — لا يمكن تسجيل شهادتين بنفس الاسم</p>
+                <p className="text-xs text-gray-400 mt-1">الاسم كما هو مدوّن رسمياً في الشهادة</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ انتهاء الرخصة *</label>

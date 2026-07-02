@@ -303,16 +303,7 @@ async function bootstrap() {
           return res.status(409).json({ success: false, error: { title: 'رقم الشهادة مسجّل مسبقاً في المنصة', status: 409 } });
         }
       }
-      if (b.licenseHolderName?.trim()) {
-        const dupHolder = await client.query(
-          "SELECT id FROM pharmacies.pharmacies WHERE license_holder_name=$1 AND status != 'deleted'",
-          [b.licenseHolderName.trim()]
-        );
-        if (dupHolder.rows.length > 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ success: false, error: { title: 'الاسم على الشهادة مسجّل مسبقاً في المنصة', status: 409 } });
-        }
-      }
+      // Note: license_holder_name is NOT unique — same person can own multiple pharmacies
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app';
       const authRes = await fetch(`${AUTH_URL}/api/v1/auth/register`, {
         method: 'POST',
