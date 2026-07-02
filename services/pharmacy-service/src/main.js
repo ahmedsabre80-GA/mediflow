@@ -357,7 +357,10 @@ async function bootstrap() {
   router.get('/admin/all', async (_req, res, next) => {
     try {
       const result = await pool.query(`
-        SELECT p.*, u.email as owner_email, u.phone as owner_phone
+        SELECT p.id, p.owner_id, p.name, p.name_ar, p.license_number, p.license_holder_name,
+               p.license_expiry, p.phone, p.address, p.city, p.country, p.status,
+               p.rating, p.latitude, p.longitude, p.created_at, p.updated_at,
+               u.email as owner_email, u.phone as owner_phone
         FROM pharmacies.pharmacies p
         LEFT JOIN auth.users u ON u.id = p.owner_id
         WHERE p.status != 'deleted'
