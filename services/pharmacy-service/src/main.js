@@ -1,4 +1,4 @@
-"use strict";
+"use strict"; // v2
 require("dotenv/config");
 const express = require("express");
 const helmet = require("helmet");
