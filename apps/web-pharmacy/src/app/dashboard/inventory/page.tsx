@@ -42,7 +42,7 @@ export default function InventoryPage() {
   const [saveError, setSaveError] = useState('');
 
   // ── ADD form (manual + scan result)
-  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', quantity: '', sellingPrice: '', reorderLevel: '10' });
+  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', quantity: '', sellingPrice: '', reorderLevel: '10', expiryDate: '', originCountry: '' });
   const [drugSuggestions, setDrugSuggestions] = useState<any[]>([]);
   const [drugSearching, setDrugSearching] = useState(false);
 
@@ -214,6 +214,8 @@ export default function InventoryPage() {
     if (!form.genericName.trim()) { setSaveError('أدخل اسم الدواء'); return; }
     if (!form.quantity || Number(form.quantity) <= 0) { setSaveError('أدخل كمية صحيحة'); return; }
     if (!form.sellingPrice || Number(form.sellingPrice) < 0) { setSaveError('أدخل سعر البيع'); return; }
+    if (!form.expiryDate) { setSaveError('أدخل تاريخ انتهاء الصلاحية'); return; }
+    if (!form.originCountry.trim()) { setSaveError('اختر بلد المنشأ'); return; }
     setSaving(true);
     const token = localStorage.getItem('pharmacy-token');
     const pharmacyId = localStorage.getItem('pharmacy-id');
@@ -227,6 +229,8 @@ export default function InventoryPage() {
         quantity: Number(form.quantity),
         sellingPrice: Number(form.sellingPrice),
         reorderLevel: Number(form.reorderLevel) || 10,
+        expiryDate: form.expiryDate,
+        originCountry: form.originCountry.trim(),
       }),
     });
     const data = await res.json();
@@ -270,7 +274,7 @@ export default function InventoryPage() {
     setMode(null);
     setSaveError('');
     setSaving(false);
-    setForm({ genericName:'', brandName:'', barcode:'', quantity:'', sellingPrice:'', reorderLevel:'10' });
+    setForm({ genericName:'', brandName:'', barcode:'', quantity:'', sellingPrice:'', reorderLevel:'10', expiryDate:'', originCountry:'' });
     setDrugSuggestions([]);
     setUpdateSearch('');
     setUpdateItem(null);
@@ -370,7 +374,7 @@ export default function InventoryPage() {
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['الدواء','الكمية',`حد ${seasonLabel}`,'السعر','الحالة','إجراءات'].map(h => (
+              {['الدواء','الكمية',`حد ${seasonLabel}`,'السعر','الصلاحية','المنشأ','الحالة','إجراءات'].map(h => (
                 <th key={h} className="text-right text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -379,7 +383,7 @@ export default function InventoryPage() {
             {loading ? (
               <tr><td colSpan={6} className="text-center py-12 text-gray-400">جاري التحميل...</td></tr>
             ) : inventory.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-12 text-gray-400">
+              <tr><td colSpan={8} className="text-center py-12 text-gray-400">
                 <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد منتجات في المخزون
               </td></tr>
             ) : inventory.map(item => {
@@ -402,6 +406,15 @@ export default function InventoryPage() {
                     {activeLimit > 0 ? <span className={`text-sm font-medium ${isLow ? 'text-red-600' : 'text-gray-600'}`}>{activeLimit}</span> : <span className="text-xs text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{Number(item.selling_price).toLocaleString()} د.ع</td>
+                  <td className="px-4 py-3 text-sm text-gray-600">
+                    {item.expiry_date ? (() => {
+                      const d = new Date(item.expiry_date);
+                      const isExpired = d < new Date();
+                      const isSoon = !isExpired && (d.getTime() - Date.now()) < 90*24*60*60*1000;
+                      return <span className={`font-medium ${isExpired ? 'text-red-600' : isSoon ? 'text-orange-500' : 'text-gray-700'}`}>{d.toLocaleDateString('ar-IQ')}</span>;
+                    })() : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{item.origin_country || <span className="text-gray-300">—</span>}</td>
                   <td className="px-4 py-3">
                     {isLow ? (
                       <button onClick={() => setOrderItem(item)} className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-full">
@@ -705,6 +718,39 @@ export default function InventoryPage() {
                         placeholder="5000" required
                         className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ انتهاء الصلاحية *</label>
+                    <input type="date" value={form.expiryDate} onChange={e => setForm(f => ({ ...f, expiryDate: e.target.value }))}
+                      required min={new Date().toISOString().split('T')[0]}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">بلد المنشأ *</label>
+                    <select value={form.originCountry} onChange={e => setForm(f => ({ ...f, originCountry: e.target.value }))}
+                      required
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white">
+                      <option value="">— اختر البلد —</option>
+                      <option value="العراق">العراق</option>
+                      <option value="الأردن">الأردن</option>
+                      <option value="مصر">مصر</option>
+                      <option value="السعودية">السعودية</option>
+                      <option value="الإمارات">الإمارات</option>
+                      <option value="سوريا">سوريا</option>
+                      <option value="لبنان">لبنان</option>
+                      <option value="تركيا">تركيا</option>
+                      <option value="الهند">الهند</option>
+                      <option value="ألمانيا">ألمانيا</option>
+                      <option value="فرنسا">فرنسا</option>
+                      <option value="المملكة المتحدة">المملكة المتحدة</option>
+                      <option value="الولايات المتحدة">الولايات المتحدة</option>
+                      <option value="الصين">الصين</option>
+                      <option value="إيران">إيران</option>
+                      <option value="باكستان">باكستان</option>
+                      <option value="أخرى">أخرى</option>
+                    </select>
                   </div>
 
                   <div className="flex gap-3">
