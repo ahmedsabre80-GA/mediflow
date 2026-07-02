@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare, ChevronLeft } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const NAV = [
@@ -21,6 +21,7 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const pathname = usePathname();
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<PortalNotif[]>([]);
+  const [selectedNotif, setSelectedNotif] = useState<PortalNotif | null>(null);
 
   const refresh = useCallback(async () => {
     const userId = localStorage.getItem('doctor-user-id') || '';
@@ -39,7 +40,12 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
 
   const unread = notifs.filter(n => !n.isRead).length;
 
-  const handleRead = (id: string) => { markNotifRead(id); refresh(); };
+  const handleRead = (notif: PortalNotif) => {
+    markNotifRead(notif.id);
+    setSelectedNotif(notif);
+    setShowNotifs(false);
+    refresh();
+  };
 
   return (
     <div className="flex h-screen bg-gray-50" dir="rtl">
@@ -107,15 +113,16 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
                     {notifs.length === 0 ? (
                       <div className="px-4 py-8 text-center text-gray-400 text-sm">لا توجد إشعارات حالياً</div>
                     ) : notifs.map(n => (
-                      <div key={n.id} onClick={() => handleRead(n.id)}
+                      <div key={n.id} onClick={() => handleRead(n)}
                         className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${!n.isRead ? 'bg-teal-50' : ''}`}>
                         <div className="flex items-start gap-2">
                           {!n.isRead && <span className="w-2 h-2 bg-teal-500 rounded-full shrink-0 mt-1.5" />}
-                          <div className={!n.isRead ? '' : 'mr-4'}>
-                            <p className="text-sm text-gray-800 font-medium">{n.message}</p>
+                          <div className={`flex-1 ${!n.isRead ? '' : 'mr-4'}`}>
+                            <p className="text-sm text-gray-800 font-medium line-clamp-2">{n.message}</p>
                             {n.senderName && <p className="text-xs text-gray-400">من: {n.senderName}</p>}
                             <p className="text-xs text-gray-400">{new Date(n.createdAt).toLocaleString('ar-IQ')}</p>
                           </div>
+                          <ChevronLeft className="w-4 h-4 text-gray-300 shrink-0 mt-0.5" />
                         </div>
                       </div>
                     ))}
@@ -127,6 +134,39 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
         </header>
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
+
+      {/* Notification detail modal */}
+      {selectedNotif && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" dir="rtl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+              <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
+            </div>
+            <div className="bg-teal-50 rounded-xl p-4 mb-4">
+              <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+            </div>
+            <div className="space-y-1.5 text-sm text-gray-500">
+              {selectedNotif.senderName && (
+                <div className="flex justify-between">
+                  <span>{selectedNotif.senderName}</span>
+                  <span className="font-medium text-gray-700">المرسل</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>{new Date(selectedNotif.createdAt).toLocaleString('ar-IQ')}</span>
+                <span className="font-medium text-gray-700">التاريخ</span>
+              </div>
+            </div>
+            <button onClick={() => setSelectedNotif(null)}
+              className="mt-5 w-full bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
+              إغلاق
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
