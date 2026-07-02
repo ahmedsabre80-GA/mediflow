@@ -1,12 +1,14 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { Save, Truck, Store, Calculator } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Save, Truck, Store, Calculator, Upload, X } from 'lucide-react';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [logoImage, setLogoImage] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
   const [settings, setSettings] = useState({
     name: '',
     phone: '',
@@ -24,7 +26,22 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(d => { if (d.success && d.data) setSettings(s => ({ ...s, ...d.data })); })
       .catch(() => {});
+    const stored = localStorage.getItem('pharmacy-logo-image');
+    if (stored) setLogoImage(stored);
   }, []);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert('حجم الصورة يجب أن يكون أقل من 2 ميغابايت'); return; }
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const data = ev.target?.result as string;
+      setLogoImage(data);
+      localStorage.setItem('pharmacy-logo-image', data);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const update = (key: string, value: any) => setSettings(s => ({ ...s, [key]: value }));
 
@@ -60,6 +77,30 @@ export default function SettingsPage() {
           <Save className="w-4 h-4" />
           {saved ? 'تم الحفظ ✓' : saving ? 'جاري الحفظ...' : 'حفظ التغييرات'}
         </button>
+      </div>
+
+      {/* Logo Upload */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm">
+        <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><Upload className="w-5 h-5 text-sky-500" /> شعار الصيدلية</h3>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+        <div className="flex items-center gap-4">
+          <div className="w-20 h-20 rounded-2xl border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden bg-gray-50 shrink-0">
+            {logoImage ? <img src={logoImage} alt="logo" className="w-full h-full object-cover" /> : <Store className="w-8 h-8 text-gray-300" />}
+          </div>
+          <div className="flex-1 space-y-2">
+            <button onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 rounded-xl text-sm font-medium text-gray-600 hover:border-sky-400 hover:bg-sky-50 transition-colors w-full justify-center">
+              <Upload className="w-4 h-4" /> رفع صورة الشعار
+            </button>
+            {logoImage && (
+              <button onClick={() => { setLogoImage(''); localStorage.removeItem('pharmacy-logo-image'); }}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-xl transition-colors w-full justify-center">
+                <X className="w-4 h-4" /> حذف الشعار
+              </button>
+            )}
+            <p className="text-xs text-gray-400 text-center">PNG أو JPG — أقل من 2 ميغابايت</p>
+          </div>
+        </div>
       </div>
 
       {/* Pharmacy Info */}

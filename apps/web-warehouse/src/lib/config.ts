@@ -8,20 +8,28 @@ export interface WarehouseConfig {
   primaryColor: string;
   secondaryColor: string;
   logoEmoji: string;
+  logoImage: string;
   tagline: string;
   currency: string;
   country: string;
+  delivery_rate_per_km: number;
+  delivery_min_fee: number;
+  delivery_max_km: number;
 }
 
 export const DEFAULT_CONFIG: WarehouseConfig = {
   name: 'بوابة المذاخر',
   nameEn: 'Warehouse Portal',
-  primaryColor: '#f59e0b',  // amber — change to any hex color
+  primaryColor: '#f59e0b',
   secondaryColor: '#d97706',
   logoEmoji: '🏭',
+  logoImage: '',
   tagline: 'ميديفلو — إدارة التوزيع',
   currency: 'IQD',
   country: 'IQ',
+  delivery_rate_per_km: 0,
+  delivery_min_fee: 0,
+  delivery_max_km: 20,
 };
 
 // Load config from localStorage (set by manager in Settings → Branding)
