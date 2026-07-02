@@ -1,138 +1,199 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
-import { Search, MapPin, Star, Clock, Truck, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Search, MapPin, Star, Truck, X, Package, ArrowRight, ShoppingCart, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 
-const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
+const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
-export default function SearchPage() {
-  const [query, setQuery] = useState('');
-  const [pharmacies, setPharmacies] = useState<any[]>([]);
-  const [medications, setMedications] = useState<any[]>([]);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<'pharmacies' | 'medications'>('pharmacies');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedMed, setSelectedMed] = useState<any>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
+const DEFAULT_LAT = 33.3152;
+const DEFAULT_LNG = 44.3661;
+
+interface Drug {
+  id: string;
+  generic_name: string;
+  generic_name_en: string;
+  brand_name: string;
+  dosage_form: string;
+  strength: string;
+  requires_prescription: boolean;
+}
+interface StockPharmacy {
+  id: string;
+  name: string;
+  name_ar: string;
+  phone: string;
+  rating: number;
+  distance_km: number;
+  delivery_rate_per_km: number;
+  delivery_min_fee: number;
+  selling_price: number;
+  quantity: number;
+  currency: string;
+}
+
+function SearchContent() {
+  const searchParams = useSearchParams();
+  const [query,        setQuery]        = useState(searchParams.get('q') || '');
+  const [drugs,        setDrugs]        = useState<Drug[]>([]);
+  const [suggestions,  setSuggestions]  = useState<Drug[]>([]);
+  const [showSug,      setShowSug]      = useState(false);
+  const [loading,      setLoading]      = useState(false);
+  const [nearbyPharm,  setNearbyPharm]  = useState<StockPharmacy[]>([]);
+  const [expandedDrug, setExpandedDrug] = useState<string | null>(null);
+  const [stockMap,     setStockMap]     = useState<Record<string, StockPharmacy[]>>({});
+  const [stockLoading, setStockLoading] = useState<string | null>(null);
+  const [coords,       setCoords]       = useState({ lat: DEFAULT_LAT, lng: DEFAULT_LNG });
+
+  const searchRef  = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
-    loadPharmacies();
+    navigator.geolocation?.getCurrentPosition(
+      pos => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {}
+    );
   }, []);
 
   useEffect(() => {
-    if (query.length > 1) {
-      fetchSuggestions(query);
-    } else {
-      setSuggestions([]);
-      setShowSuggestions(false);
-    }
+    fetch(`${API}/nearby?lat=${coords.lat}&lng=${coords.lng}&radiusKm=15&limit=8`)
+      .then(r => r.json())
+      .then(d => setNearbyPharm(d.data || []))
+      .catch(() => {});
+  }, [coords]);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowSug(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    if (query.length < 2) { setSuggestions([]); setShowSug(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/drugs/search?q=${encodeURIComponent(query)}&limit=6`);
+        const d = await r.json();
+        setSuggestions(d.data || []);
+        setShowSug(true);
+      } catch { setSuggestions([]); }
+    }, 300);
   }, [query]);
 
-  // Close suggestions when clicking outside
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
+  const doSearch = useCallback(async (q: string) => {
+    if (q.length < 2) return;
+    setLoading(true);
+    setShowSug(false);
+    setExpandedDrug(null);
+    setStockMap({});
+    try {
+      const r = await fetch(`${API}/drugs/search?q=${encodeURIComponent(q)}&limit=20`);
+      const d = await r.json();
+      const drugList: Drug[] = d.data || [];
+      setDrugs(drugList);
+      // Auto-expand first drug and load its pharmacies
+      if (drugList.length > 0) {
+        loadPharmaciesForDrug(drugList[0], true);
       }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    } catch { setDrugs([]); }
+    finally { setLoading(false); }
+  }, [coords]);
+
+  const loadPharmaciesForDrug = async (drug: Drug, autoExpand = false) => {
+    if (stockMap[drug.id]) {
+      setExpandedDrug(prev => prev === drug.id ? null : drug.id);
+      return;
+    }
+    setExpandedDrug(drug.id);
+    setStockLoading(drug.id);
+    try {
+      const r = await fetch(`${API}/nearby?lat=${coords.lat}&lng=${coords.lng}&radiusKm=30&drugId=${drug.id}&limit=10`);
+      const d = await r.json();
+      setStockMap(prev => ({ ...prev, [drug.id]: d.data || [] }));
+    } catch {
+      setStockMap(prev => ({ ...prev, [drug.id]: [] }));
+    } finally {
+      setStockLoading(null);
+    }
+  };
+
+  useEffect(() => {
+    const q = searchParams.get('q');
+    if (q && q.length >= 2) doSearch(q);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchSuggestions = async (q: string) => {
-    try {
-      const res = await fetch(`${PHARMACY_API}/medications/search?q=${encodeURIComponent(q)}&limit=5`);
-      const data = await res.json();
-      setSuggestions(data.data || []);
-      setShowSuggestions(true);
-    } catch {
-      setSuggestions([]);
-    }
+  const clearSearch = () => {
+    setQuery(''); setSuggestions([]); setDrugs([]);
+    setExpandedDrug(null); setStockMap({});
   };
 
-  const loadPharmacies = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${PHARMACY_API}/pharmacies/nearby?lat=33.3152&lng=44.3661&radiusKm=15&limit=20`);
-      const data = await res.json();
-      setPharmacies(data.data || []);
-    } catch {
-      setPharmacies([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const searchMedications = async (q: string) => {
-    if (!q || q.length < 2) return;
-    setLoading(true);
-    setTab('medications');
-    setShowSuggestions(false);
-    try {
-      const res = await fetch(`${PHARMACY_API}/medications/search?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      setMedications(data.data || []);
-    } catch {
-      setMedications([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSelectSuggestion = (med: any) => {
-    setQuery(med.generic_name_ar || med.generic_name);
-    setSelectedMed(med);
-    setShowSuggestions(false);
-    searchMedications(med.generic_name);
-  };
-
-  const handleSearch = () => {
-    if (query.length > 1) searchMedications(query);
-  };
+  const isArabic = (s: string) => /[؀-ۿ]/.test(s);
 
   return (
     <div className="min-h-screen bg-gray-50" dir="rtl">
-      {/* Search Header */}
-      <div className="bg-sky-500 px-4 py-6 pt-8">
-        <h1 className="text-white font-bold text-lg mb-3">ابحث عن دواء أو صيدلية</h1>
 
-        {/* Smart Search Bar */}
+      {/* Header */}
+      <div className="bg-sky-500 px-4 py-6 pt-10 pb-8">
+        <div className="flex items-center justify-between mb-3">
+          <Link href="/dashboard" className="flex items-center gap-1 text-sky-200 hover:text-white text-sm">
+            <ArrowRight className="w-4 h-4" /> الرئيسية
+          </Link>
+          <h1 className="text-white font-bold text-lg">ابحث عن دواء</h1>
+        </div>
+
         <div ref={searchRef} className="relative">
-          <div className="flex items-center gap-2 bg-white rounded-xl overflow-hidden shadow-md">
-            <button onClick={handleSearch}
-              className="bg-sky-600 hover:bg-sky-700 px-4 py-3 flex items-center justify-center transition-colors">
+          <div className="flex items-center gap-2 bg-white rounded-2xl overflow-hidden shadow-lg">
+            <button onClick={() => doSearch(query)}
+              className="bg-sky-600 hover:bg-sky-700 px-4 py-3.5 flex items-center justify-center transition-colors shrink-0">
               <Search className="w-5 h-5 text-white" />
             </button>
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              placeholder="اكتب اسم الدواء... مثال: باراسيتامول"
-              className="flex-1 py-3 px-2 text-sm outline-none"
-              dir="rtl"
+              onKeyDown={e => e.key === 'Enter' && doSearch(query)}
+              placeholder="باراسيتامول، ibuprofen، ..."
+              className="flex-1 py-3.5 px-2 text-sm outline-none"
+              dir={isArabic(query) ? 'rtl' : 'ltr'}
+              autoComplete="off"
+              autoFocus
             />
             {query && (
-              <button onClick={() => { setQuery(''); setSuggestions([]); setMedications([]); }}
-                className="px-3 text-gray-400 hover:text-gray-600">✕</button>
+              <button onClick={clearSearch} className="px-3 text-gray-400 hover:text-gray-600 shrink-0">
+                <X className="w-4 h-4" />
+              </button>
             )}
           </div>
 
-          {/* Autocomplete Suggestions */}
-          {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute top-full right-0 left-0 mt-1 bg-white rounded-xl shadow-xl z-50 border overflow-hidden">
-              <div className="px-3 py-2 bg-gray-50 border-b">
-                <p className="text-xs text-gray-500">اقتراحات البحث</p>
-              </div>
-              {suggestions.map((med: any) => (
-                <button key={med.id} onClick={() => handleSelectSuggestion(med)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-sky-50 transition-colors text-right border-b last:border-0">
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900 text-sm">{med.generic_name_ar || med.generic_name}</p>
-                    {med.brand_name && <p className="text-xs text-gray-500">{med.brand_name}</p>}
+          {!query && (
+            <div className="flex gap-2 mt-3 flex-wrap">
+              {['باراسيتامول', 'ibuprofen', 'amoxicillin', 'فيتامين C'].map(hint => (
+                <button key={hint} onClick={() => { setQuery(hint); doSearch(hint); }}
+                  className="bg-white/20 hover:bg-white/30 text-white text-xs px-3 py-1.5 rounded-full transition-colors">
+                  {hint}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {showSug && suggestions.length > 0 && (
+            <div className="absolute top-full right-0 left-0 mt-1 bg-white rounded-2xl shadow-xl z-50 border overflow-hidden">
+              {suggestions.map(drug => (
+                <button key={drug.id} onClick={() => { setQuery(drug.generic_name); setShowSug(false); doSearch(drug.generic_name); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-sky-50 text-right border-b last:border-0 transition-colors">
+                  <span className="text-xl shrink-0">💊</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-sm">{drug.generic_name}</p>
+                    <p className="text-xs text-gray-400">
+                      {drug.generic_name_en && <span className="ml-2">{drug.generic_name_en}</span>}
+                      {drug.brand_name && <span>{drug.brand_name}</span>}
+                      {drug.strength && <span> · {drug.strength}</span>}
+                    </p>
                   </div>
-                  <span className="text-2xl">💊</span>
-                  {med.requires_prescription && (
+                  {drug.requires_prescription && (
                     <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full shrink-0">وصفة</span>
                   )}
                 </button>
@@ -142,114 +203,161 @@ export default function SearchPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b bg-white">
-        <button onClick={() => setTab('pharmacies')}
-          className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === 'pharmacies' ? 'border-b-2 border-sky-500 text-sky-600' : 'text-gray-500'}`}>
-          الصيدليات
-        </button>
-        <button onClick={() => setTab('medications')}
-          className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === 'medications' ? 'border-b-2 border-sky-500 text-sky-600' : 'text-gray-500'}`}>
-          الأدوية {medications.length > 0 && `(${medications.length})`}
-        </button>
-      </div>
+      {/* Loading */}
+      {loading && (
+        <div className="px-4 py-8 space-y-3">
+          {[1,2,3].map(i => <div key={i} className="bg-white rounded-2xl p-4 animate-pulse h-24" />)}
+        </div>
+      )}
 
-      <div className="max-w-4xl mx-auto px-4 py-5">
+      {/* Drug Results */}
+      {!loading && drugs.length > 0 && (
+        <div className="px-4 py-4 space-y-3">
+          <p className="text-xs text-gray-500 text-right">{drugs.length} نتيجة — اضغط على الدواء لعرض الصيدليات القريبة</p>
+          {drugs.map(drug => {
+            const isExpanded = expandedDrug === drug.id;
+            const pharmacies = stockMap[drug.id] || [];
+            const isLoadingThis = stockLoading === drug.id;
 
-        {/* Medications Results */}
-        {tab === 'medications' && (
-          <div>
-            <h2 className="text-base font-bold text-gray-900 mb-4">
-              {query ? `نتائج البحث عن "${query}"` : 'ابحث عن دواء'}
-            </h2>
-            {loading ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {[1,2,3,4,5,6].map(i => <div key={i} className="bg-white rounded-xl p-4 animate-pulse h-40" />)}
-              </div>
-            ) : medications.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {medications.map((med: any) => (
-                  <div key={med.id} className="bg-white rounded-xl p-4 hover:shadow-md transition-shadow">
-                    <div className="h-20 bg-sky-50 rounded-lg mb-3 flex items-center justify-center text-3xl">💊</div>
-                    <h3 className="font-bold text-gray-900 text-sm mb-1 text-right line-clamp-2">
-                      {med.generic_name_ar || med.generic_name}
-                    </h3>
-                    {med.brand_name && <p className="text-xs text-gray-500 mb-2 text-right">{med.brand_name}</p>}
-                    {med.requires_prescription && (
-                      <span className="inline-block bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full mb-2">يحتاج وصفة</span>
+            return (
+              <div key={drug.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                {/* Drug header — tap to expand */}
+                <button onClick={() => loadPharmaciesForDrug(drug)}
+                  className="w-full flex items-center gap-3 p-4 text-right hover:bg-sky-50 transition-colors">
+                  <div className="w-11 h-11 bg-sky-50 rounded-xl flex items-center justify-center text-2xl shrink-0">💊</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-900 text-sm">{drug.generic_name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {drug.generic_name_en && <span className="ml-2">{drug.generic_name_en}</span>}
+                      {drug.brand_name && <span className="text-gray-500">{drug.brand_name}</span>}
+                      {drug.dosage_form && <span> · {drug.dosage_form}</span>}
+                      {drug.strength && <span> · {drug.strength}</span>}
+                    </p>
+                    {drug.requires_prescription && (
+                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full mt-1 inline-block">يحتاج وصفة طبية</span>
                     )}
-                    <button
-                      onClick={() => { setQuery(med.generic_name_ar || med.generic_name); setTab('pharmacies'); }}
-                      className="w-full mt-2 bg-sky-500 text-white text-xs py-2 rounded-lg hover:bg-sky-600">
-                      ابحث في الصيدليات
-                    </button>
                   </div>
-                ))}
-              </div>
-            ) : query.length > 1 ? (
-              <div className="text-center py-12 text-gray-500">
-                <p className="text-lg mb-2">لم يتم العثور على نتائج لـ "{query}"</p>
-                <p className="text-sm text-gray-400">جرب البحث باسم مختلف</p>
-              </div>
-            ) : (
-              <div className="text-center py-16 text-gray-400">
-                <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p>اكتب اسم الدواء للبحث</p>
-                <p className="text-xs mt-1">مثال: باراسيتامول، أموكسيسيلين...</p>
-              </div>
-            )}
-          </div>
-        )}
+                  {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />}
+                </button>
 
-        {/* Pharmacies */}
-        {tab === 'pharmacies' && (
-          <div>
-            <h2 className="text-base font-bold text-gray-900 mb-4">
-              {query ? `صيدليات تحتوي على "${query}"` : 'الصيدليات القريبة منك'}
-            </h2>
-            {loading ? (
-              <div className="space-y-3">
-                {[1,2,3].map(i => <div key={i} className="bg-white rounded-xl p-4 animate-pulse h-24" />)}
-              </div>
-            ) : pharmacies.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">لا توجد صيدليات قريبة</div>
-            ) : (
-              <div className="space-y-3">
-                {pharmacies.map((pharmacy: any) => (
-                  <Link href={`/pharmacies/${pharmacy.id}`} key={pharmacy.id}
-                    className="bg-white rounded-xl p-4 flex gap-4 hover:shadow-md transition-shadow">
-                    <div className="w-16 h-16 bg-sky-100 rounded-xl flex items-center justify-center shrink-0 text-2xl">🏥</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between mb-1">
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
-                          <span className="text-sm font-medium">{parseFloat(pharmacy.rating || 0).toFixed(1)}</span>
+                {/* Nearby pharmacies with stock */}
+                {isExpanded && (
+                  <div className="border-t">
+                    {isLoadingThis ? (
+                      <div className="px-4 py-6 text-center">
+                        <div className="w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        <p className="text-xs text-gray-400">جاري البحث في الصيدليات القريبة...</p>
+                      </div>
+                    ) : pharmacies.length === 0 ? (
+                      <div className="px-4 py-6 text-center">
+                        <Package className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                        <p className="text-sm text-gray-500">لا توجد صيدلية قريبة تحتوي هذا الدواء</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y">
+                        <div className="px-4 py-2 bg-sky-50">
+                          <p className="text-xs font-medium text-sky-700">{pharmacies.length} صيدلية قريبة لديها هذا الدواء</p>
                         </div>
-                        <h3 className="font-bold text-gray-900 text-sm">{pharmacy.name_ar || pharmacy.name}</h3>
+                        {pharmacies.map(p => (
+                          <Link href={`/pharmacies/${p.id}?drug=${drug.id}`} key={p.id}
+                            className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 transition-colors">
+                            <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center text-xl shrink-0">🏥</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-gray-900 text-sm truncate">{p.name_ar || p.name}</p>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                                <span className="flex items-center gap-0.5 text-xs text-gray-500">
+                                  <MapPin className="w-3 h-3" />{Number(p.distance_km).toFixed(1)} كم
+                                </span>
+                                {p.delivery_rate_per_km > 0 && (
+                                  <span className="flex items-center gap-0.5 text-xs text-gray-500">
+                                    <Truck className="w-3 h-3" />توصيل
+                                  </span>
+                                )}
+                                <span className="flex items-center gap-0.5 text-xs text-gray-500">
+                                  <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />{Number(p.rating).toFixed(1)}
+                                </span>
+                                {p.quantity > 0 && (
+                                  <span className="text-xs text-green-600 font-medium">متوفر ({p.quantity})</span>
+                                )}
+                              </div>
+                            </div>
+                            {p.selling_price > 0 && (
+                              <div className="text-right shrink-0">
+                                <p className="font-bold text-sky-600 text-sm">
+                                  {Number(p.selling_price).toLocaleString('ar-IQ')}
+                                </p>
+                                <p className="text-xs text-gray-400">{p.currency || 'IQD'}</p>
+                              </div>
+                            )}
+                          </Link>
+                        ))}
                       </div>
-                      <p className="text-xs text-gray-500 text-right mb-1">{pharmacy.address}</p>
-                      <div className="flex items-center gap-3 text-xs text-gray-400 flex-row-reverse">
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3.5 h-3.5" />
-                          {pharmacy.distance_km} كم
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5" />
-                          مفتوح
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Truck className="w-3.5 h-3.5" />
-                          توصيل
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+            );
+          })}
+        </div>
+      )}
+
+      {/* No search yet — show nearby pharmacies */}
+      {!loading && drugs.length === 0 && (
+        <div className="px-4 py-5">
+          <h2 className="font-bold text-gray-900 mb-3">الصيدليات القريبة</h2>
+          {nearbyPharm.length === 0 ? (
+            <div className="space-y-2">
+              {[1,2,3].map(i => <div key={i} className="bg-white rounded-2xl p-4 animate-pulse h-20" />)}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {nearbyPharm.map(p => (
+                <Link href={`/pharmacies/${p.id}`} key={p.id}
+                  className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-12 h-12 bg-sky-100 rounded-xl flex items-center justify-center text-2xl shrink-0">🏥</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-900 text-sm truncate">{p.name_ar || p.name}</p>
+                    <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                      <span className="flex items-center gap-0.5"><MapPin className="w-3 h-3" />{Number(p.distance_km).toFixed(1)} كم</span>
+                      {p.delivery_rate_per_km > 0 && <span className="flex items-center gap-0.5"><Truck className="w-3 h-3" />توصيل</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                    <span className="text-sm font-medium">{Number(p.rating).toFixed(1)}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <h2 className="font-bold text-gray-900 mt-6 mb-3">بحث سريع</h2>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'مسكنات الألم', q: 'باراسيتامول', emoji: '💊' },
+              { label: 'مضادات حيوية', q: 'أموكسيسيلين', emoji: '🦠' },
+              { label: 'فيتامينات',    q: 'فيتامين',      emoji: '🌿' },
+              { label: 'ضغط الدم',    q: 'أملوديبين',    emoji: '❤️' },
+              { label: 'سكري',        q: 'ميتفورمين',    emoji: '🩸' },
+              { label: 'حساسية',      q: 'سيتيريزين',    emoji: '🌸' },
+            ].map(c => (
+              <button key={c.q} onClick={() => { setQuery(c.q); doSearch(c.q); }}
+                className="bg-white rounded-2xl p-3 flex flex-col items-center gap-1.5 shadow-sm hover:shadow-md transition-shadow">
+                <span className="text-2xl">{c.emoji}</span>
+                <span className="text-xs font-medium text-gray-700 text-center leading-tight">{c.label}</span>
+              </button>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense>
+      <SearchContent />
+    </Suspense>
   );
 }

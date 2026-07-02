@@ -188,10 +188,12 @@ async function bootstrap() {
       quantity INTEGER NOT NULL DEFAULT 0,
       reserved_qty INTEGER NOT NULL DEFAULT 0,
       selling_price NUMERIC(12,2) DEFAULT 0,
+      buying_price NUMERIC(12,2) DEFAULT 0,
       currency VARCHAR(10) DEFAULT 'IQD',
       reorder_level INTEGER DEFAULT 10,
       expiry_date DATE,
       origin_country TEXT,
+      category TEXT,
       batch_number TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -908,6 +910,7 @@ async function bootstrap() {
           reorder_level INTEGER DEFAULT 10,
           expiry_date DATE,
           origin_country TEXT,
+          category TEXT,
           batch_number TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -944,6 +947,7 @@ async function bootstrap() {
           reorder_level INTEGER DEFAULT 10,
           expiry_date DATE,
           origin_country TEXT,
+          category TEXT,
           batch_number TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -1000,9 +1004,14 @@ async function bootstrap() {
       const reorderLvl = parseInt(body.reorderLevel, 10) || 10;
       const expiryDate = body.expiryDate || null;
       const originCountry = body.originCountry || null;
+      const category = body.category || null;
+      const buyingPrice = (body.buyingPrice !== undefined && body.buyingPrice !== '' && !isNaN(Number(body.buyingPrice)))
+        ? Number(body.buyingPrice) : null;
 
-      // Add origin_country column if missing (migration)
+      // Add columns if missing (migrations)
       await pool.query(`ALTER TABLE public.pharmacy_stock ADD COLUMN IF NOT EXISTS origin_country TEXT`).catch(() => {});
+      await pool.query(`ALTER TABLE public.pharmacy_stock ADD COLUMN IF NOT EXISTS category TEXT`).catch(() => {});
+      await pool.query(`ALTER TABLE public.pharmacy_stock ADD COLUMN IF NOT EXISTS buying_price NUMERIC(12,2)`).catch(() => {});
 
       // Check if drug already in this pharmacy's stock
       const existing = await pool.query(
@@ -1012,13 +1021,13 @@ async function bootstrap() {
       let result;
       if (existing.rows.length) {
         result = await pool.query(
-          'UPDATE public.pharmacy_stock SET quantity=quantity+$1, selling_price=$2, expiry_date=$3, origin_country=$4, updated_at=NOW() WHERE id=$5 RETURNING *',
-          [qty, price, expiryDate, originCountry, existing.rows[0].id]
+          'UPDATE public.pharmacy_stock SET quantity=quantity+$1, selling_price=$2, buying_price=$3, expiry_date=$4, origin_country=$5, category=$6, updated_at=NOW() WHERE id=$7 RETURNING *',
+          [qty, price, buyingPrice, expiryDate, originCountry, category, existing.rows[0].id]
         );
       } else {
         result = await pool.query(
-          'INSERT INTO public.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, currency, reorder_level, expiry_date, origin_country) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
-          [req.params.id, drugId, qty, price, body.currency || 'IQD', reorderLvl, expiryDate, originCountry]
+          'INSERT INTO public.pharmacy_stock (pharmacy_id, drug_id, quantity, selling_price, buying_price, currency, reorder_level, expiry_date, origin_country, category) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
+          [req.params.id, drugId, qty, price, buyingPrice, body.currency || 'IQD', reorderLvl, expiryDate, originCountry, category]
         );
       }
       res.status(201).json({ success: true, data: result.rows[0] });

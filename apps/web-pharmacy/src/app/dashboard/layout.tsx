@@ -19,15 +19,45 @@ const NAV_ITEMS = [
   { href: '/dashboard/settings',   icon: Settings,        label: 'الإعدادات', perm: 'settings:read' },
 ];
 
+const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+
+const CONFIRMED_KEY  = 'ph-confirmed-notifs';
+const DELIVERED_KEY  = 'ph-delivered-notifs';
+
+function loadSet(key: string): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } catch { return new Set(); }
+}
+function saveSet(key: string, s: Set<string>) {
+  localStorage.setItem(key, JSON.stringify([...s]));
+}
+
+function parseReservation(msg: string) {
+  if (!msg.includes('طلب حجز جديد')) return null;
+  const drug       = msg.match(/الدواء:\s*(.+)/)?.[1]?.trim()             || '';
+  const patient    = msg.match(/المريض:\s*(.+)/)?.[1]?.trim()             || '';
+  const phone      = msg.match(/الهاتف:\s*(.+)/)?.[1]?.trim()             || '';
+  const qtyStr     = msg.match(/الكمية المطلوبة:\s*(\d+)/)?.[1]           || '1';
+  const pid        = msg.match(/\[patient_id:([^\]]+)\]/)?.[1]            || '';
+  const pharmPhone = msg.match(/\[pharmacy_phone:([^\]]*)\]/)?.[1]        || '';
+  const price      = msg.match(/\[price:([^\]]*)\]/)?.[1]                 || '';
+  const currency   = msg.match(/\[currency:([^\]]*)\]/)?.[1]              || 'IQD';
+  return { drug, patient, phone, qty: Number(qtyStr), patientId: pid, pharmacyPhone: pharmPhone, price, currency };
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<PortalNotif[]>([]);
   const [selectedNotif, setSelectedNotif] = useState<PortalNotif | null>(null);
+  const [confirming,    setConfirming]    = useState(false);
+  const [delivering,    setDelivering]    = useState(false);
+  const [confirmedIds,  setConfirmedIds]  = useState<Set<string>>(new Set());
+  const [deliveredIds,  setDeliveredIds]  = useState<Set<string>>(new Set());
   const [role, setRole] = useState<string>('owner');
   const [permissions, setPermissions] = useState<string[]>(['*']);
-  const [pharmacyName, setPharmacyName] = useState('');
+  const [pharmacyName,  setPharmacyName]  = useState('');
+  const [pharmacyPhone, setPharmacyPhone] = useState('');
 
   const isOwner = role === 'owner';
   const hasPerm = (perm: string | null) => {
@@ -59,6 +89,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setRole(storedRole);
     setPermissions(storedPerms);
     setPharmacyName(localStorage.getItem('pharmacy-name') || '');
+    setPharmacyPhone(localStorage.getItem('pharmacy-phone') || '');
+    setConfirmedIds(loadSet(CONFIRMED_KEY));
+    setDeliveredIds(loadSet(DELIVERED_KEY));
 
     // Validate token
     fetch(`${API}/${pharmacyId}/inventory?limit=1`, {
@@ -181,37 +214,138 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
 
       {/* Notification detail modal */}
-      {selectedNotif && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-              <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
-            </div>
-            <div className="bg-sky-50 rounded-xl p-4 mb-4 max-h-64 overflow-y-auto">
-              <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
-            </div>
-            <div className="space-y-1.5 text-sm text-gray-500">
-              {selectedNotif.senderName && (
-                <div className="flex justify-between">
-                  <span>{selectedNotif.senderName}</span>
-                  <span className="font-medium text-gray-700">المرسل</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span>{new Date(selectedNotif.createdAt).toLocaleString('ar-IQ')}</span>
-                <span className="font-medium text-gray-700">التاريخ</span>
+      {selectedNotif && (() => {
+        const reservation = parseReservation(selectedNotif.message);
+        const isConfirmed  = confirmedIds.has(selectedNotif.id);
+        const isDelivered  = deliveredIds.has(selectedNotif.id);
+        const cleanMessage = selectedNotif.message.replace(/\[patient_id:[^\]]+\]/g, '').replace(/\[pharmacy_phone:[^\]]*\]/g, '').trim();
+
+        const handleConfirm = async () => {
+          if (!reservation?.patientId) return;
+          setConfirming(true);
+          try {
+            await fetch(`${PHARMACY_API}/portal-notifications`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                portalType: 'patient',
+                recipientId: reservation.patientId,
+                senderName: pharmacyName || 'الصيدلية',
+                message: `✅ تم تأكيد طلبك!\nالدواء "${reservation.drug}" جاهز للاستلام من صيدلية ${pharmacyName || 'الصيدلية'}.\nيمكنك التوجه إليها أو التواصل معهم على رقم الصيدلية ${reservation.pharmacyPhone || pharmacyPhone || ''}.`,
+              }),
+            });
+            const next = new Set([...confirmedIds, selectedNotif.id]);
+            setConfirmedIds(next);
+            saveSet(CONFIRMED_KEY, next);
+          } catch {}
+          setConfirming(false);
+        };
+
+        const handleDeliver = async () => {
+          if (!reservation?.patientId) return;
+          setDelivering(true);
+          try {
+            const pricePerUnit = Number(reservation.price) || 0;
+            const total = pricePerUnit * reservation.qty;
+            const now   = new Date().toLocaleString('ar-IQ');
+            await fetch(`${PHARMACY_API}/portal-notifications`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                portalType: 'patient',
+                recipientId: reservation.patientId,
+                senderName: pharmacyName || 'الصيدلية',
+                message: `🧾 إيصال استلام\n━━━━━━━━━━━━━━━\nالدواء: ${reservation.drug}\nالكمية: ${reservation.qty} قطعة\nالسعر: ${pricePerUnit.toLocaleString('ar-IQ')} ${reservation.currency} للقطعة\nالإجمالي: ${total.toLocaleString('ar-IQ')} ${reservation.currency}\nالصيدلية: ${pharmacyName || 'الصيدلية'}\nالتاريخ: ${now}\n━━━━━━━━━━━━━━━\nشكراً لاستخدامك ميديفلو 💙`,
+              }),
+            });
+            const next = new Set([...deliveredIds, selectedNotif.id]);
+            setDeliveredIds(next);
+            saveSet(DELIVERED_KEY, next);
+          } catch {}
+          setDelivering(false);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+                <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
               </div>
+
+              {/* Message */}
+              <div className={`rounded-xl p-4 mb-4 max-h-64 overflow-y-auto ${reservation ? 'bg-amber-50 border border-amber-200' : 'bg-sky-50'}`}>
+                <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{cleanMessage}</p>
+              </div>
+
+              <div className="space-y-1.5 text-sm text-gray-500 mb-5">
+                {selectedNotif.senderName && (
+                  <div className="flex justify-between">
+                    <span>{selectedNotif.senderName}</span>
+                    <span className="font-medium text-gray-700">المرسل</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>{new Date(selectedNotif.createdAt).toLocaleString('ar-IQ')}</span>
+                  <span className="font-medium text-gray-700">التاريخ</span>
+                </div>
+              </div>
+
+              {/* Buttons */}
+              {reservation ? (
+                isDelivered ? (
+                  /* ── State 3: delivered ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-green-50 border border-green-200 text-green-700 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ✅ تم التسليم — تم إرسال الإيصال للمريض
+                    </div>
+                    <button onClick={() => setSelectedNotif(null)}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                  </div>
+                ) : isConfirmed ? (
+                  /* ── State 2: confirmed, waiting for delivery ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-sky-50 border border-sky-200 text-sky-700 text-xs text-center py-2 rounded-xl">
+                      ✅ تم تأكيد الحجز — في انتظار استلام المريض
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={() => setSelectedNotif(null)}
+                        className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        إغلاق
+                      </button>
+                      <button onClick={handleDeliver} disabled={delivering}
+                        className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                        {delivering ? 'جاري الإرسال...' : '📦 تم التسليم — إرسال إيصال'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── State 1: new reservation ── */
+                  <div className="flex gap-3">
+                    <button onClick={() => setSelectedNotif(null)}
+                      className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                    <button onClick={handleConfirm} disabled={confirming}
+                      className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                      {confirming ? 'جاري الإرسال...' : '✓ تأكيد الحجز وإشعار المريض'}
+                    </button>
+                  </div>
+                )
+              ) : (
+                <button onClick={() => setSelectedNotif(null)}
+                  className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
+                  إغلاق
+                </button>
+              )}
             </div>
-            <button onClick={() => setSelectedNotif(null)}
-              className="mt-5 w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
-              إغلاق
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

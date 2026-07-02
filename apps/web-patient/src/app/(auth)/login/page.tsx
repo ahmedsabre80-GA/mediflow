@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, Pill } from 'lucide-react';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
+const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,15 +27,25 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'بيانات الدخول غير صحيحة');
+      const userId = data.data.userId;
+      // Check approval status
+      let isApproved = false;
+      try {
+        const reqRes = await fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&requester_id=${userId}`);
+        const reqData = await reqRes.json();
+        const record = reqData.data?.[0];
+        isApproved = record?.status === 'approved';
+      } catch {}
       localStorage.setItem('mediflow-auth', JSON.stringify({
         state: {
           accessToken: data.data.accessToken,
           refreshToken: data.data.refreshToken,
-          user: { id: data.data.userId, role: data.data.role },
+          user: { id: userId, role: data.data.role },
           isAuthenticated: true,
+          isApproved,
         }
       }));
-      router.push('/search');
+      router.push(isApproved ? '/dashboard' : '/pending');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -84,7 +95,7 @@ export default function LoginPage() {
             </div>
 
             <div className="flex justify-end">
-              <Link href="/auth/forgot-password" className="text-sm text-sky-600 hover:underline">
+              <Link href="/forgot-password" className="text-sm text-sky-600 hover:underline">
                 نسيت كلمة المرور؟
               </Link>
             </div>
@@ -99,7 +110,7 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-gray-600 mt-6">
           ليس لديك حساب؟{' '}
-          <Link href="/auth/register" className="text-sky-600 font-semibold hover:underline">سجّل الآن مجاناً</Link>
+          <Link href="/register" className="text-sky-600 font-semibold hover:underline">سجّل الآن مجاناً</Link>
         </p>
       </div>
     </div>

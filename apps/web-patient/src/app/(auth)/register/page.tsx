@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Pill, Eye, EyeOff } from 'lucide-react';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
+const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -27,10 +28,33 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
+      const userId = data.data.userId;
+      // Create pending approval request in admin portal
+      await fetch(`${PHARMACY_API}/admin-requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portalType: 'patient',
+          requesterId: userId,
+          requesterName: `${form.firstName} ${form.lastName}`,
+          requesterEntity: form.email,
+          actionType: 'register',
+          employeeName: `${form.firstName} ${form.lastName}`,
+          employeeEmail: form.email,
+          employeeRole: 'patient',
+          reason: 'طلب تسجيل مريض جديد',
+        }),
+      }).catch(() => {});
       localStorage.setItem('mediflow-auth', JSON.stringify({
-        state: { accessToken: data.data.accessToken, refreshToken: data.data.refreshToken, user: { id: data.data.userId, role: 'patient' }, isAuthenticated: true }
+        state: {
+          accessToken: data.data.accessToken,
+          refreshToken: data.data.refreshToken,
+          user: { id: userId, role: 'patient', name: `${form.firstName} ${form.lastName}` },
+          isAuthenticated: true,
+          isApproved: false,
+        }
       }));
-      router.push('/dashboard');
+      router.push('/pending');
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -91,7 +115,7 @@ export default function RegisterPage() {
           </form>
         </div>
         <p className="text-center text-sm text-gray-600 mt-6">
-          لديك حساب؟ <Link href="/auth/login" className="text-sky-600 font-semibold hover:underline">تسجيل الدخول</Link>
+          لديك حساب؟ <Link href="/login" className="text-sky-600 font-semibold hover:underline">تسجيل الدخول</Link>
         </p>
       </div>
     </div>

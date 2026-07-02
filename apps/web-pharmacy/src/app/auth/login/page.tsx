@@ -49,6 +49,7 @@ export default function LoginPage() {
         localStorage.setItem('pharmacy-user-id', userId);
         localStorage.setItem('pharmacy-id', phData.data.id);
         localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
+        localStorage.setItem('pharmacy-phone', phData.data.phone || '');
         localStorage.setItem('pharmacy-role', 'owner');
         localStorage.setItem('pharmacy-permissions', JSON.stringify(['*']));
         router.push('/dashboard');
@@ -125,6 +126,11 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
+            </div>
+            <div className="flex justify-end">
+              <a href="/auth/forgot-password" className="text-sm text-sky-600 hover:underline">
+                نسيت كلمة المرور؟
+              </a>
             </div>
             <button
               type="submit"

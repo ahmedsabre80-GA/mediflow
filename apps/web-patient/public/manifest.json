@@ -1,0 +1,10 @@
+{
+  "name": "ميديفلو",
+  "short_name": "ميديفلو",
+  "description": "ابحث عن دواءك واحصل عليه بسرعة",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0ea5e9",
+  "icons": []
+}

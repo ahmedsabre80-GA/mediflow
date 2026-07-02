@@ -42,7 +42,9 @@ export default function InventoryPage() {
   const [saveError, setSaveError] = useState('');
 
   // ── ADD form (manual + scan result)
-  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', quantity: '', sellingPrice: '', reorderLevel: '10', expiryDate: '', originCountry: '' });
+  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', quantity: '', sellingPrice: '', buyingPrice: '', reorderLevel: '10', expiryDate: '', originCountry: '', category: '' });
+  const [userRole, setUserRole] = useState<string>('owner');
+  const canSeeBuyingPrice = ['owner', 'assistant_manager', 'pharmacist'].includes(userRole);
   const [drugSuggestions, setDrugSuggestions] = useState<any[]>([]);
   const [drugSearching, setDrugSearching] = useState(false);
 
@@ -80,6 +82,7 @@ export default function InventoryPage() {
     setTempSummer(cfg.summerMonths);
     setSeason(getCurrentSeason());
     setItemLimits(getItemLimits());
+    setUserRole(localStorage.getItem('pharmacy-role') || 'owner');
   }, []);
 
   const fetchInventory = useCallback(() => {
@@ -216,6 +219,8 @@ export default function InventoryPage() {
     if (!form.sellingPrice || Number(form.sellingPrice) < 0) { setSaveError('أدخل سعر البيع'); return; }
     if (!form.expiryDate) { setSaveError('أدخل تاريخ انتهاء الصلاحية'); return; }
     if (!form.originCountry.trim()) { setSaveError('اختر بلد المنشأ'); return; }
+    if (!form.category.trim()) { setSaveError('اختر تصنيف الدواء'); return; }
+    if (canSeeBuyingPrice && (!form.buyingPrice || Number(form.buyingPrice) < 0)) { setSaveError('أدخل سعر الشراء للقطعة'); return; }
     setSaving(true);
     const token = localStorage.getItem('pharmacy-token');
     const pharmacyId = localStorage.getItem('pharmacy-id');
@@ -231,6 +236,8 @@ export default function InventoryPage() {
         reorderLevel: Number(form.reorderLevel) || 10,
         expiryDate: form.expiryDate,
         originCountry: form.originCountry.trim(),
+        category: form.category.trim(),
+        buyingPrice: form.buyingPrice ? Number(form.buyingPrice) : undefined,
       }),
     });
     const data = await res.json();
@@ -274,7 +281,7 @@ export default function InventoryPage() {
     setMode(null);
     setSaveError('');
     setSaving(false);
-    setForm({ genericName:'', brandName:'', barcode:'', quantity:'', sellingPrice:'', reorderLevel:'10', expiryDate:'', originCountry:'' });
+    setForm({ genericName:'', brandName:'', barcode:'', quantity:'', sellingPrice:'', buyingPrice:'', reorderLevel:'10', expiryDate:'', originCountry:'', category:'' });
     setDrugSuggestions([]);
     setUpdateSearch('');
     setUpdateItem(null);
@@ -374,7 +381,7 @@ export default function InventoryPage() {
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['الدواء','الكمية',`حد ${seasonLabel}`,'السعر','الصلاحية','المنشأ','الحالة','إجراءات'].map(h => (
+              {['الدواء','الكمية',`حد ${seasonLabel}`,'سعر البيع/قطعة',...(canSeeBuyingPrice ? ['سعر الشراء/قطعة'] : []),'التصنيف','الصلاحية','المنشأ','الحالة','إجراءات'].map(h => (
                 <th key={h} className="text-right text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -383,7 +390,7 @@ export default function InventoryPage() {
             {loading ? (
               <tr><td colSpan={6} className="text-center py-12 text-gray-400">جاري التحميل...</td></tr>
             ) : inventory.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-12 text-gray-400">
+              <tr><td colSpan={9} className="text-center py-12 text-gray-400">
                 <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد منتجات في المخزون
               </td></tr>
             ) : inventory.map(item => {
@@ -405,7 +412,17 @@ export default function InventoryPage() {
                   <td className="px-4 py-3">
                     {activeLimit > 0 ? <span className={`text-sm font-medium ${isLow ? 'text-red-600' : 'text-gray-600'}`}>{activeLimit}</span> : <span className="text-xs text-gray-300">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{Number(item.selling_price).toLocaleString()} د.ع</td>
+                  <td className="px-4 py-3 text-sm font-medium text-sky-700">{Number(item.selling_price).toLocaleString()} د.ع</td>
+                  {canSeeBuyingPrice && (
+                    <td className="px-4 py-3 text-sm font-medium text-orange-600">
+                      {item.buying_price ? `${Number(item.buying_price).toLocaleString()} د.ع` : <span className="text-gray-300">—</span>}
+                    </td>
+                  )}
+                  <td className="px-4 py-3">
+                    {item.category
+                      ? <span className="text-xs font-medium bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{item.category}</span>
+                      : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
                     {item.expiry_date ? (() => {
                       const d = new Date(item.expiry_date);
@@ -713,12 +730,24 @@ export default function InventoryPage() {
                         className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">سعر البيع (د.ع) *</label>
+                      <label className="block text-sm font-medium text-sky-700 mb-1">سعر البيع/قطعة (د.ع) *</label>
                       <input type="number" min="0" value={form.sellingPrice} onChange={e => setForm(f => ({ ...f, sellingPrice: e.target.value }))}
                         placeholder="5000" required
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+                        className="w-full px-3 py-2.5 border border-sky-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                     </div>
                   </div>
+
+                  {canSeeBuyingPrice && (
+                    <div>
+                      <label className="block text-sm font-medium text-orange-600 mb-1 flex items-center gap-1.5">
+                        🔒 سعر الشراء/قطعة (د.ع) — سري
+                      </label>
+                      <input type="number" min="0" value={form.buyingPrice} onChange={e => setForm(f => ({ ...f, buyingPrice: e.target.value }))}
+                        placeholder="3000"
+                        className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50" />
+                      <p className="text-xs text-orange-500 mt-1">يظهر فقط لأصحاب الصلاحية — لا يراه المرضى</p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ انتهاء الصلاحية *</label>
@@ -749,6 +778,33 @@ export default function InventoryPage() {
                       <option value="الصين">الصين</option>
                       <option value="إيران">إيران</option>
                       <option value="باكستان">باكستان</option>
+                      <option value="أخرى">أخرى</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">تصنيف الدواء *</label>
+                    <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                      required
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white">
+                      <option value="">— اختر التصنيف —</option>
+                      <option value="مسكنات الألم">مسكنات الألم</option>
+                      <option value="مضادات الالتهاب">مضادات الالتهاب</option>
+                      <option value="مضادات حيوية">مضادات حيوية</option>
+                      <option value="أدوية القلب والضغط">أدوية القلب والضغط</option>
+                      <option value="أدوية السكري">أدوية السكري</option>
+                      <option value="أدوية الجهاز الهضمي">أدوية الجهاز الهضمي</option>
+                      <option value="أدوية الجهاز التنفسي">أدوية الجهاز التنفسي</option>
+                      <option value="أدوية الحساسية">أدوية الحساسية</option>
+                      <option value="فيتامينات ومكملات">فيتامينات ومكملات</option>
+                      <option value="أدوية نفسية وأعصاب">أدوية نفسية وأعصاب</option>
+                      <option value="أدوية العيون والأذن">أدوية العيون والأذن</option>
+                      <option value="أدوية الجلد">أدوية الجلد</option>
+                      <option value="أدوية الغدة الدرقية">أدوية الغدة الدرقية</option>
+                      <option value="مضادات الفطريات">مضادات الفطريات</option>
+                      <option value="مضادات الفيروسات">مضادات الفيروسات</option>
+                      <option value="أدوية الأطفال">أدوية الأطفال</option>
+                      <option value="أدوية النساء والتوليد">أدوية النساء والتوليد</option>
                       <option value="أخرى">أخرى</option>
                     </select>
                   </div>
