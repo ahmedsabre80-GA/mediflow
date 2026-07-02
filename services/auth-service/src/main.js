@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 8001;
 
 // ─── MIDDLEWARE ──────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: '*', credentials: true }));
+app.use(cors({ origin: (origin, cb) => cb(null, origin || true), credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
 // ─── DATABASE ────────────────────────────────────────────────────────────────

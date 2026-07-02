@@ -112,7 +112,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const Icon = item.icon;
             const active = pathname === item.href;
             return (
-              <Link key={item.href} href={item.href}
+              <Link key={item.href} href={item.href} prefetch={false}
                 onClick={() => { if (window.innerWidth < 1024) setSidebarOpen(false); }}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
                   active ? 'bg-sky-500 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
