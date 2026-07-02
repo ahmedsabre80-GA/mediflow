@@ -584,12 +584,12 @@ async function bootstrap() {
         pharmacyResult = await pool.query(
           `SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
                   p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-                  ST_Distance(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($3,$2)::geography) / 1000 AS distance_km,
+                  (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) AS distance_km,
                   'pharmacy' AS result_type
            FROM pharmacies.pharmacies p
            WHERE p.status = 'active'
-             AND ST_DWithin(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($3,$2)::geography, $4::float * 1000)
              AND (p.name ILIKE $1 OR p.name_ar ILIKE $1)
+             AND (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) < $4::float
            ORDER BY distance_km ASC LIMIT 5`,
           [pattern, lat, lng, radiusKm]
         );
@@ -612,11 +612,11 @@ async function bootstrap() {
       const result = await pool.query(`
         SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-               ST_Distance(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
+               (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($2::float)) + sin(radians($1::float)) * sin(radians(p.latitude))))) AS distance_km
         FROM pharmacies.pharmacies p
         LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
         WHERE p.status = 'active'
-          AND ST_DWithin(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($2,$1)::geography, $4::float * 1000)
+          AND (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($2::float)) + sin(radians($1::float)) * sin(radians(p.latitude))))) < $4::float
         ORDER BY distance_km ASC
         LIMIT 20
       `, [lat, lng, drugId || null, radiusKm]);
