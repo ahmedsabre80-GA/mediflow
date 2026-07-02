@@ -67,6 +67,19 @@ export default function WarehouseRegisterPage() {
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
 
       if (data.data?.requiresApproval) {
+        // Insert into admin_requests so the admin portal can see this registration
+        await fetch(`${PHARMACY_API}/pharmacies/admin-requests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'warehouse',
+            requesterId: data.data.userId,
+            requesterName: `${form.firstName} ${form.lastName}`,
+            requesterEntity: form.warehouseName,
+            actionType: 'registration',
+            reason: `طلب تسجيل مستودع جديد — ${form.city}`,
+          }),
+        }).catch(() => {});
         router.push('/auth/pending'); return;
       }
       localStorage.setItem('warehouse-token', data.data.accessToken);
