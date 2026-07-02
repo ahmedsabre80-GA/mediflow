@@ -584,11 +584,11 @@ async function bootstrap() {
         pharmacyResult = await pool.query(
           `SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
                   p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-                  ST_Distance(p.location, ST_MakePoint($3,$2)::geography) / 1000 AS distance_km,
+                  ST_Distance(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($3,$2)::geography) / 1000 AS distance_km,
                   'pharmacy' AS result_type
            FROM pharmacies.pharmacies p
            WHERE p.status = 'active'
-             AND ST_DWithin(p.location, ST_MakePoint($3,$2)::geography, $4::float * 1000)
+             AND ST_DWithin(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($3,$2)::geography, $4::float * 1000)
              AND (p.name ILIKE $1 OR p.name_ar ILIKE $1)
            ORDER BY distance_km ASC LIMIT 5`,
           [pattern, lat, lng, radiusKm]
@@ -612,11 +612,11 @@ async function bootstrap() {
       const result = await pool.query(`
         SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-               ST_Distance(p.location, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
+               ST_Distance(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($2,$1)::geography) / 1000 AS distance_km
         FROM pharmacies.pharmacies p
         LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
         WHERE p.status = 'active'
-          AND ST_DWithin(p.location, ST_MakePoint($2,$1)::geography, $4::float * 1000)
+          AND ST_DWithin(ST_MakePoint(p.longitude, p.latitude)::geography, ST_MakePoint($2,$1)::geography, $4::float * 1000)
         ORDER BY distance_km ASC
         LIMIT 20
       `, [lat, lng, drugId || null, radiusKm]);
