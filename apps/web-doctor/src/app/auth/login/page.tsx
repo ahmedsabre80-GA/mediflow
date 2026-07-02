@@ -28,6 +28,9 @@ export default function DoctorLoginPage() {
       if (data.data.role !== 'doctor') throw new Error('هذا الحساب ليس حساب طبيب');
       localStorage.setItem('doctor-token', data.data.accessToken);
       localStorage.setItem('doctor-id', data.data.userId);
+      localStorage.setItem('doctor-user-id', data.data.userId);
+      const fullName = [data.data.firstName, data.data.lastName].filter(Boolean).join(' ');
+      if (fullName) localStorage.setItem('doctor-name', `د. ${fullName}`);
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message);

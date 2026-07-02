@@ -2,8 +2,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X } from 'lucide-react';
-import { getLocalNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
+import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare } from 'lucide-react';
+import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const NAV = [
   { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
@@ -11,6 +11,7 @@ const NAV = [
   { href: '/dashboard/prescriptions', label: 'الوصفات الطبية', icon: FileText },
   { href: '/dashboard/patients', label: 'المرضى', icon: Users },
   { href: '/dashboard/employees', label: 'الموظفون', icon: UserCog },
+  { href: '/dashboard/messages', label: 'الرسائل', icon: MessageSquare },
   { href: '/dashboard/analytics', label: 'الإحصائيات', icon: BarChart3 },
   { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
 ];
@@ -21,7 +22,13 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<PortalNotif[]>([]);
 
-  const refresh = useCallback(() => setNotifs(getLocalNotifications()), []);
+  const refresh = useCallback(async () => {
+    const userId = localStorage.getItem('doctor-user-id') || '';
+    if (userId) {
+      const remote = await fetchNotifications(userId);
+      setNotifs(remote);
+    }
+  }, []);
 
   useEffect(() => {
     if (!localStorage.getItem('doctor-token')) router.push('/auth/login');
