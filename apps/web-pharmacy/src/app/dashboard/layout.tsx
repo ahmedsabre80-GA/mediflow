@@ -2,8 +2,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle } from 'lucide-react';
-import { getLocalNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
+import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare } from 'lucide-react';
+import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/inventory',  icon: Package,         label: 'المخزون',   perm: 'inventory:read' },
   { href: '/dashboard/analytics',  icon: BarChart2,       label: 'التحليلات', perm: 'reports:read' },
   { href: '/dashboard/employees',  icon: Users,           label: 'الموظفون',  perm: 'employees:read' },
+  { href: '/dashboard/messages',   icon: MessageSquare,   label: 'الرسائل',   perm: 'employees:read' },
   { href: '/dashboard/campaigns',  icon: Megaphone,       label: 'الحملات',   perm: 'employees:manage' },
   { href: '/dashboard/settings',   icon: Settings,        label: 'الإعدادات', perm: 'settings:read' },
 ];
@@ -35,7 +36,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const visibleNav = NAV_ITEMS.filter(item => hasPerm(item.perm));
 
-  const refresh = useCallback(() => setNotifs(getLocalNotifications()), []);
+  const refresh = useCallback(async () => {
+    const userId = localStorage.getItem('pharmacy-user-id') || '';
+    if (userId) {
+      const remote = await fetchNotifications(userId);
+      setNotifs(remote);
+    }
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('pharmacy-token');

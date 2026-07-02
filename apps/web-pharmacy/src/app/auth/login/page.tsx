@@ -46,6 +46,7 @@ export default function LoginPage() {
 
         localStorage.setItem('pharmacy-token', token);
         localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
+        localStorage.setItem('pharmacy-user-id', userId);
         localStorage.setItem('pharmacy-id', phData.data.id);
         localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
         localStorage.setItem('pharmacy-role', 'owner');
@@ -64,6 +65,7 @@ export default function LoginPage() {
         const staff = staffData.data;
         localStorage.setItem('pharmacy-token', token);
         localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
+        localStorage.setItem('pharmacy-user-id', userId);
         localStorage.setItem('pharmacy-id', staff.pharmacy_id);
         localStorage.setItem('pharmacy-name', staff.pharmacy_name_ar || staff.pharmacy_name || '');
         localStorage.setItem('pharmacy-role', staff.role);
