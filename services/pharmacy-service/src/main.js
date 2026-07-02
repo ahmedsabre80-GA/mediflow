@@ -645,6 +645,93 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // ─── STAFF (sub-users / pharmacist employees) ────────────────────────
+
+  // Ensure table exists on startup
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS pharmacy_staff (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      pharmacy_id UUID NOT NULL,
+      user_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'pharmacist',
+      permissions JSONB NOT NULL DEFAULT '[]',
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(pharmacy_id, user_id)
+    )
+  `).catch(() => {});
+
+  // Lookup which pharmacy a staff user belongs to (used by login)
+  router.get('/staff/by-user/:userId', async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        `SELECT s.*, p.name AS pharmacy_name, p.name_ar AS pharmacy_name_ar, p.status AS pharmacy_status
+         FROM pharmacy_staff s
+         JOIN pharmacies.pharmacies p ON p.id = s.pharmacy_id
+         WHERE s.user_id = $1 AND s.status = 'active' AND p.status = 'active'
+         LIMIT 1`,
+        [req.params.userId]
+      );
+      if (r.rows.length === 0) return res.status(404).json({ success: false });
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // List staff for a pharmacy
+  router.get('/:id/staff', authenticate, async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        'SELECT * FROM pharmacy_staff WHERE pharmacy_id=$1 ORDER BY created_at DESC',
+        [req.params.id]
+      );
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  // Add staff member
+  router.post('/:id/staff', authenticate, async (req, res, next) => {
+    try {
+      const { userId, name, email, role, permissions } = req.body;
+      const r = await pool.query(
+        `INSERT INTO pharmacy_staff (pharmacy_id, user_id, name, email, role, permissions)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (pharmacy_id, user_id) DO UPDATE SET name=$3, email=$4, role=$5, permissions=$6, status='active', updated_at=NOW()
+         RETURNING *`,
+        [req.params.id, userId, name, email, role, JSON.stringify(permissions || [])]
+      );
+      res.status(201).json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // Update staff member (role, permissions, status)
+  router.patch('/:id/staff/:staffId', authenticate, async (req, res, next) => {
+    try {
+      const { role, permissions, status } = req.body;
+      const sets = []; const vals = [req.params.staffId, req.params.id];
+      if (role       !== undefined) { sets.push(`role=$${vals.length+1}`);        vals.push(role); }
+      if (permissions !== undefined) { sets.push(`permissions=$${vals.length+1}`); vals.push(JSON.stringify(permissions)); }
+      if (status     !== undefined) { sets.push(`status=$${vals.length+1}`);      vals.push(status); }
+      if (!sets.length) return res.status(400).json({ success: false });
+      sets.push(`updated_at=NOW()`);
+      await pool.query(
+        `UPDATE pharmacy_staff SET ${sets.join(',')} WHERE id=$1 AND pharmacy_id=$2`,
+        vals
+      );
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // Remove staff member
+  router.delete('/:id/staff/:staffId', authenticate, async (req, res, next) => {
+    try {
+      await pool.query('DELETE FROM pharmacy_staff WHERE id=$1 AND pharmacy_id=$2', [req.params.staffId, req.params.id]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   // ─── HEALTH ───────────────────────────────────────────────────────────
   router.get('/health/live',  (_req, res) => res.json({ status: 'healthy' }));
   router.get('/health/ready', (_req, res) => res.json({ status: 'ready'   }));

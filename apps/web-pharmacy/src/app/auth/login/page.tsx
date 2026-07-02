@@ -32,44 +32,48 @@ export default function LoginPage() {
       const token = data.data.accessToken;
       const userId = data.data.userId;
 
-      // Step 2: verify pharmacy exists and is active using public by-owner endpoint
+      // Step 2a: check if pharmacy owner
       const phRes = await fetch(`${PHARMACY_API}/by-owner/${userId}`);
 
-      if (!phRes.ok) {
-        if (phRes.status === 404) {
-          throw new Error('لا توجد صيدلية مسجّلة بهذا الحساب في المنصة.');
-        }
-        throw new Error('تعذّر التحقق من حالة الصيدلية. حاول مرة أخرى.');
+      if (phRes.ok) {
+        const phData = await phRes.json();
+        const status = phData.data?.status;
+        if (status === 'suspended') throw new Error('حسابك موقوف مؤقتاً. تواصل مع إدارة المنصة.');
+        if (status === 'rejected')  throw new Error('طلب تسجيل صيدليتك مرفوض. تواصل مع إدارة المنصة.');
+        if (status === 'deleted')   throw new Error('هذا الحساب محذوف من المنصة.');
+        if (status === 'pending_verification') throw new Error('صيدليتك لا تزال قيد المراجعة. ستُعلَم عند الموافقة.');
+        if (status !== 'active') throw new Error('حسابك غير مفعّل. تواصل مع إدارة المنصة.');
+
+        localStorage.setItem('pharmacy-token', token);
+        localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
+        localStorage.setItem('pharmacy-id', phData.data.id);
+        localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
+        localStorage.setItem('pharmacy-role', 'owner');
+        localStorage.setItem('pharmacy-permissions', JSON.stringify(['*']));
+        router.push('/dashboard');
+        return;
       }
 
-      const phData = await phRes.json();
-      const status = phData.data?.status;
+      // Step 2b: check if pharmacy staff member
+      const staffRes = await fetch(`${PHARMACY_API}/staff/by-user/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      if (status === 'suspended') {
-        throw new Error('حسابك موقوف مؤقتاً. تواصل مع إدارة المنصة.');
-      }
-      if (status === 'rejected') {
-        throw new Error('طلب تسجيل صيدليتك مرفوض. تواصل مع إدارة المنصة.');
-      }
-      if (status === 'deleted') {
-        throw new Error('هذا الحساب محذوف من المنصة.');
-      }
-      if (status === 'pending_verification') {
-        throw new Error('صيدليتك لا تزال قيد المراجعة. ستُعلَم عند الموافقة.');
-      }
-      if (status !== 'active') {
-        throw new Error('حسابك غير مفعّل. تواصل مع إدارة المنصة.');
-      }
-
-      // Store pharmacy info
-      localStorage.setItem('pharmacy-token', token);
-      localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
-      if (phData.data?.id) localStorage.setItem('pharmacy-id', phData.data.id);
-      if (phData.data?.name_ar || phData.data?.name) {
-        localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name);
+      if (staffRes.ok) {
+        const staffData = await staffRes.json();
+        const staff = staffData.data;
+        localStorage.setItem('pharmacy-token', token);
+        localStorage.setItem('pharmacy-refresh', data.data.refreshToken);
+        localStorage.setItem('pharmacy-id', staff.pharmacy_id);
+        localStorage.setItem('pharmacy-name', staff.pharmacy_name_ar || staff.pharmacy_name || '');
+        localStorage.setItem('pharmacy-role', staff.role);
+        localStorage.setItem('pharmacy-permissions', JSON.stringify(staff.permissions || []));
+        localStorage.setItem('pharmacy-staff-id', staff.id);
+        router.push('/dashboard');
+        return;
       }
 
-      router.push('/dashboard');
+      throw new Error('لا توجد صيدلية مسجّلة بهذا الحساب في المنصة.');
     } catch (err: any) {
       setError(err.message);
     } finally {

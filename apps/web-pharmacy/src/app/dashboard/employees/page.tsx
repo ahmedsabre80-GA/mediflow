@@ -60,40 +60,72 @@ export default function PharmacyEmployeesPage() {
   const [reqSent, setReqSent] = useState(false);
   const [reqLoading, setReqLoading] = useState(false);
 
-  const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('pharmacy-id') || 'pharmacy-owner' : 'pharmacy-owner');
+  const pharmacyId = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-id') || '' : '';
+  const token       = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-token') || '' : '';
+  const authHeaders = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  const loadStaff = () => {
+    if (!pharmacyId) return;
+    fetch(`${API}/${pharmacyId}/staff`, { headers: authHeaders })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setEmployees((d.data || []).map((s: any) => ({
+            id: s.id, name: s.name, email: s.email, role: s.role,
+            permissions: Array.isArray(s.permissions) ? s.permissions : JSON.parse(s.permissions || '[]'),
+            status: s.status, addedAt: s.created_at?.split('T')[0] || '',
+          })));
+        }
+      }).catch(() => {});
+  };
 
   useEffect(() => {
-    // Load requests from API to check for approved permissions
-    fetch(`${API}/admin-requests?requester_id=${requesterId}`)
+    loadStaff();
+    // Load admin requests to check for approved add_employee permission
+    fetch(`${API}/admin-requests?requester_id=${pharmacyId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success && Array.isArray(d.data)) {
           setRequests(d.data);
-          // Find an approved add_employee request that hasn't been consumed
           const approved = d.data.find((r: AdminRequest) => r.action_type === 'add_employee' && r.status === 'approved');
           setApprovedRequestId(approved?.id || null);
         }
-      })
-      .catch(() => {});
+      }).catch(() => {});
   }, []);
 
   const canAddEmployee = !!approvedRequestId;
 
   const consumePermission = async () => {
     if (!approvedRequestId) return;
-    // Mark request as 'used' so permission is single-use
     await fetch(`${API}/admin-requests/${approvedRequestId}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: authHeaders,
       body: JSON.stringify({ status: 'used' }),
     }).catch(() => {});
     setApprovedRequestId(null);
     setRequests(prev => prev.map(r => r.id === approvedRequestId ? { ...r, status: 'used' } : r));
   };
 
-  const sendNotification = () => {
+  const toggleStatus = async (emp: Employee) => {
+    const newStatus = emp.status === 'active' ? 'suspended' : 'active';
+    await fetch(`${API}/${pharmacyId}/staff/${emp.id}`, {
+      method: 'PATCH', headers: authHeaders,
+      body: JSON.stringify({ status: newStatus }),
+    }).catch(() => {});
+    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: newStatus as 'active' | 'suspended' } : e));
+  };
+
+  const deleteEmployee = async (emp: Employee) => {
+    await fetch(`${API}/${pharmacyId}/staff/${emp.id}`, { method: 'DELETE', headers: authHeaders }).catch(() => {});
+    setEmployees(prev => prev.filter(e => e.id !== emp.id));
+  };
+
+  const sendNotification = async () => {
     if (!notifTarget || !notifMsg.trim()) return;
-    addLocalNotification(notifMsg, 'مدير الصيدلية');
+    // Send via portal notification to this specific staff member's user account
+    await fetch(`${API}/portal-notifications`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portalType: 'pharmacy', recipientId: notifTarget.id, senderName: 'مدير الصيدلية', message: notifMsg }),
+    }).catch(() => {});
     setNotifTarget(null);
     setNotifMsg('');
   };
@@ -238,12 +270,10 @@ export default function PharmacyEmployeesPage() {
                           <button onClick={() => { setEditEmp(emp); setShowModal(true); }} className="p-1.5 rounded-lg hover:bg-gray-100">
                             <Edit2 className="w-4 h-4 text-gray-600" />
                           </button>
-                          <button
-                            onClick={() => setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: e.status === 'active' ? 'suspended' : 'active' } : e))}
-                            className="p-1.5 rounded-lg hover:bg-gray-100">
+                          <button onClick={() => toggleStatus(emp)} className="p-1.5 rounded-lg hover:bg-gray-100">
                             {emp.status === 'active' ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
                           </button>
-                          <button onClick={() => setEmployees(prev => prev.filter(e => e.id !== emp.id))} className="p-1.5 rounded-lg hover:bg-red-50">
+                          <button onClick={() => deleteEmployee(emp)} className="p-1.5 rounded-lg hover:bg-red-50">
                             <Trash2 className="w-4 h-4 text-red-500" />
                           </button>
                         </div>
@@ -389,13 +419,24 @@ export default function PharmacyEmployeesPage() {
         <EmployeeModal
           employee={editEmp}
           onClose={() => { setShowModal(false); setEditEmp(null); }}
-          onSave={async (emp, creds) => {
+          onSave={async (emp, creds, userId) => {
             if (editEmp) {
+              // Update role/permissions in DB
+              await fetch(`${API}/${pharmacyId}/staff/${emp.id}`, {
+                method: 'PATCH', headers: authHeaders,
+                body: JSON.stringify({ role: emp.role, permissions: emp.permissions }),
+              }).catch(() => {});
               setEmployees(prev => prev.map(e => e.id === emp.id ? emp : e));
             } else {
-              setEmployees(prev => [...prev, emp]);
+              // Save new staff to DB
+              if (userId) {
+                await fetch(`${API}/${pharmacyId}/staff`, {
+                  method: 'POST', headers: authHeaders,
+                  body: JSON.stringify({ userId, name: emp.name, email: emp.email, role: emp.role, permissions: emp.permissions }),
+                }).catch(() => {});
+              }
+              loadStaff();
               if (creds) setCredentials(creds);
-              // consume the admin-granted permission (one-time use)
               await consumePermission();
             }
             setShowModal(false);
@@ -410,7 +451,7 @@ export default function PharmacyEmployeesPage() {
 function EmployeeModal({ employee, onClose, onSave }: {
   employee: Employee | null;
   onClose: () => void;
-  onSave: (e: Employee, creds?: { name: string; email: string; password: string }) => void;
+  onSave: (e: Employee, creds?: { name: string; email: string; password: string }, userId?: string) => void;
 }) {
   const [name, setName] = useState(employee?.name || '');
   const [email, setEmail] = useState(employee?.email || '');
@@ -437,8 +478,9 @@ function EmployeeModal({ employee, onClose, onSave }: {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
-        const newEmp: Employee = { id: data.data?.userId || Date.now().toString(), name, email, role: selectedRole, permissions, status: 'active', addedAt: new Date().toISOString().split('T')[0] };
-        onSave(newEmp, { name, email, password });
+        const newUserId = data.data?.userId || '';
+        const newEmp: Employee = { id: newUserId || Date.now().toString(), name, email, role: selectedRole, permissions, status: 'active', addedAt: new Date().toISOString().split('T')[0] };
+        onSave(newEmp, { name, email, password }, newUserId);
       } else {
         onSave({ ...employee, name, email, role: selectedRole, permissions });
       }
