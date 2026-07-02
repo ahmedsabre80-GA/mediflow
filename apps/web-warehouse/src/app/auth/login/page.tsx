@@ -40,6 +40,8 @@ export default function WarehouseLoginPage() {
       localStorage.setItem('warehouse-token', data.data.accessToken);
       localStorage.setItem('warehouse-user-id', data.data.userId);
       localStorage.setItem('warehouse-user-role', data.data.role);
+      const fullName = [data.data.firstName, data.data.lastName].filter(Boolean).join(' ');
+      if (fullName) localStorage.setItem('warehouse-name', `مستودع — ${fullName}`);
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message);

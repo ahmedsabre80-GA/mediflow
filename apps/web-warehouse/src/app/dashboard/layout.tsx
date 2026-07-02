@@ -2,17 +2,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X } from 'lucide-react';
-import { getLocalNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
+import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X, MessageSquare } from 'lucide-react';
+import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const NAV = [
-  { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
-  { href: '/dashboard/inventory', label: 'المخزون', icon: Package },
-  { href: '/dashboard/orders', label: 'الطلبات B2B', icon: ShoppingCart },
-  { href: '/dashboard/campaigns', label: 'الحملات الإعلانية', icon: Megaphone },
-  { href: '/dashboard/analytics', label: 'التحليلات', icon: BarChart3 },
-  { href: '/dashboard/employees', label: 'الموظفون', icon: Users },
-  { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
+  { href: '/dashboard',           label: 'الرئيسية',       icon: LayoutDashboard },
+  { href: '/dashboard/inventory', label: 'المخزون',        icon: Package },
+  { href: '/dashboard/orders',    label: 'الطلبات B2B',   icon: ShoppingCart },
+  { href: '/dashboard/messages',  label: 'الرسائل',        icon: MessageSquare },
+  { href: '/dashboard/campaigns', label: 'الحملات',        icon: Megaphone },
+  { href: '/dashboard/analytics', label: 'التحليلات',      icon: BarChart3 },
+  { href: '/dashboard/employees', label: 'الموظفون',       icon: Users },
+  { href: '/dashboard/settings',  label: 'الإعدادات',      icon: Settings },
 ];
 
 export default function WarehouseDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -21,10 +22,16 @@ export default function WarehouseDashboardLayout({ children }: { children: React
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<PortalNotif[]>([]);
 
-  const refresh = useCallback(() => setNotifs(getLocalNotifications()), []);
+  const refresh = useCallback(async () => {
+    const userId = localStorage.getItem('warehouse-user-id') || '';
+    if (userId) {
+      const remote = await fetchNotifications(userId);
+      setNotifs(remote);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!localStorage.getItem('warehouse-token')) router.push('/auth/login');
+    if (!localStorage.getItem('warehouse-token')) { router.push('/auth/login'); return; }
     refresh();
     const iv = setInterval(refresh, 30000);
     return () => clearInterval(iv);
@@ -53,7 +60,7 @@ export default function WarehouseDashboardLayout({ children }: { children: React
             const Icon = item.icon;
             const active = pathname === item.href;
             return (
-              <Link key={item.href} href={item.href}
+              <Link key={item.href} href={item.href} prefetch={false}
                 className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors text-sm font-medium ${
                   active ? 'bg-amber-50 text-amber-700' : 'text-gray-600 hover:bg-gray-100'
                 }`}>
