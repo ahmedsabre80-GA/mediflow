@@ -50,8 +50,15 @@ export default function LoginPage() {
         localStorage.setItem('pharmacy-id', phData.data.id);
         localStorage.setItem('pharmacy-name', phData.data.name_ar || phData.data.name || '');
         localStorage.setItem('pharmacy-phone', phData.data.phone || '');
+        localStorage.setItem('pharmacy-email', identifier);
         localStorage.setItem('pharmacy-role', 'owner');
         localStorage.setItem('pharmacy-permissions', JSON.stringify(['*']));
+        // Set pharmacy status to active (online) on login
+        fetch(`${PHARMACY_API}/${phData.data.id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ status: 'active' }),
+        }).catch(() => {});
         router.push('/dashboard');
         return;
       }

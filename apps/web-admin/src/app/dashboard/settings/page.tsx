@@ -1,12 +1,18 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Save, Bell, Shield, Globe, Database, FileCheck } from 'lucide-react';
+import { Save, Bell, Shield, Globe, Database, FileCheck, Clock, AlertTriangle } from 'lucide-react';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 
 export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [autoRejectMin,    setAutoRejectMin]    = useState(10);
+  const [autoRejectSaved,  setAutoRejectSaved]  = useState(false);
+  const [autoRejectSaving, setAutoRejectSaving] = useState(false);
+  const [rxRejectMin,    setRxRejectMin]    = useState(30);
+  const [rxRejectSaved,  setRxRejectSaved]  = useState(false);
+  const [rxRejectSaving, setRxRejectSaving] = useState(false);
   const [settings, setSettings] = useState({
     platformName: 'ميديفلو',
     supportEmail: 'support@mediflow.io',
@@ -32,6 +38,16 @@ export default function SettingsPage() {
         setSettings(s => ({ ...s, ...parsed }));
       } catch {}
     }
+    // Load auto-reject timeout from backend
+    fetch(`${PHARMACY_API}/platform/config/auto_reject_minutes`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setAutoRejectMin(Number(d.data.value)); })
+      .catch(() => {});
+    fetch(`${PHARMACY_API}/platform/config/prescription_reject_minutes`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setRxRejectMin(Number(d.data.value)); })
+      .catch(() => {});
+
     // Only use API as fallback if localStorage has no saved value
     if (!local) {
       fetch(`${PHARMACY_API}/pharmacies/settings`)
@@ -57,6 +73,38 @@ export default function SettingsPage() {
       localStorage.setItem('mediflow-platform-settings', JSON.stringify(toSave));
       return next;
     });
+  };
+
+  const handleAutoRejectSave = async () => {
+    const val = Math.min(60, Math.max(1, autoRejectMin));
+    setAutoRejectMin(val);
+    setAutoRejectSaving(true);
+    try {
+      await fetch(`${PHARMACY_API}/platform/config/auto_reject_minutes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        body: JSON.stringify({ value: val }),
+      });
+      setAutoRejectSaved(true);
+      setTimeout(() => setAutoRejectSaved(false), 3000);
+    } catch {}
+    setAutoRejectSaving(false);
+  };
+
+  const handleRxRejectSave = async () => {
+    const val = Math.min(120, Math.max(5, rxRejectMin));
+    setRxRejectMin(val);
+    setRxRejectSaving(true);
+    try {
+      await fetch(`${PHARMACY_API}/platform/config/prescription_reject_minutes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        body: JSON.stringify({ value: val }),
+      });
+      setRxRejectSaved(true);
+      setTimeout(() => setRxRejectSaved(false), 3000);
+    } catch {}
+    setRxRejectSaving(false);
   };
 
   const handleSave = async () => {
@@ -227,6 +275,130 @@ export default function SettingsPage() {
               <p className="text-xs text-gray-500">إيقاف المنصة مؤقتاً للصيانة</p>
             </div>
             <Toggle value={settings.maintenanceMode} onChange={() => update('maintenanceMode', !settings.maintenanceMode)} />
+          </div>
+        </div>
+      </div>
+
+      {/* Auto-reject rule */}
+      <div className="bg-white rounded-2xl shadow-sm p-6 border-2 border-amber-100">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center">
+            <Clock className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900">قاعدة الرفض التلقائي للطلبات</h2>
+            <p className="text-xs text-gray-500 mt-0.5">تُطبَّق على جميع الصيدليات في المنصة</p>
+          </div>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-semibold mb-1">كيف تعمل هذه القاعدة؟</p>
+            <ul className="space-y-1 text-xs list-disc list-inside">
+              <li>إذا لم ترد الصيدلية على طلب المريض خلال المدة المحددة، يُرفض الطلب تلقائياً</li>
+              <li>يصل إشعار رفض للمريض مع اقتراح بالبحث عن صيدلية أخرى</li>
+              <li>يُخصم 0.2 نجمة من تقييم الصيدلية عن كل رفض تلقائي</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              مدة الانتظار قبل الرفض التلقائي (دقيقة)
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range" min={1} max={60} value={autoRejectMin}
+                onChange={e => setAutoRejectMin(Number(e.target.value))}
+                className="flex-1 accent-amber-500"
+              />
+              <div className="w-20 text-center">
+                <span className="text-3xl font-bold text-amber-600">{autoRejectMin}</span>
+                <p className="text-xs text-gray-500">دقيقة</p>
+              </div>
+            </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>1 دقيقة (صارم)</span>
+              <span>60 دقيقة (مرن)</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2">
+            {[5, 10, 15, 30].map(v => (
+              <button key={v} onClick={() => setAutoRejectMin(v)}
+                className={`py-2 rounded-xl text-sm font-medium border transition-colors ${autoRejectMin === v ? 'bg-amber-500 text-white border-amber-500' : 'border-gray-200 text-gray-600 hover:bg-amber-50'}`}>
+                {v} دقيقة
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-gray-500">
+              الإعداد الحالي: طلبات غير مجاب عليها بعد <strong>{autoRejectMin} دقيقة</strong> تُرفض تلقائياً
+            </p>
+            <button onClick={handleAutoRejectSave} disabled={autoRejectSaving}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${autoRejectSaved ? 'bg-green-500 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white'}`}>
+              <Save className="w-4 h-4" />
+              {autoRejectSaved ? 'تم الحفظ ✓' : autoRejectSaving ? 'جاري...' : 'حفظ القاعدة'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Prescription auto-reject */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 bg-purple-100 rounded-xl flex items-center justify-center">
+            <FileCheck className="w-5 h-5 text-purple-600" />
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900">رفض الوصفات الطبية تلقائياً</h2>
+            <p className="text-xs text-gray-500 mt-0.5">إذا لم تقبل أي صيدلية الوصفة خلال المدة المحددة</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              مدة انتظار قبول الوصفة (دقيقة)
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range" min={5} max={120} step={5} value={rxRejectMin}
+                onChange={e => setRxRejectMin(Number(e.target.value))}
+                className="flex-1 accent-purple-500"
+              />
+              <div className="w-20 text-center">
+                <span className="text-3xl font-bold text-purple-600">{rxRejectMin}</span>
+                <p className="text-xs text-gray-500">دقيقة</p>
+              </div>
+            </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>5 دقائق</span>
+              <span>120 دقيقة</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2">
+            {[15, 30, 60, 120].map(v => (
+              <button key={v} onClick={() => setRxRejectMin(v)}
+                className={`py-2 rounded-xl text-sm font-medium border transition-colors ${rxRejectMin === v ? 'bg-purple-500 text-white border-purple-500' : 'border-gray-200 text-gray-600 hover:bg-purple-50'}`}>
+                {v} دقيقة
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-gray-500">
+              الإعداد الحالي: وصفات غير مقبولة بعد <strong>{rxRejectMin} دقيقة</strong> تُرفض وتُشعر المريض
+            </p>
+            <button onClick={handleRxRejectSave} disabled={rxRejectSaving}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${rxRejectSaved ? 'bg-green-500 text-white' : 'bg-purple-500 hover:bg-purple-600 text-white'}`}>
+              <Save className="w-4 h-4" />
+              {rxRejectSaved ? 'تم الحفظ ✓' : rxRejectSaving ? 'جاري...' : 'حفظ القاعدة'}
+            </button>
           </div>
         </div>
       </div>

@@ -20,6 +20,7 @@ const NAV_ITEMS = [
 ];
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+const PLATFORM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
 
 const CONFIRMED_KEY  = 'ph-confirmed-notifs';
 const DELIVERED_KEY  = 'ph-delivered-notifs';
@@ -29,6 +30,14 @@ function loadSet(key: string): Set<string> {
 }
 function saveSet(key: string, s: Set<string>) {
   localStorage.setItem(key, JSON.stringify([...s]));
+}
+
+function parsePrescription(msg: string) {
+  if (!msg.includes('[prescription_id:')) return null;
+  const id      = msg.match(/\[prescription_id:([^\]]+)\]/)?.[1] || '';
+  const patient = msg.match(/المريض:\s*(.+)/)?.[1]?.trim()       || '';
+  const pid     = msg.match(/\[patient_id:([^\]]+)\]/)?.[1]      || '';
+  return { id, patient, patientId: pid };
 }
 
 function parseReservation(msg: string) {
@@ -41,7 +50,8 @@ function parseReservation(msg: string) {
   const pharmPhone = msg.match(/\[pharmacy_phone:([^\]]*)\]/)?.[1]        || '';
   const price      = msg.match(/\[price:([^\]]*)\]/)?.[1]                 || '';
   const currency   = msg.match(/\[currency:([^\]]*)\]/)?.[1]              || 'IQD';
-  return { drug, patient, phone, qty: Number(qtyStr), patientId: pid, pharmacyPhone: pharmPhone, price, currency };
+  const drugId     = msg.match(/\[drug_id:([^\]]*)\]/)?.[1]              || '';
+  return { drug, patient, phone, qty: Number(qtyStr), patientId: pid, pharmacyPhone: pharmPhone, price, currency, drugId };
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -52,12 +62,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [selectedNotif, setSelectedNotif] = useState<PortalNotif | null>(null);
   const [confirming,    setConfirming]    = useState(false);
   const [delivering,    setDelivering]    = useState(false);
+  const [rejecting,     setRejecting]     = useState(false);
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [rejectReason,  setRejectReason]  = useState('');
   const [confirmedIds,  setConfirmedIds]  = useState<Set<string>>(new Set());
   const [deliveredIds,  setDeliveredIds]  = useState<Set<string>>(new Set());
+  const [rejectedIds,   setRejectedIds]   = useState<Set<string>>(new Set());
   const [role, setRole] = useState<string>('owner');
   const [permissions, setPermissions] = useState<string[]>(['*']);
   const [pharmacyName,  setPharmacyName]  = useState('');
   const [pharmacyPhone, setPharmacyPhone] = useState('');
+  const [timeoutMin,         setTimeoutMin]         = useState(10);
+  const [acceptingRx,        setAcceptingRx]        = useState(false);
+  const [acceptedRxIds,      setAcceptedRxIds]      = useState<Set<string>>(new Set());
+  const [rxClaimedBy,        setRxClaimedBy]        = useState<string | null>(null);
+  const [checkingRxClaim,    setCheckingRxClaim]    = useState(false);
+  const [rxImage,            setRxImage]            = useState<string | null>(null);
+  const [rxImageLoading,     setRxImageLoading]     = useState(false);
+  const [rxImageFullscreen,  setRxImageFullscreen]  = useState(false);
+  const [rxTimeoutMin,       setRxTimeoutMin]       = useState(30);
 
   const isOwner = role === 'owner';
   const hasPerm = (perm: string | null) => {
@@ -67,12 +90,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const visibleNav = NAV_ITEMS.filter(item => hasPerm(item.perm));
 
+  const RX_EXPIRED_KEY = 'ph-expired-rx-ids';
+
   const refresh = useCallback(async () => {
     const userId = localStorage.getItem('pharmacy-user-id') || '';
-    if (userId) {
-      const remote = await fetchNotifications(userId);
-      setNotifs(remote);
+    if (!userId) return;
+    const remote = await fetchNotifications(userId);
+    setNotifs(remote);
+
+    // Auto-reject expired prescriptions
+    const expiredIds: Set<string> = new Set(JSON.parse(localStorage.getItem(RX_EXPIRED_KEY) || '[]'));
+    const rxTimeout = Number((await fetch(`${PLATFORM_API}/config/prescription_reject_minutes`).then(r => r.json()).catch(() => ({ data: { value: '30' } }))).data?.value || 30);
+    for (const n of remote) {
+      const rx = parsePrescription(n.message);
+      if (!rx || expiredIds.has(rx.id)) continue;
+      const ageMin = (Date.now() - new Date(n.createdAt).getTime()) / 60000;
+      if (ageMin < rxTimeout) continue;
+      // Check if still open
+      const rxData = await fetch(`${PHARMACY_API}/prescriptions/${rx.id}`).then(r => r.json()).catch(() => ({}));
+      if (rxData?.data?.status !== 'open') { expiredIds.add(rx.id); continue; }
+      expiredIds.add(rx.id);
+      // Notify patient
+      if (rx.patientId) {
+        fetch(`${PHARMACY_API}/portal-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'patient',
+            recipientId: rx.patientId,
+            senderName: 'ميديفلو',
+            message: `❌ لم يتم قبول وصفتك الطبية\nلم تستجب أي صيدلية خلال ${rxTimeout} دقيقة.\nنقترح إعادة المحاولة أو البحث عن صيدلية أخرى.`,
+          }),
+        }).catch(() => {});
+      }
     }
+    localStorage.setItem(RX_EXPIRED_KEY, JSON.stringify([...expiredIds]));
   }, []);
 
   useEffect(() => {
@@ -104,15 +156,63 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     }).catch(() => {});
 
+    fetch(`${PLATFORM_API}/config/auto_reject_minutes`)
+      .then(r => r.json())
+      .then(d => setTimeoutMin(Number(d?.data?.value || 10)))
+      .catch(() => {});
+    fetch(`${PLATFORM_API}/config/prescription_reject_minutes`)
+      .then(r => r.json())
+      .then(d => setRxTimeoutMin(Number(d?.data?.value || 30)))
+      .catch(() => {});
+
     refresh();
     const iv = setInterval(refresh, 30000);
     return () => clearInterval(iv);
   }, [router, refresh]);
 
+  // When a prescription notification is opened: fetch image + check claim status
+  useEffect(() => {
+    if (!selectedNotif) { setRxImage(null); setRxClaimedBy(null); return; }
+    const rx = parsePrescription(selectedNotif.message);
+    if (!rx) { setRxImage(null); return; }
+    // Fetch image
+    setRxImage(null);
+    setRxImageLoading(true);
+    fetch(`${PHARMACY_API}/prescriptions/${rx.id}/image`)
+      .then(r => r.json())
+      .then(d => {
+        if (d?.data?.image_base64) {
+          const raw = d.data.image_base64 as string;
+          setRxImage(raw.startsWith('data:') ? raw : `data:image/jpeg;base64,${raw}`);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setRxImageLoading(false));
+    // Check claim status
+    if (acceptedRxIds.has(rx.id)) return;
+    setRxClaimedBy(null);
+    setCheckingRxClaim(true);
+    fetch(`${PHARMACY_API}/prescriptions/${rx.id}`)
+      .then(r => r.json())
+      .then(d => { if (d?.data?.status === 'claimed') setRxClaimedBy(d.data.claimed_by || 'صيدلية أخرى'); })
+      .catch(() => {})
+      .finally(() => setCheckingRxClaim(false));
+  }, [selectedNotif]);
+
   const unread = notifs.filter(n => !n.isRead).length;
 
-  const handleLogout = () => {
-    ['pharmacy-token','pharmacy-refresh','pharmacy-id','pharmacy-name','pharmacy-role','pharmacy-permissions','pharmacy-staff-id']
+  const handleLogout = async () => {
+    // Set pharmacy status to inactive (shows as "مغلق" to patients)
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (token && pharmacyId) {
+      fetch(`${API}/${pharmacyId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'inactive' }),
+      }).catch(() => {});
+    }
+    ['pharmacy-token','pharmacy-refresh','pharmacy-id','pharmacy-name','pharmacy-role','pharmacy-permissions','pharmacy-staff-id','pharmacy-opening-hours']
       .forEach(k => localStorage.removeItem(k));
     router.push('/auth/login');
   };
@@ -183,6 +283,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       الإشعارات {unread > 0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full mr-1">{unread}</span>}
                     </h3>
                   </div>
+                  {notifs.length > 0 && (
+                    <div className="px-4 py-2 border-b flex items-center justify-end bg-gray-50">
+                      <button onClick={async () => {
+                        const uid = localStorage.getItem('pharmacy-user-id') || '';
+                        await fetch(`${PHARMACY_API}/portal-notifications/read-all?portalType=pharmacy&recipientId=${encodeURIComponent(uid)}`, { method: 'PATCH' }).catch(() => {});
+                        setNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
+                      }} className="text-xs text-sky-600 hover:text-sky-800 font-medium">
+                        تحديد الكل كمقروء ✓
+                      </button>
+                    </div>
+                  )}
                   <div className="max-h-80 overflow-y-auto divide-y">
                     {notifs.length === 0 ? (
                       <div className="px-4 py-8 text-center text-gray-400 text-sm">لا توجد إشعارات حالياً</div>
@@ -213,12 +324,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
 
+      {/* Prescription fullscreen viewer */}
+      {rxImageFullscreen && rxImage && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center"
+          onClick={() => setRxImageFullscreen(false)}>
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60">
+            <span className="text-white text-sm font-medium">الوصفة الطبية</span>
+            <button onClick={() => setRxImageFullscreen(false)}
+              className="text-white bg-white/20 hover:bg-white/40 rounded-full p-2 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <img src={rxImage} alt="الوصفة الطبية"
+            className="max-w-full max-h-full object-contain p-4 pt-14"
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       {/* Notification detail modal */}
       {selectedNotif && (() => {
-        const reservation = parseReservation(selectedNotif.message);
+        const reservation  = parseReservation(selectedNotif.message);
+        const prescription = parsePrescription(selectedNotif.message);
         const isConfirmed  = confirmedIds.has(selectedNotif.id);
         const isDelivered  = deliveredIds.has(selectedNotif.id);
-        const cleanMessage = selectedNotif.message.replace(/\[patient_id:[^\]]+\]/g, '').replace(/\[pharmacy_phone:[^\]]*\]/g, '').trim();
+        const isExpired    = !!reservation && !isConfirmed && !isDelivered &&
+          (Date.now() - new Date(selectedNotif.createdAt).getTime()) / 60000 > timeoutMin;
+        const isRxAccepted = prescription ? acceptedRxIds.has(prescription.id) : false;
+        const isRxExpired  = !!prescription && !isRxAccepted && !rxClaimedBy &&
+          (Date.now() - new Date(selectedNotif.createdAt).getTime()) / 60000 > rxTimeoutMin;
+        const cleanMessage = selectedNotif.message
+          .replace(/\[patient_id:[^\]]+\]/g, '')
+          .replace(/\[pharmacy_phone:[^\]]*\]/g, '')
+          .replace(/\[drug_id:[^\]]*\]/g, '')
+          .replace(/\[prescription_id:[^\]]+\]/g, '')
+          .trim();
 
         const handleConfirm = async () => {
           if (!reservation?.patientId) return;
@@ -248,6 +388,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const pricePerUnit = Number(reservation.price) || 0;
             const total = pricePerUnit * reservation.qty;
             const now   = new Date().toLocaleString('ar-IQ');
+            const pharmacyId = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-id') : null;
+            const token      = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-token') : null;
+
+            // Decrement inventory quantity
+            if (pharmacyId && token && reservation.drugId) {
+              fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/decrement`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ drugId: reservation.drugId, qty: reservation.qty }),
+              }).catch(() => {});
+            }
+
             await fetch(`${PHARMACY_API}/portal-notifications`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -265,8 +417,72 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           setDelivering(false);
         };
 
+        const isRejected = rejectedIds.has(selectedNotif.id);
+
+        const handleReject = async () => {
+          if (!reservation?.patientId || !rejectReason.trim()) return;
+          setRejecting(true);
+          try {
+            const fullMsg =
+              `❌ نعتذر عن عدم تأكيد طلبك و${rejectReason.trim()}\n\n` +
+              `الصيدلية: ${pharmacyName || 'الصيدلية'}\n` +
+              `رقم الهاتف: ${pharmacyPhone || '—'}\n` +
+              `صحتك تهمنا 💙`;
+            await fetch(`${PHARMACY_API}/portal-notifications`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                portalType: 'patient',
+                recipientId: reservation.patientId,
+                senderName: pharmacyName || 'الصيدلية',
+                message: fullMsg,
+              }),
+            });
+            const next = new Set([...rejectedIds, selectedNotif.id]);
+            setRejectedIds(next);
+            saveSet('ph-rejected-notifs', next);
+            setShowRejectForm(false);
+            setRejectReason('');
+          } catch {}
+          setRejecting(false);
+        };
+
+        const handleAcceptPrescription = async () => {
+          if (!prescription) return;
+          const token = localStorage.getItem('pharmacy-token') || '';
+          setAcceptingRx(true);
+          try {
+            // Use the real /claim endpoint — returns 409 if already claimed
+            const claimRes = await fetch(`${PHARMACY_API}/prescriptions/${prescription.id}/claim`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            });
+            if (claimRes.status === 409) {
+              setRxClaimedBy('صيدلية أخرى');
+              setAcceptingRx(false);
+              return;
+            }
+            // Notify patient
+            if (prescription.patientId) {
+              await fetch(`${PHARMACY_API}/portal-notifications`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  portalType: 'patient',
+                  recipientId: prescription.patientId,
+                  senderName: pharmacyName || 'الصيدلية',
+                  message: `✅ وصفتك الطبية قُبلت!\nصيدلية "${pharmacyName || 'الصيدلية'}" قبلت تحضير وصفتك.\nيمكنك التوجه إليها أو التواصل معهم على رقم: ${pharmacyPhone || '—'}`,
+                }),
+              });
+            }
+            const next = new Set([...acceptedRxIds, prescription.id]);
+            setAcceptedRxIds(next);
+          } catch {}
+          setAcceptingRx(false);
+        };
+
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => { setSelectedNotif(null); setShowRejectForm(false); setRejectReason(''); setRxClaimedBy(null); }}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
@@ -276,8 +492,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Message */}
-              <div className={`rounded-xl p-4 mb-4 max-h-64 overflow-y-auto ${reservation ? 'bg-amber-50 border border-amber-200' : 'bg-sky-50'}`}>
+              <div className={`rounded-xl p-4 mb-4 ${isExpired ? 'bg-red-50 border border-red-200' : prescription ? 'bg-purple-50 border border-purple-200' : reservation ? 'bg-amber-50 border border-amber-200' : 'bg-sky-50'}`}>
                 <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{cleanMessage}</p>
+                {prescription && (
+                  <div className="mt-3">
+                    {rxImageLoading ? (
+                      <div className="w-full h-40 bg-purple-100 rounded-xl animate-pulse flex items-center justify-center">
+                        <p className="text-xs text-purple-400">جاري تحميل الوصفة...</p>
+                      </div>
+                    ) : rxImage ? (
+                      <img src={rxImage} alt="الوصفة الطبية"
+                        className="w-full rounded-xl border border-purple-200 object-contain max-h-64 cursor-zoom-in"
+                        onClick={() => setRxImageFullscreen(true)}
+                      />
+                    ) : (
+                      <p className="text-xs text-purple-400 text-center mt-1">لا توجد صورة مرفقة</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5 text-sm text-gray-500 mb-5">
@@ -294,7 +526,54 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Buttons */}
-              {reservation ? (
+              {prescription ? (
+                isRxExpired ? (
+                  /* ── Prescription: timed out ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-red-50 border border-red-200 text-red-600 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ⏱ انتهت مدة قبول الوصفة ({rxTimeoutMin} دقيقة)
+                    </div>
+                    <button onClick={() => { setSelectedNotif(null); setRxClaimedBy(null); }}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                  </div>
+                ) : isRxAccepted ? (
+                  /* ── Prescription: accepted by this pharmacy ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-green-50 border border-green-200 text-green-700 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ✅ قبلت تحضير هذه الوصفة وأُشعر المريض
+                    </div>
+                    <button onClick={() => { setSelectedNotif(null); setRxClaimedBy(null); }}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                  </div>
+                ) : rxClaimedBy ? (
+                  /* ── Prescription: already claimed by another pharmacy ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-gray-100 border border-gray-200 text-gray-500 font-medium py-2.5 rounded-xl text-sm text-center">
+                      تم قبول هذه الوصفة من صيدلية أخرى
+                    </div>
+                    <button onClick={() => { setSelectedNotif(null); setRxClaimedBy(null); }}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Prescription: available to accept ── */
+                  <div className="flex gap-3">
+                    <button onClick={() => { setSelectedNotif(null); setRxClaimedBy(null); }}
+                      className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                    <button onClick={handleAcceptPrescription} disabled={acceptingRx || checkingRxClaim}
+                      className="flex-1 bg-purple-500 hover:bg-purple-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                      {acceptingRx || checkingRxClaim ? 'جاري التحقق...' : '✓ قبول وتحضير الوصفة'}
+                    </button>
+                  </div>
+                )
+              ) : reservation ? (
                 isDelivered ? (
                   /* ── State 3: delivered ── */
                   <div className="space-y-2">
@@ -323,16 +602,74 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </button>
                     </div>
                   </div>
-                ) : (
-                  /* ── State 1: new reservation ── */
-                  <div className="flex gap-3">
-                    <button onClick={() => setSelectedNotif(null)}
-                      className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                ) : isExpired ? (
+                  /* ── State 5: timed out / auto-rejected ── */
+                  <div className="space-y-3">
+                    <div className="w-full bg-red-50 border border-red-200 text-red-600 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ⏱ انتهت مدة الطلب ولم يتم تأكيده
+                    </div>
+                    <button onClick={() => { setSelectedNotif(null); setShowRejectForm(false); setRejectReason(''); }}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
                       إغلاق
                     </button>
-                    <button onClick={handleConfirm} disabled={confirming}
-                      className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
-                      {confirming ? 'جاري الإرسال...' : '✓ تأكيد الحجز وإشعار المريض'}
+                  </div>
+                ) : isRejected ? (
+                  /* ── State 4: rejected ── */
+                  <div className="space-y-2">
+                    <div className="w-full bg-red-50 border border-red-200 text-red-600 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ❌ تم رفض الطلب وإشعار المريض
+                    </div>
+                    <button onClick={() => { setSelectedNotif(null); setShowRejectForm(false); setRejectReason(''); }}
+                      className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      إغلاق
+                    </button>
+                  </div>
+                ) : showRejectForm ? (
+                  /* ── Reject form ── */
+                  <div className="space-y-3">
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                      <p className="text-xs text-red-600 font-medium mb-2">رسالة الاعتذار للمريض:</p>
+                      <p className="text-sm text-gray-700 mb-2">نعتذر عن عدم تأكيد طلبك و</p>
+                      <textarea
+                        value={rejectReason}
+                        onChange={e => setRejectReason(e.target.value)}
+                        placeholder="أكمل سبب الرفض هنا..."
+                        rows={3} dir="rtl"
+                        className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none bg-white"
+                      />
+                      <div className="mt-2 text-xs text-gray-500 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                        <p>الصيدلية: {pharmacyName || '—'}</p>
+                        <p>رقم الهاتف: {pharmacyPhone || '—'}</p>
+                        <p>صحتك تهمنا 💙</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setShowRejectForm(false); setRejectReason(''); }}
+                        className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        إلغاء
+                      </button>
+                      <button onClick={handleReject} disabled={rejecting || !rejectReason.trim()}
+                        className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                        {rejecting ? 'جاري الإرسال...' : 'إرسال الاعتذار'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── State 1: new reservation ── */
+                  <div className="space-y-2">
+                    <div className="flex gap-3">
+                      <button onClick={() => { setSelectedNotif(null); setShowRejectForm(false); }}
+                        className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        إغلاق
+                      </button>
+                      <button onClick={handleConfirm} disabled={confirming}
+                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                        {confirming ? 'جاري الإرسال...' : '✓ تأكيد الحجز وإشعار المريض'}
+                      </button>
+                    </div>
+                    <button onClick={() => setShowRejectForm(true)}
+                      className="w-full border border-red-300 text-red-600 hover:bg-red-50 py-2.5 rounded-xl text-sm font-medium transition-colors">
+                      ✗ رفض الطلب
                     </button>
                   </div>
                 )

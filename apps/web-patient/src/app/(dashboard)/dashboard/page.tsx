@@ -3,6 +3,22 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Search, Star, ChevronLeft } from 'lucide-react';
 
+function isPharmacyOpen(p: any): boolean {
+  if (p.status === 'inactive') return false;
+  if (!p.opening_hours) return p.status === 'active';
+  try {
+    const hours = typeof p.opening_hours === 'string' ? JSON.parse(p.opening_hours) : p.opening_hours;
+    const now = new Date();
+    const day = now.getDay();
+    const h = hours[day];
+    if (!h || !h.open) return false;
+    const [fh, fm] = h.from.split(':').map(Number);
+    const [th, tm] = h.to.split(':').map(Number);
+    const cur = now.getHours() * 60 + now.getMinutes();
+    return cur >= fh * 60 + fm && cur <= th * 60 + tm;
+  } catch { return p.status === 'active'; }
+}
+
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 
 export default function PatientDashboard() {
@@ -62,7 +78,12 @@ export default function PatientDashboard() {
               className="bg-white rounded-xl p-3 flex items-center gap-3 shadow-sm hover:shadow-md transition-shadow">
               <div className="w-12 h-12 bg-sky-100 rounded-xl flex items-center justify-center text-2xl shrink-0">🏥</div>
               <div className="flex-1">
-                <p className="font-bold text-gray-900 text-sm">{p.name_ar || p.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-bold text-gray-900 text-sm">{p.name_ar || p.name}</p>
+                  {isPharmacyOpen(p)
+                    ? <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium">مفتوح</span>
+                    : <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-medium">مغلق</span>}
+                </div>
                 <p className="text-xs text-gray-500">{p.distance_km} كم</p>
               </div>
               <div className="flex items-center gap-1">

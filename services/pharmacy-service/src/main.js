@@ -803,6 +803,26 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Mark all notifications as read for a recipient
+  router.patch('/portal-notifications/read-all', async (req, res, next) => {
+    try {
+      const { portalType, recipientId } = req.query;
+      if (!portalType || !recipientId) return res.status(400).json({ success: false, error: 'portalType and recipientId required' });
+      await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE portal_type=$1 AND recipient_id=$2', [portalType, recipientId]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  // Delete all notifications for a recipient (admin or self-clear)
+  router.delete('/portal-notifications/by-recipient', async (req, res, next) => {
+    try {
+      const { portalType, recipientId } = req.query;
+      if (!portalType || !recipientId) return res.status(400).json({ success: false, error: 'portalType and recipientId required' });
+      await pool.query('DELETE FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2', [portalType, recipientId]);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   router.patch('/portal-notifications/:id/read', async (req, res, next) => {
     try {
       await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);

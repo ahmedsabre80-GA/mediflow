@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { BrowserMultiFormatReader } from '@zxing/browser';
 import { useRouter } from 'next/navigation';
 import {
   Search, Plus, AlertTriangle, Package, Settings2, Camera, X,
@@ -56,9 +57,8 @@ export default function InventoryPage() {
 
   // ── SCAN
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<any>(null);
-  const scanLoopRef = useRef<any>(null);
+  const zxingReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const scanActiveRef = useRef(false);
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState('');
 
@@ -141,62 +141,60 @@ export default function InventoryPage() {
   };
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Barcode scanner
+  // Barcode scanner using ZXing (works on Windows Chrome, Firefox, Safari)
   const startScan = async () => {
     setScanStatus('جاري فتح الكاميرا...');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      setScanning(true);
-      // wait a tick for video element to mount
-      setTimeout(() => {
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      }, 100);
+    setScanning(true);
+    scanActiveRef.current = true;
 
-      if ('BarcodeDetector' in window) {
-        setScanStatus('وجّه الكاميرا نحو الباركود');
-        const detector = new (window as any).BarcodeDetector({
-          formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'],
-        });
-        detectorRef.current = detector;
-        const loop = async () => {
-          if (!videoRef.current || !detectorRef.current) return;
+    // Wait for the video element to mount
+    await new Promise<void>(resolve => setTimeout(resolve, 150));
+
+    const video = videoRef.current;
+    if (!video) { setScanning(false); scanActiveRef.current = false; return; }
+
+    try {
+      const reader = new BrowserMultiFormatReader();
+      zxingReaderRef.current = reader;
+
+      setScanStatus('وجّه الكاميرا نحو الباركود');
+
+      await reader.decodeFromVideoDevice(undefined, video, async (result) => {
+        // Guard: ignore callbacks that fire after we already got a result or stopped
+        if (!scanActiveRef.current) return;
+        if (result) {
+          scanActiveRef.current = false;
+          const code = result.getText();
+          stopScan();
+          setForm(f => ({ ...f, barcode: code }));
+          setScanStatus('');
+          // lookup drug in catalog
           try {
-            const codes = await detector.detect(videoRef.current);
-            if (codes.length > 0) {
-              const code = codes[0].rawValue;
-              stopScan();
-              setForm(f => ({ ...f, barcode: code }));
-              setScanStatus('');
-              // lookup
-              const r = await fetch(`${PHARMACY_API}/pharmacies/drugs/search?q=${encodeURIComponent(code)}&limit=1`);
-              const d = await r.json();
-              if (d.data?.length) {
-                const drug = d.data[0];
-                setForm(f => ({ ...f, genericName: drug.generic_name, brandName: drug.brand_name || '', barcode: drug.barcode || code }));
-              }
-              setMode('manual'); // show form with pre-filled data
-            } else {
-              scanLoopRef.current = requestAnimationFrame(loop);
+            const r = await fetch(`${PHARMACY_API}/pharmacies/drugs/search?q=${encodeURIComponent(code)}&limit=1`);
+            const d = await r.json();
+            if (d.data?.length) {
+              const drug = d.data[0];
+              setForm(f => ({ ...f, genericName: drug.generic_name, brandName: drug.brand_name || '', barcode: drug.barcode || code }));
             }
-          } catch { scanLoopRef.current = requestAnimationFrame(loop); }
-        };
-        scanLoopRef.current = requestAnimationFrame(loop);
-      } else {
-        setScanStatus('المتصفح لا يدعم المسح التلقائي. أدخل الباركود يدوياً أدناه.');
-      }
+          } catch {}
+          setMode('manual');
+        }
+      });
     } catch {
-      setScanStatus('');
       setScanning(false);
+      scanActiveRef.current = false;
       setSaveError('لا يمكن الوصول للكاميرا. تأكد من منح الإذن أو استخدم الإدخال اليدوي.');
       setMode('manual');
     }
   };
 
   const stopScan = () => {
-    if (scanLoopRef.current) cancelAnimationFrame(scanLoopRef.current);
-    detectorRef.current = null;
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    scanActiveRef.current = false;
+    if (zxingReaderRef.current) {
+      // @ts-ignore
+      zxingReaderRef.current.reset?.();
+      zxingReaderRef.current = null;
+    }
     setScanning(false);
   };
 
@@ -472,15 +470,16 @@ export default function InventoryPage() {
       ═══════════════════════════════════════════════════════════════════════ */}
       {mode && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md" dir="rtl">
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col" dir="rtl">
 
             {/* ── CHOOSE ── */}
             {mode === 'choose' && (
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between p-6 pb-4 shrink-0">
                   <h3 className="font-bold text-gray-900 text-lg">ماذا تريد أن تفعل؟</h3>
                   <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
                 </div>
+                <div className="overflow-y-auto px-6 pb-6">
                 <div className="space-y-3">
                   <button onClick={() => { setMode('update'); setSaveError(''); }}
                     className="w-full flex items-center gap-4 p-4 border-2 border-gray-200 hover:border-sky-400 hover:bg-sky-50 rounded-2xl text-right transition-all group">
@@ -516,19 +515,20 @@ export default function InventoryPage() {
                   </button>
                 </div>
               </div>
+              </div>
             )}
 
             {/* ── UPDATE EXISTING ── */}
             {mode === 'update' && (
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-5">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
                   <div>
                     <h3 className="font-bold text-gray-900 text-lg">تحديث دواء موجود</h3>
                     {!updateItem && <p className="text-sm text-gray-400 mt-0.5">ابحث واختر الدواء أولاً</p>}
                   </div>
                   <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
                 </div>
-
+                <div className="overflow-y-auto px-6 pb-6">
                 {saveError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{saveError}</div>}
 
                 {/* Search inventory */}
@@ -597,16 +597,18 @@ export default function InventoryPage() {
                     </div>
                   </form>
                 )}
+                </div>
               </div>
             )}
 
             {/* ── SCAN ── */}
             {mode === 'scan' && (
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
                   <h3 className="font-bold text-gray-900 text-lg">مسح الباركود</h3>
                   <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
                 </div>
+                <div className="overflow-y-auto px-6 pb-6">
 
                 {/* Camera view */}
                 <div className="relative rounded-2xl overflow-hidden bg-black mb-4" style={{ aspectRatio:'4/3' }}>
@@ -654,18 +656,20 @@ export default function InventoryPage() {
                     </button>
                   </div>
                 </div>
+                </div>
               </div>
             )}
 
             {/* ── MANUAL FORM (also used after scan) ── */}
             {mode === 'manual' && (
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-5">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
                   <h3 className="font-bold text-gray-900 text-lg">
                     {form.barcode ? 'إضافة دواء — باركود مُسح' : 'إضافة دواء — يدوياً'}
                   </h3>
                   <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
                 </div>
+                <div className="overflow-y-auto px-6 pb-6">
 
                 {saveError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{saveError}</div>}
 
@@ -818,6 +822,7 @@ export default function InventoryPage() {
                     </button>
                   </div>
                 </form>
+                </div>
               </div>
             )}
           </div>
