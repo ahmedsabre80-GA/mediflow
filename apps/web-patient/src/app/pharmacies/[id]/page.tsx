@@ -35,7 +35,7 @@ function PharmacyDetailContent() {
     const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
     Promise.all([
       fetch(`${PHARMACY_API}/pharmacies/${id}`).then(r => r.json()),
-      fetch(`${PHARMACY_API}/pharmacies/${id}/inventory`, { headers: authHeader }).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${PHARMACY_API}/pharmacies/${id}/public-inventory`).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([pharmData, invData]) => {
       setPharmacy(pharmData.data);
       setInventory(invData.data || []);

@@ -896,6 +896,24 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Public inventory for patients (no auth, hides buying_price)
+  router.get('/:id/public-inventory', async (req, res, next) => {
+    try {
+      const { search } = req.query;
+      const result = await pool.query(`
+        SELECT s.id, s.pharmacy_id, s.drug_id, s.quantity, s.selling_price, s.currency,
+               s.expiry_date, s.origin_country, s.category, s.reorder_level,
+               d.generic_name, d.brand_name, d.barcode, d.requires_prescription
+        FROM public.pharmacy_stock s
+        LEFT JOIN public.drugs d ON d.id = s.drug_id
+        WHERE s.pharmacy_id = $1 AND s.quantity > 0
+          AND ($2::text IS NULL OR d.generic_name ILIKE $2 OR d.brand_name ILIKE $2)
+        ORDER BY COALESCE(d.generic_name, '')
+      `, [req.params.id, search ? `%${search}%` : null]);
+      res.json({ success: true, data: result.rows });
+    } catch (err) { next(err); }
+  });
+
   router.get('/:id/inventory', authenticate, async (req, res, next) => {
     try {
       await pool.query(`
