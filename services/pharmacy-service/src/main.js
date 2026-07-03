@@ -613,16 +613,16 @@ async function bootstrap() {
     try {
       const { lat, lng, radiusKm = 5, drugId } = req.query;
       const result = await pool.query(`
-        SELECT p.id, p.name, p.name_ar, p.phone, p.rating,
+        SELECT DISTINCT ON (p.id)
+               p.id, p.name, p.name_ar, p.phone, p.rating,
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-               (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($2::float)) + sin(radians($1::float)) * sin(radians(p.latitude))))) AS distance_km,
+               (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(COALESCE(p.latitude,0))) * cos(radians(COALESCE(p.longitude,0)) - radians($2::float)) + sin(radians($1::float)) * sin(radians(COALESCE(p.latitude,0)))))) AS distance_km,
                s.selling_price, s.quantity, s.currency
         FROM pharmacies.pharmacies p
         LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
         WHERE p.status = 'active'
           AND ($3::uuid IS NULL OR s.quantity > 0)
-          AND (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($2::float)) + sin(radians($1::float)) * sin(radians(p.latitude))))) < $4::float
-        ORDER BY distance_km ASC
+        ORDER BY p.id, distance_km ASC
         LIMIT 20
       `, [lat, lng, drugId || null, radiusKm]);
       res.json({ success: true, data: result.rows });
