@@ -29,7 +29,7 @@ function loadSet(key: string): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } catch { return new Set(); }
 }
 function saveSet(key: string, s: Set<string>) {
-  localStorage.setItem(key, JSON.stringify([...s]));
+  localStorage.setItem(key, JSON.stringify(Array.from(s)));
 }
 
 function parsePrescription(msg: string) {
@@ -124,7 +124,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }).catch(() => {});
       }
     }
-    localStorage.setItem(RX_EXPIRED_KEY, JSON.stringify([...expiredIds]));
+    localStorage.setItem(RX_EXPIRED_KEY, JSON.stringify(Array.from(expiredIds)));
   }, []);
 
   useEffect(() => {
@@ -374,7 +374,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 message: `✅ تم تأكيد طلبك!\nالدواء "${reservation.drug}" جاهز للاستلام من صيدلية ${pharmacyName || 'الصيدلية'}.\nيمكنك التوجه إليها أو التواصل معهم على رقم الصيدلية ${reservation.pharmacyPhone || pharmacyPhone || ''}.`,
               }),
             });
-            const next = new Set([...confirmedIds, selectedNotif.id]);
+            const next = new Set(Array.from(confirmedIds).concat(selectedNotif.id));
             setConfirmedIds(next);
             saveSet(CONFIRMED_KEY, next);
           } catch {}
@@ -410,7 +410,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 message: `🧾 إيصال استلام\n━━━━━━━━━━━━━━━\nالدواء: ${reservation.drug}\nالكمية: ${reservation.qty} قطعة\nالسعر: ${pricePerUnit.toLocaleString('ar-IQ')} ${reservation.currency} للقطعة\nالإجمالي: ${total.toLocaleString('ar-IQ')} ${reservation.currency}\nالصيدلية: ${pharmacyName || 'الصيدلية'}\nالتاريخ: ${now}\n━━━━━━━━━━━━━━━\nشكراً لاستخدامك ميديفلو 💙`,
               }),
             });
-            const next = new Set([...deliveredIds, selectedNotif.id]);
+            const next = new Set(Array.from(deliveredIds).concat(selectedNotif.id));
             setDeliveredIds(next);
             saveSet(DELIVERED_KEY, next);
           } catch {}
@@ -438,7 +438,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 message: fullMsg,
               }),
             });
-            const next = new Set([...rejectedIds, selectedNotif.id]);
+            const next = new Set(Array.from(rejectedIds).concat(selectedNotif.id));
             setRejectedIds(next);
             saveSet('ph-rejected-notifs', next);
             setShowRejectForm(false);
@@ -475,7 +475,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }),
               });
             }
-            const next = new Set([...acceptedRxIds, prescription.id]);
+            const next = new Set(Array.from(acceptedRxIds).concat(prescription.id));
             setAcceptedRxIds(next);
           } catch {}
           setAcceptingRx(false);
