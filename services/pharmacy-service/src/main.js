@@ -624,7 +624,7 @@ async function bootstrap() {
           AND ($3::uuid IS NULL OR s.quantity > 0)
         ORDER BY p.id, distance_km ASC
         LIMIT 20
-      `, [lat, lng, drugId || null, radiusKm]);
+      `, [lat, lng, drugId || null]);
       res.json({ success: true, data: result.rows });
     } catch (err) { next(err); }
   });
