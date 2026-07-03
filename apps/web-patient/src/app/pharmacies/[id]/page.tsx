@@ -22,6 +22,7 @@ function PharmacyDetailContent() {
   const [patientName,   setPatientName]   = useState('');
   const [patientId,     setPatientId]     = useState('');
   const [orderQty,      setOrderQty]      = useState(1);
+  const [deliveryChoice, setDeliveryChoice] = useState<'pickup' | 'delivery'>('pickup');
 
   useEffect(() => {
     try {
@@ -60,7 +61,7 @@ function PharmacyDetailContent() {
           portalType: 'pharmacy',
           recipientId: pharmacy.owner_id,
           senderName: patientName,
-          message: `🔔 طلب حجز جديد\nالدواء: ${drugName}\nالمريض: ${patientName}\nالهاتف: ${phone.trim()}\nالكمية المطلوبة: ${orderQty}\n[patient_id:${patientId}][pharmacy_phone:${pharmacy.phone || ''}][price:${drug.selling_price || 0}][currency:${drug.currency || 'IQD'}]`,
+          message: `🔔 طلب حجز جديد\nالدواء: ${drugName}\nالمريض: ${patientName}\nالهاتف: ${phone.trim()}\nالكمية المطلوبة: ${orderQty}\nطريقة الاستلام: ${deliveryChoice === 'delivery' ? '🚚 توصيل للمنزل' : '🏪 استلام من الصيدلية'}\n[patient_id:${patientId}][pharmacy_phone:${pharmacy.phone || ''}][price:${drug.selling_price || 0}][currency:${drug.currency || 'IQD'}][drug_id:${drug.drug_id || ''}][delivery:${deliveryChoice}]`,
         }),
       });
 
@@ -73,7 +74,7 @@ function PharmacyDetailContent() {
             portalType: 'patient',
             recipientId: patientId,
             senderName: pharmName,
-            message: `📋 تم استلام طلب حجزك!\nالدواء: ${drugName}\nالكمية: ${orderQty} قطعة\nالصيدلية: ${pharmName}\nسيتواصل معك الصيدلاني على الرقم ${phone.trim()} بعد تأكيد الطلب.`,
+            message: `📋 تم استلام طلب حجزك!\nالدواء: ${drugName}\nالكمية: ${orderQty} قطعة\nالصيدلية: ${pharmName}\nسيتواصل معك الصيدلاني على الرقم ${phone.trim()} بعد تأكيد الطلب.\n[pharmacy_owner_id:${pharmacy.owner_id}][pharmacy_id:${pharmacy.id}]`,
           }),
         });
       }
@@ -299,6 +300,26 @@ function PharmacyDetailContent() {
                 {focusedDrug && (
                   <p className="text-xs text-gray-400 mt-1 text-center">الكمية المتاحة: {focusedDrug.quantity} قطعة</p>
                 )}
+              </div>
+
+              {/* Delivery or pickup choice */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">طريقة الاستلام *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button"
+                    onClick={() => setDeliveryChoice('pickup')}
+                    className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border-2 text-sm font-medium transition-colors ${deliveryChoice === 'pickup' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                    <span className="text-xl">🏪</span>
+                    استلام من الصيدلية
+                  </button>
+                  <button type="button"
+                    onClick={() => hasDelivery && setDeliveryChoice('delivery')}
+                    disabled={!hasDelivery}
+                    className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border-2 text-sm font-medium transition-colors ${!hasDelivery ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed' : deliveryChoice === 'delivery' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                    <span className="text-xl">🚚</span>
+                    {hasDelivery ? 'توصيل للمنزل' : 'توصيل (غير متاح)'}
+                  </button>
+                </div>
               </div>
 
               {/* Phone number */}
