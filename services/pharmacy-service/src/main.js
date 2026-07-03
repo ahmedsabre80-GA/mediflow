@@ -179,6 +179,20 @@ async function bootstrap() {
       ELSE NULL END WHERE generic_name_en IS NULL
   `).catch(() => {});
 
+  // Platform config table (key-value store for admin settings)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.platform_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Seed default auto-reject timeout if not set
+  await pool.query(`
+    INSERT INTO public.platform_config (key, value) VALUES ('auto_reject_minutes', '10')
+    ON CONFLICT (key) DO NOTHING
+  `).catch(() => {});
+
   // Ensure inventory schema and pharmacy_stock table exist
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
@@ -459,24 +473,58 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Pharmacy sets itself online/offline (login=active, logout=inactive)
+  router.patch('/:id/status', authenticate, async (req, res, next) => {
+    try {
+      const { status } = req.body;
+      const allowed = ['active', 'inactive'];
+      if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
+      await pool.query(
+        `UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2 AND (owner_id=$3 OR id IN (SELECT pharmacy_id FROM public.pharmacy_staff WHERE user_id=$3))`,
+        [status, req.params.id, req.user.sub]
+      );
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   router.get('/my/settings', authenticate, async (req, res, next) => {
     try {
-      const r = await pool.query('SELECT delivery_rate_per_km, delivery_min_fee, delivery_max_km FROM pharmacies.pharmacies WHERE owner_id=$1', [req.user.sub]);
+      await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS opening_hours TEXT`).catch(() => {});
+      await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS province TEXT`).catch(() => {});
+      const r = await pool.query(
+        'SELECT delivery_rate_per_km, delivery_min_fee, delivery_max_km, latitude, longitude, address, opening_hours, province FROM pharmacies.pharmacies WHERE owner_id=$1',
+        [req.user.sub]
+      );
       res.json({ success: true, data: r.rows[0] || {} });
     } catch (err) { next(err); }
   });
 
   router.patch('/my/settings', authenticate, async (req, res, next) => {
     try {
+      await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS opening_hours TEXT`).catch(() => {});
+      await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS province TEXT`).catch(() => {});
       const b = req.body;
       await pool.query(`
         UPDATE pharmacies.pharmacies SET
           delivery_rate_per_km = COALESCE($1::int, delivery_rate_per_km),
-          delivery_min_fee = COALESCE($2::int, delivery_min_fee),
-          delivery_max_km = COALESCE($3::int, delivery_max_km),
-          updated_at = NOW()
-        WHERE owner_id = $4
-      `, [b.delivery_rate_per_km ?? null, b.delivery_min_fee ?? null, b.delivery_max_km ?? null, req.user.sub]);
+          delivery_min_fee     = COALESCE($2::int, delivery_min_fee),
+          delivery_max_km      = COALESCE($3::int, delivery_max_km),
+          latitude             = COALESCE($4::float, latitude),
+          longitude            = COALESCE($5::float, longitude),
+          address              = COALESCE($6, address),
+          opening_hours        = COALESCE($7, opening_hours),
+          updated_at           = NOW()
+        WHERE owner_id = $8
+      `, [
+        b.delivery_rate_per_km ?? null,
+        b.delivery_min_fee     ?? null,
+        b.delivery_max_km      ?? null,
+        b.latitude             ?? null,
+        b.longitude            ?? null,
+        b.address              ?? null,
+        b.opening_hours        ?? null,
+        req.user.sub,
+      ]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
@@ -614,15 +662,18 @@ async function bootstrap() {
       const { lat, lng, radiusKm = 5, drugId } = req.query;
       const result = await pool.query(`
         SELECT DISTINCT ON (p.id)
-               p.id, p.name, p.name_ar, p.phone, p.rating,
+               p.id, p.name, p.name_ar, p.phone, p.rating, p.owner_id,
                p.delivery_rate_per_km, p.delivery_min_fee, p.delivery_max_km,
-               (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(COALESCE(p.latitude,0))) * cos(radians(COALESCE(p.longitude,0)) - radians($2::float)) + sin(radians($1::float)) * sin(radians(COALESCE(p.latitude,0)))))) AS distance_km,
+               p.status, p.opening_hours,
+               CASE WHEN p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                    THEN (6371 * acos(LEAST(1, cos(radians($1::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($2::float)) + sin(radians($1::float)) * sin(radians(p.latitude)))))
+                    ELSE NULL END AS distance_km,
                s.selling_price, s.quantity, s.currency
         FROM pharmacies.pharmacies p
         LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
-        WHERE p.status = 'active'
+        WHERE p.status IN ('active','inactive')
           AND ($3::uuid IS NULL OR s.quantity > 0)
-        ORDER BY p.id, distance_km ASC
+        ORDER BY p.id, distance_km ASC NULLS LAST
         LIMIT 20
       `, [lat, lng, drugId || null]);
       res.json({ success: true, data: result.rows });
@@ -1075,6 +1126,88 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Prescription requests table
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.prescription_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      patient_id TEXT,
+      patient_name TEXT,
+      patient_phone TEXT,
+      notes TEXT,
+      image_base64 TEXT,
+      radius_km INTEGER DEFAULT 10,
+      lat NUMERIC(10,6),
+      lng NUMERIC(10,6),
+      status TEXT DEFAULT 'open',
+      claimed_by UUID,
+      claimed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  // Create prescription request (patient)
+  router.post('/prescriptions', async (req, res, next) => {
+    try {
+      const { patientId, patientName, patientPhone, notes, imageBase64, radiusKm, lat, lng } = req.body;
+      const r = await pool.query(
+        `INSERT INTO public.prescription_requests (patient_id, patient_name, patient_phone, notes, image_base64, radius_km, lat, lng)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, created_at`,
+        [patientId || null, patientName || 'مريض', patientPhone || '', notes || '', imageBase64 || '', parseInt(radiusKm)||10, lat||null, lng||null]
+      );
+      res.status(201).json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // Get prescription by ID (pharmacy views it)
+  router.get('/prescriptions/:id', async (req, res, next) => {
+    try {
+      const r = await pool.query('SELECT * FROM public.prescription_requests WHERE id=$1', [req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ success: false });
+      const row = r.rows[0];
+      res.json({ success: true, data: { ...row, image_base64: row.image_base64 ? '[image]' : '' } });
+    } catch (err) { next(err); }
+  });
+
+  // Get prescription image (separate endpoint to avoid large payloads)
+  router.get('/prescriptions/:id/image', async (req, res, next) => {
+    try {
+      const r = await pool.query('SELECT image_base64 FROM public.prescription_requests WHERE id=$1', [req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ success: false });
+      res.json({ success: true, data: { image_base64: r.rows[0].image_base64 } });
+    } catch (err) { next(err); }
+  });
+
+  // Pharmacy claims prescription (removes it from others)
+  router.patch('/prescriptions/:id/claim', authenticate, async (req, res, next) => {
+    try {
+      const pharmacyId = req.pharmacy?.id;
+      const r = await pool.query(
+        `UPDATE public.prescription_requests SET status='claimed', claimed_by=$1, claimed_at=NOW()
+         WHERE id=$2 AND status='open' RETURNING *`,
+        [pharmacyId, req.params.id]
+      );
+      if (!r.rows.length) return res.status(409).json({ success: false, error: { title: 'Already claimed or not found' } });
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // Decrement stock quantity when pharmacy delivers to patient
+  router.post('/:id/inventory/decrement', authenticate, async (req, res, next) => {
+    try {
+      const { drugId, qty } = req.body;
+      if (!drugId || !qty || qty < 1) return res.status(422).json({ success: false, error: { title: 'drugId and qty required' } });
+      const result = await pool.query(
+        `UPDATE public.pharmacy_stock
+         SET quantity = GREATEST(0, quantity - $1), updated_at = NOW()
+         WHERE pharmacy_id = $2 AND drug_id = $3
+         RETURNING id, quantity`,
+        [parseInt(qty, 10), req.params.id, drugId]
+      );
+      if (!result.rows.length) return res.status(404).json({ success: false, error: { title: 'Stock entry not found' } });
+      res.json({ success: true, data: result.rows[0] });
+    } catch (err) { next(err); }
+  });
+
   router.delete('/:id/inventory/:stockId', authenticate, async (req, res, next) => {
     try {
       const result = await pool.query(
@@ -1254,6 +1387,50 @@ async function bootstrap() {
   });
 
   app.use('/api/v1/appointments/doctors', apptRouter);
+
+  // ── Platform config endpoints ──────────────────────────────────────────
+  // Public: get a config value
+  app.get('/api/v1/platform/config/:key', async (req, res, next) => {
+    try {
+      const r = await pool.query('SELECT value FROM public.platform_config WHERE key=$1', [req.params.key]);
+      if (!r.rows.length) return res.status(404).json({ success: false });
+      res.json({ success: true, data: { key: req.params.key, value: r.rows[0].value } });
+    } catch (err) { next(err); }
+  });
+
+  // Admin: set a config value (protected by admin secret header)
+  app.patch('/api/v1/platform/config/:key', async (req, res, next) => {
+    try {
+      const adminSecret = req.headers['x-admin-secret'];
+      if (adminSecret !== (process.env.ADMIN_SECRET || 'mediflow-admin-2026')) {
+        return res.status(403).json({ success: false, error: { title: 'Forbidden' } });
+      }
+      const { value } = req.body;
+      if (value === undefined || value === null) return res.status(422).json({ success: false });
+      await pool.query(
+        `INSERT INTO public.platform_config (key, value, updated_at) VALUES ($1,$2,NOW())
+         ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`,
+        [req.params.key, String(value)]
+      );
+      res.json({ success: true, data: { key: req.params.key, value: String(value) } });
+    } catch (err) { next(err); }
+  });
+
+  // Pharmacy rating decrement (called on auto-reject)
+  app.patch('/api/v1/pharmacies/:id/rating-decrement', async (req, res, next) => {
+    try {
+      const { amount = 0.1 } = req.body;
+      const r = await pool.query(
+        `UPDATE public.pharmacies
+         SET rating = GREATEST(0, rating - $1), updated_at = NOW()
+         WHERE id = $2 RETURNING id, rating`,
+        [Number(amount), req.params.id]
+      );
+      if (!r.rows.length) return res.status(404).json({ success: false });
+      res.json({ success: true, data: r.rows[0] });
+    } catch (err) { next(err); }
+  });
+
   app.use(notFoundHandler);
   app.use(errorHandler);
 
