@@ -2,7 +2,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut } from 'lucide-react';
+import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle } from 'lucide-react';
+
+const PHARMACY_API   = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+const CANCELLED_KEY  = 'mediflow-cancelled-orders';
+
+const CANCEL_REASONS = [
+  'وجدت الدواء في صيدلية أخرى',
+  'تغيرت حاجتي للدواء',
+  'الوقت لا يناسبني',
+  'طلبت بالخطأ',
+  'السعر لا يناسبني',
+];
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
 
 const NAV = [
@@ -18,9 +29,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isApproved, setIsApproved] = useState<boolean | null>(null);
   const [userId,     setUserId]     = useState('');
   const [userName,   setUserName]   = useState('');
-  const [notifs,     setNotifs]     = useState<PatientNotif[]>([]);
-  const [showNotifs, setShowNotifs] = useState(false);
-  const [selected,   setSelected]   = useState<PatientNotif | null>(null);
+  const [notifs,          setNotifs]          = useState<PatientNotif[]>([]);
+  const [showNotifs,      setShowNotifs]      = useState(false);
+  const [selected,        setSelected]        = useState<PatientNotif | null>(null);
+  const [showCancelForm,  setShowCancelForm]  = useState(false);
+  const [cancelReason,    setCancelReason]    = useState('');
+  const [cancelling,      setCancelling]      = useState(false);
+  const [cancelledIds,    setCancelledIds]    = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(CANCELLED_KEY) || '[]')); } catch { return new Set(); }
+  });
 
   const refresh = useCallback(async (uid: string) => {
     if (!uid) return;
@@ -46,6 +63,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router, refresh]);
 
   const unread = notifs.filter(n => !n.isRead).length;
+
+  const isReservationNotif = (n: PatientNotif) =>
+    n.message.includes('تم استلام طلب حجزك') && !cancelledIds.has(n.id);
+
+  const closeModal = () => {
+    setSelected(null);
+    setShowCancelForm(false);
+    setCancelReason('');
+  };
+
+  const handleCancelOrder = async () => {
+    if (!selected || !cancelReason) return;
+    setCancelling(true);
+    try {
+      const pharmacyOwnerId = selected.message.match(/\[pharmacy_owner_id:([^\]]+)\]/)?.[1] || '';
+      const drug            = selected.message.match(/الدواء:\s*(.+)/)?.[1]?.trim() || 'الدواء';
+      const pharmacy        = selected.senderName || 'الصيدلية';
+
+      if (pharmacyOwnerId) {
+        await fetch(`${PHARMACY_API}/portal-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'pharmacy',
+            recipientId: pharmacyOwnerId,
+            senderName: userName,
+            message: `❌ إلغاء طلب\nالمريض "${userName}" ألغى طلب حجز الدواء: ${drug}\nسبب الإلغاء: ${cancelReason}`,
+          }),
+        });
+      }
+
+      const next = new Set([...cancelledIds, selected.id]);
+      setCancelledIds(next);
+      localStorage.setItem(CANCELLED_KEY, JSON.stringify([...next]));
+      closeModal();
+    } catch {}
+    setCancelling(false);
+  };
 
   const openNotif = (n: PatientNotif) => {
     if (!n.isRead) {
@@ -166,39 +221,83 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </nav>
 
       {/* ── NOTIFICATION DETAIL MODAL ───────────────────────────── */}
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40"
-          onClick={() => setSelected(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <button onClick={() => setSelected(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-              <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
-            </div>
-            <div className="bg-sky-50 rounded-xl p-4 mb-4">
-              <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selected.message}</p>
-            </div>
-            <div className="space-y-1.5 text-sm mb-5">
-              {selected.senderName && (
+      {selected && (() => {
+        const isReservation = isReservationNotif(selected);
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40"
+            onClick={closeModal}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={closeModal} className="p-1.5 rounded-lg hover:bg-gray-100">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+                <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
+              </div>
+              <div className="bg-sky-50 rounded-xl p-4 mb-4">
+                <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selected.message}</p>
+              </div>
+              <div className="space-y-1.5 text-sm mb-5">
+                {selected.senderName && (
+                  <div className="flex justify-between">
+                    <span className="font-medium text-gray-700">من</span>
+                    <span className="text-gray-500">{selected.senderName}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="font-medium text-gray-700">من</span>
-                  <span className="text-gray-500">{selected.senderName}</span>
+                  <span className="font-medium text-gray-700">التاريخ</span>
+                  <span className="text-gray-500">{new Date(selected.createdAt).toLocaleString('ar-IQ')}</span>
+                </div>
+              </div>
+
+              {/* Cancel reasons form — only for pending reservations */}
+              {isReservation && showCancelForm && (
+                <div className="mb-4 space-y-2">
+                  <p className="text-sm font-medium text-gray-700 text-right">سبب الإلغاء:</p>
+                  <div className="space-y-2">
+                    {CANCEL_REASONS.map(reason => (
+                      <button key={reason} onClick={() => setCancelReason(reason)}
+                        className={`w-full text-right px-4 py-2.5 rounded-xl border text-sm transition-colors ${
+                          cancelReason === reason
+                            ? 'border-red-400 bg-red-50 text-red-700 font-medium'
+                            : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                        }`}>
+                        {reason}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => { setShowCancelForm(false); setCancelReason(''); }}
+                      className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      رجوع
+                    </button>
+                    <button onClick={handleCancelOrder} disabled={!cancelReason || cancelling}
+                      className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                      {cancelling ? 'جاري الإلغاء...' : 'تأكيد الإلغاء'}
+                    </button>
+                  </div>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span className="font-medium text-gray-700">التاريخ</span>
-                <span className="text-gray-500">{new Date(selected.createdAt).toLocaleString('ar-IQ')}</span>
-              </div>
+
+              {!showCancelForm && (
+                <div className={`flex gap-3 ${isReservation ? '' : ''}`}>
+                  <button onClick={closeModal}
+                    className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl text-sm">
+                    إغلاق
+                  </button>
+                  {isReservation && (
+                    <button onClick={() => setShowCancelForm(true)}
+                      className="flex-1 flex items-center justify-center gap-2 border border-red-300 text-red-600 hover:bg-red-50 py-2.5 rounded-xl text-sm font-medium transition-colors">
+                      <XCircle className="w-4 h-4" />
+                      إلغاء الطلب
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            <button onClick={() => setSelected(null)}
-              className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl text-sm">
-              إغلاق
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
