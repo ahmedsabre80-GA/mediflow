@@ -146,7 +146,7 @@ export default function OrdersPage() {
           }).catch(() => {});
         }
       }
-      localStorage.setItem(AUTO_REJECTED_KEY, JSON.stringify([...alreadyRejected]));
+      localStorage.setItem(AUTO_REJECTED_KEY, JSON.stringify(Array.from(alreadyRejected)));
 
       setOrders(deduped.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
     } catch {

@@ -93,9 +93,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         });
       }
 
-      const next = new Set([...cancelledIds, selected.id]);
+      const next = new Set(Array.from(cancelledIds).concat(selected.id));
       setCancelledIds(next);
-      localStorage.setItem(CANCELLED_KEY, JSON.stringify([...next]));
+      localStorage.setItem(CANCELLED_KEY, JSON.stringify(Array.from(next)));
       closeModal();
     } catch {}
     setCancelling(false);
