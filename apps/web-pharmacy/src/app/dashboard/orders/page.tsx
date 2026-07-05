@@ -18,9 +18,11 @@ interface Reservation {
   createdAt: string;
   delivered: boolean;
   confirmed: boolean;
+  rejected: boolean;
+  expired: boolean;
 }
 
-function parseReservation(msg: string, id: string, createdAt: string, deliveredIds: Set<string>, confirmedIds: Set<string>): Reservation | null {
+function parseReservation(msg: string, id: string, createdAt: string, deliveredIds: Set<string>, confirmedIds: Set<string>, rejectedIds: Set<string>, timeoutMin: number): Reservation | null {
   if (!msg.includes('طلب حجز جديد')) return null;
   const drug      = msg.match(/الدواء:\s*(.+)/)?.[1]?.trim()           || '';
   const patient   = msg.match(/المريض:\s*(.+)/)?.[1]?.trim()           || '';
@@ -31,7 +33,12 @@ function parseReservation(msg: string, id: string, createdAt: string, deliveredI
   const currency  = msg.match(/\[currency:([^\]]*)\]/)?.[1]            || 'IQD';
   const delivery  = (msg.match(/\[delivery:([^\]]*)\]/)?.[1] || '') as 'pickup' | 'delivery' | '';
   const drugId    = msg.match(/\[drug_id:([^\]]*)\]/)?.[1]             || '';
-  return { id, drug, patient, phone, qty: Number(qtyStr), price, currency, patientId: pid, drugId, deliveryChoice: delivery, createdAt, delivered: deliveredIds.has(id), confirmed: confirmedIds.has(id) };
+  const ageMin = (Date.now() - new Date(createdAt).getTime()) / 60000;
+  const confirmed = confirmedIds.has(id);
+  const delivered = deliveredIds.has(id);
+  const rejected  = rejectedIds.has(id);
+  const expired   = !confirmed && !delivered && !rejected && ageMin > timeoutMin;
+  return { id, drug, patient, phone, qty: Number(qtyStr), price, currency, patientId: pid, drugId, deliveryChoice: delivery, createdAt, delivered, confirmed, rejected, expired };
 }
 
 function ViewPrescriptionImage({ prescriptionId }: { prescriptionId: string }) {
@@ -67,8 +74,9 @@ function ViewPrescriptionImage({ prescriptionId }: { prescriptionId: string }) {
   );
 }
 
-const DELIVERED_KEY      = 'pharmacy-delivered-notifs';
-const CONFIRMED_KEY      = 'pharmacy-confirmed-notifs';
+const DELIVERED_KEY      = 'ph-delivered-notifs';
+const CONFIRMED_KEY      = 'ph-confirmed-notifs';
+const REJECTED_KEY       = 'ph-rejected-notifs';
 const CLAIMED_RX_KEY     = 'pharmacy-claimed-prescriptions';
 const AUTO_REJECTED_KEY  = 'pharmacy-auto-rejected-orders';
 const PLATFORM_API       = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
@@ -106,22 +114,25 @@ export default function OrdersPage() {
   const [prescriptions, setPrescriptions] = useState<PrescriptionRequest[]>([]);
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState('');
-  const [filter, setFilter]             = useState<'all' | 'pending' | 'confirmed' | 'delivered'>('all');
+  const [filter, setFilter]             = useState<'all' | 'pending' | 'confirmed' | 'delivered' | 'rejected'>('all');
   const [delivering, setDelivering]     = useState<string | null>(null);
   const [confirming, setConfirming]     = useState<string | null>(null);
   const [rejecting, setRejecting]       = useState<string | null>(null);
   const [claiming, setClaiming]         = useState<string | null>(null);
   const [deliveredIds, setDeliveredIds] = useState<Set<string>>(new Set());
   const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
+  const [rejectedIds,  setRejectedIds]  = useState<Set<string>>(new Set());
   const [claimedIds, setClaimedIds]     = useState<Set<string>>(new Set());
   const pharmacyName = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-name') || '' : '';
 
   useEffect(() => {
     const dIds = loadSet(DELIVERED_KEY);
     const cIds = loadSet(CONFIRMED_KEY);
+    const rIds = loadSet(REJECTED_KEY);
     const rxIds = loadSet(CLAIMED_RX_KEY);
     setDeliveredIds(dIds);
     setConfirmedIds(cIds);
+    setRejectedIds(rIds);
     setClaimedIds(rxIds);
 
     const token       = localStorage.getItem('pharmacy-token');
@@ -143,7 +154,7 @@ export default function OrdersPage() {
         const now = Date.now();
 
         const reservParsed = notifs
-          .map(n => parseReservation(n.message, n.id, n.created_at, dIds, cIds))
+          .map(n => parseReservation(n.message, n.id, n.created_at, dIds, cIds, rIds, timeoutMin))
           .filter(Boolean) as Reservation[];
 
         const rxParsed = notifs
@@ -225,10 +236,10 @@ export default function OrdersPage() {
           }),
         });
       }
-      const next = new Set(Array.from(deliveredIds).concat(r.id));
-      setDeliveredIds(next);
-      saveSet(DELIVERED_KEY, next);
-      setReservations(prev => prev.filter(x => x.id !== r.id));
+      const next = new Set(Array.from(rejectedIds).concat(r.id));
+      setRejectedIds(next);
+      saveSet(REJECTED_KEY, next);
+      setReservations(prev => prev.map(x => x.id === r.id ? { ...x, rejected: true } : x));
     } catch {}
     setRejecting(null);
   };
@@ -305,17 +316,19 @@ export default function OrdersPage() {
 
   const filtered = reservations.filter(r => {
     if (search && !r.drug.includes(search) && !r.patient.includes(search) && !r.phone.includes(search)) return false;
-    if (filter === 'pending')   return !r.confirmed && !r.delivered;
+    if (filter === 'pending')   return !r.confirmed && !r.delivered && !r.rejected && !r.expired;
     if (filter === 'confirmed') return r.confirmed && !r.delivered;
     if (filter === 'delivered') return r.delivered;
+    if (filter === 'rejected')  return r.rejected;
     return true;
   });
 
   const counts = {
     all: reservations.length,
-    pending: reservations.filter(r => !r.confirmed && !r.delivered).length,
+    pending: reservations.filter(r => !r.confirmed && !r.delivered && !r.rejected && !r.expired).length,
     confirmed: reservations.filter(r => r.confirmed && !r.delivered).length,
     delivered: reservations.filter(r => r.delivered).length,
+    rejected: reservations.filter(r => r.rejected).length,
   };
 
   return (
@@ -405,6 +418,7 @@ export default function OrdersPage() {
           { key: 'pending',   label: 'معلّق',        color: 'bg-amber-100 text-amber-700' },
           { key: 'confirmed', label: 'مؤكد',         color: 'bg-blue-100 text-blue-700' },
           { key: 'delivered', label: 'تم التسليم',   color: 'bg-green-100 text-green-700' },
+          { key: 'rejected',  label: 'مرفوض',        color: 'bg-red-100 text-red-700' },
         ] as const).map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${filter === f.key ? f.color + ' ring-2 ring-offset-1 ring-current' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}`}>
@@ -434,10 +448,12 @@ export default function OrdersPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map(r => (
-            <div key={r.id} className={`bg-white rounded-2xl shadow-sm border-r-4 overflow-hidden ${r.delivered ? 'border-green-400' : r.confirmed ? 'border-blue-400' : 'border-amber-400'}`}>
+            <div key={r.id} className={`bg-white rounded-2xl shadow-sm border-r-4 overflow-hidden ${r.delivered ? 'border-green-400' : r.rejected ? 'border-red-400' : r.expired ? 'border-gray-300' : r.confirmed ? 'border-blue-400' : 'border-amber-400'}`}>
               <div className="p-4 flex items-start gap-4">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${r.delivered ? 'bg-green-100' : r.confirmed ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${r.delivered ? 'bg-green-100' : r.rejected ? 'bg-red-100' : r.expired ? 'bg-gray-100' : r.confirmed ? 'bg-blue-100' : 'bg-amber-100'}`}>
                   {r.delivered ? <CheckCircle className="w-5 h-5 text-green-600" />
+                    : r.rejected ? <X className="w-5 h-5 text-red-500" />
+                    : r.expired ? <Clock className="w-5 h-5 text-gray-400" />
                     : r.confirmed ? <Package className="w-5 h-5 text-blue-600" />
                     : <Clock className="w-5 h-5 text-amber-600" />}
                 </div>
@@ -445,8 +461,8 @@ export default function OrdersPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <p className="font-bold text-gray-900 truncate">{r.drug}</p>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${r.delivered ? 'bg-green-100 text-green-700' : r.confirmed ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {r.delivered ? 'تم التسليم' : r.confirmed ? 'مؤكد' : 'معلّق'}
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${r.delivered ? 'bg-green-100 text-green-700' : r.rejected ? 'bg-red-100 text-red-700' : r.expired ? 'bg-gray-100 text-gray-500' : r.confirmed ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {r.delivered ? 'تم التسليم' : r.rejected ? 'مرفوض' : r.expired ? '⏱ منتهي' : r.confirmed ? 'مؤكد' : 'معلّق'}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-500 mt-1">
@@ -463,7 +479,7 @@ export default function OrdersPage() {
               </div>
 
               {/* Action buttons */}
-              {!r.delivered && (
+              {!r.delivered && !r.rejected && !r.expired && (
                 <div className="px-4 pb-4 flex gap-2">
                   {!r.confirmed && (
                     <>

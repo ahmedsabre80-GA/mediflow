@@ -1,8 +1,12 @@
 'use client';
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { Search, MapPin, Star, Truck, X, Package, ArrowRight, ShoppingCart, ChevronDown, ChevronUp, FileImage, Send, CheckCircle } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Search, MapPin, Star, Truck, X, Package, ArrowRight, ShoppingCart, ChevronDown, ChevronUp, FileImage, Send, CheckCircle, Stethoscope } from 'lucide-react';
 import Link from 'next/link';
+
+const AUTH_API_URL  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
+const PHARM_API_URL = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+const SECRET_KEY    = 'mediflow-delete-2026';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
@@ -36,7 +40,32 @@ const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pha
 
 function SearchContent() {
   const searchParams = useSearchParams();
-  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription'>('drug');
+  const router = useRouter();
+  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription' | 'doctor'>('drug');
+
+  // Doctor search state
+  const [docSearch,   setDocSearch]   = useState('');
+  const [docSpec,     setDocSpec]     = useState('الكل');
+  const [doctors,     setDoctors]     = useState<any[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const DOC_SPECS = ['الكل','طب عام','طب القلب','طب الأطفال','طب النساء والتوليد','طب الأعصاب','طب الجلدية'];
+
+  useEffect(() => {
+    if (activeTab !== 'doctor' || doctors.length > 0) return;
+    setDocsLoading(true);
+    Promise.all([
+      fetch(`${PHARM_API_URL}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${AUTH_API_URL}/auth/admin/users?secret=${SECRET_KEY}`).then(r => r.json()).catch(() => ({ data: [] })),
+    ]).then(([reqRes, authRes]) => {
+      const authUsers: any[] = authRes.data || authRes.users || [];
+      setDoctors((reqRes.data || [])
+        .filter((d: any) => ['approved','used'].includes(d.status) && d.portal_type === 'doctor')
+        .map((d: any) => {
+          const au = authUsers.find((u: any) => u.email?.toLowerCase() === d.employee_email?.toLowerCase());
+          return { id: d.id, name: d.employee_name, email: d.employee_email, specialization: d.employee_role || 'طب عام', authId: au?.id || null };
+        }));
+    }).finally(() => setDocsLoading(false));
+  }, [activeTab]);
   const [query,        setQuery]        = useState(searchParams.get('q') || '');
   const [drugs,        setDrugs]        = useState<Drug[]>([]);
   const [suggestions,  setSuggestions]  = useState<Drug[]>([]);
@@ -267,41 +296,62 @@ function SearchContent() {
           <Link href="/dashboard" className="flex items-center gap-1 text-sky-200 hover:text-white text-sm">
             <ArrowRight className="w-4 h-4" /> الرئيسية
           </Link>
-          <h1 className="text-white font-bold text-lg">ابحث عن دواء</h1>
+          <h1 className="text-white font-bold text-lg">
+            {activeTab === 'doctor' ? 'البحث عن طبيب' : 'ابحث عن دواء'}
+          </h1>
+        </div>
+        {/* Tab switcher */}
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => setActiveTab('drug')}
+            className={`flex-1 py-2.5 rounded-xl font-bold transition-all border-2 flex flex-col items-center gap-0.5 ${
+              activeTab === 'drug'
+                ? 'bg-amber-400 text-white border-amber-300 shadow'
+                : 'bg-white/20 text-white border-transparent'
+            }`}>
+            <span className="text-2xl">💊</span>
+            <span className="text-xs">دواء</span>
+          </button>
+          <button onClick={() => setActiveTab('doctor')}
+            className={`flex-1 py-2.5 rounded-xl font-bold transition-all border-2 flex flex-col items-center gap-0.5 ${
+              activeTab === 'doctor'
+                ? 'bg-amber-400 text-white border-amber-300 shadow'
+                : 'bg-white/20 text-white border-transparent'
+            }`}>
+            <span className="text-2xl">🩺</span>
+            <span className="text-xs">طبيب</span>
+          </button>
+          <button onClick={() => setActiveTab('prescription')}
+            className={`flex-1 py-2.5 rounded-xl font-bold transition-all border-2 flex flex-col items-center gap-0.5 ${
+              activeTab === 'prescription'
+                ? 'bg-amber-400 text-white border-amber-300 shadow'
+                : 'bg-white/20 text-white border-transparent'
+            }`}>
+            <span className="text-2xl">📋</span>
+            <span className="text-xs">وصفة</span>
+          </button>
         </div>
 
-        <div ref={searchRef} className={`relative ${activeTab === 'prescription' ? 'hidden' : ''}`}>
-          <div className="flex items-center gap-2">
-            {/* Search bar */}
-            <div className="flex-1 flex items-center bg-white rounded-2xl overflow-hidden shadow-lg">
-              <button onClick={() => doSearch(query)}
-                className="bg-sky-600 hover:bg-sky-700 px-4 py-3.5 flex items-center justify-center transition-colors shrink-0">
-                <Search className="w-5 h-5 text-white" />
-              </button>
-              <input
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && doSearch(query)}
-                placeholder="باراسيتامول، ibuprofen، ..."
-                className="flex-1 py-3.5 px-2 text-sm outline-none"
-                dir={isArabic(query) ? 'rtl' : 'ltr'}
-                autoComplete="off"
-                autoFocus
-              />
-              {query && (
-                <button onClick={clearSearch} className="px-3 text-gray-400 hover:text-gray-600 shrink-0">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* Prescription upload button — beside search bar */}
-            <button onClick={() => setActiveTab('prescription')}
-              title="رفع وصفة طبية"
-              className="flex flex-col items-center justify-center gap-1 px-4 py-3 bg-amber-400 hover:bg-amber-500 text-white rounded-2xl shadow-lg transition-colors shrink-0">
-              <FileImage className="w-6 h-6" />
-              <span className="text-xs font-medium leading-tight">وصفة</span>
+        <div ref={searchRef} className={`relative ${activeTab !== 'drug' ? 'hidden' : ''}`}>
+          <div className="flex items-center bg-white rounded-2xl overflow-hidden shadow-lg">
+            <button onClick={() => doSearch(query)}
+              className="bg-sky-600 hover:bg-sky-700 px-4 py-3.5 flex items-center justify-center transition-colors shrink-0">
+              <Search className="w-5 h-5 text-white" />
             </button>
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && doSearch(query)}
+              placeholder="باراسيتامول، ibuprofen، ..."
+              className="flex-1 py-3.5 px-2 text-sm outline-none"
+              dir={isArabic(query) ? 'rtl' : 'ltr'}
+              autoComplete="off"
+              autoFocus
+            />
+            {query && (
+              <button onClick={clearSearch} className="px-3 text-gray-400 hover:text-gray-600 shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {!query && (
@@ -338,6 +388,58 @@ function SearchContent() {
           )}
         </div>
       </div>
+
+      {/* ══ DOCTOR SEARCH ══ */}
+      {activeTab === 'doctor' && (
+        <div className="px-4 py-4 space-y-3 pb-24">
+          {/* Search bar */}
+          <div className="flex items-center gap-2 bg-white rounded-xl px-4 py-3 shadow-sm">
+            <Search className="w-5 h-5 text-gray-400 shrink-0" />
+            <input value={docSearch} onChange={e => setDocSearch(e.target.value)}
+              autoFocus placeholder="ابحث باسم الطبيب أو التخصص..."
+              className="flex-1 outline-none text-sm" dir="rtl" />
+            {docSearch && <button onClick={() => setDocSearch('')} className="text-gray-400 text-lg">×</button>}
+          </div>
+          {/* Specializations */}
+          <div className="overflow-x-auto">
+            <div className="flex gap-2 w-max">
+              {DOC_SPECS.map(s => (
+                <button key={s} onClick={() => setDocSpec(s)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-colors ${docSpec === s ? 'bg-sky-500 text-white' : 'bg-white text-gray-600 shadow-sm'}`}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Results */}
+          {docsLoading ? (
+            [...Array(3)].map((_, i) => <div key={i} className="bg-white rounded-2xl p-4 animate-pulse h-20" />)
+          ) : (() => {
+            const filtered = doctors.filter(d =>
+              (!docSearch || (d.name || '').toLowerCase().includes(docSearch.toLowerCase()) || (d.specialization || '').includes(docSearch)) &&
+              (docSpec === 'الكل' || (d.specialization || '').includes(docSpec))
+            );
+            return filtered.length === 0 ? (
+              <div className="pt-10 text-center text-gray-400">
+                <Stethoscope className="w-10 h-10 mx-auto mb-2 text-gray-300" />
+                <p className="text-sm">لا توجد نتائج</p>
+              </div>
+            ) : filtered.map(doc => (
+              <button key={doc.id} onClick={() => router.push('/doctors')}
+                className="w-full bg-white rounded-2xl p-4 shadow-sm flex items-center gap-4 text-right hover:shadow-md transition-shadow">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center shrink-0">
+                  <span className="text-white text-lg font-bold">{(doc.name || 'د')[0]}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-gray-900 text-sm">{doc.name}</p>
+                  <p className="text-xs text-sky-600 mt-0.5">{doc.specialization}</p>
+                </div>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-700 shrink-0">حجز</span>
+              </button>
+            ));
+          })()}
+        </div>
+      )}
 
       {/* ══ PRESCRIPTION UPLOAD ══ */}
       {activeTab === 'prescription' && (

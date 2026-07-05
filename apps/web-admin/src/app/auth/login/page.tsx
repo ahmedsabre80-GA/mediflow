@@ -71,6 +71,11 @@ export default function AdminLoginPage() {
                 className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                 required />
             </div>
+            <div className="flex justify-end">
+              <a href="/auth/forgot-password" className="text-sm text-sky-400 hover:underline">
+                نسيت كلمة المرور؟
+              </a>
+            </div>
             <button type="submit" disabled={loading}
               className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60 mt-2">
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}

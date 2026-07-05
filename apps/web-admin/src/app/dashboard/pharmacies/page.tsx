@@ -12,6 +12,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active:               { label: 'نشط',    color: 'bg-green-100 text-green-700' },
   suspended:            { label: 'موقوف',  color: 'bg-red-100 text-red-700' },
   rejected:             { label: 'مرفوض', color: 'bg-gray-100 text-gray-700' },
+  inactive:             { label: 'غير نشط', color: 'bg-amber-100 text-amber-700' },
 };
 
 function printPharmacyReport(p: any) {
@@ -83,7 +84,8 @@ export default function PharmaciesPage() {
 
   // Add modal
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addForm, setAddForm] = useState({ nameAr: '', licenseNumber: '', phone: '', address: '', city: '', addedBy: 'platform' });
+  const [addForm, setAddForm] = useState({ nameAr: '', licenseNumber: '', phone: '', address: '', city: '', email: '', password: '', addedBy: 'platform' });
+  const [addingSave, setAddingSave] = useState(false);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3200); };
 
@@ -98,24 +100,59 @@ export default function PharmaciesPage() {
 
   useEffect(() => { load(); }, []);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!addForm.nameAr || !addForm.licenseNumber || !addForm.phone) return alert('يرجى ملء الاسم والترخيص والهاتف');
-    const newP = {
-      id: `manual-${Date.now()}`,
-      name_ar: addForm.nameAr,
-      name: addForm.nameAr,
-      license_number: addForm.licenseNumber,
-      phone: addForm.phone,
-      address: addForm.address,
-      city: addForm.city,
-      status: 'active',
-      rating: 0,
-    };
-    setPharmacies(prev => [newP, ...prev]);
-    logAction('add', 'إضافة صيدلية', 'صيدلية', addForm.nameAr, newP.id, '/dashboard/pharmacies');
-    setShowAddModal(false);
-    setAddForm({ nameAr: '', licenseNumber: '', phone: '', address: '', city: '', addedBy: 'platform' });
-    showToast('✅ تم إضافة الصيدلية');
+    if (!addForm.email || !addForm.password) return alert('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+    if (addForm.password.length < 8) return alert('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+    setAddingSave(true);
+    try {
+      // 1. Register auth account
+      const authRes = await fetch(`${AUTH_API}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: addForm.email, password: addForm.password, role: 'pharmacy_owner', name: addForm.nameAr }),
+      });
+      const authData = await authRes.json();
+      if (!authRes.ok) throw new Error(authData.message || 'فشل إنشاء الحساب');
+
+      // 2. Create pharmacy record
+      const phRes = await fetch(`${PHARMACY_API}/pharmacies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authData.token || authData.data?.token || ''}` },
+        body: JSON.stringify({
+          name_ar: addForm.nameAr,
+          name: addForm.nameAr,
+          license_number: addForm.licenseNumber,
+          phone: addForm.phone,
+          address: addForm.address,
+          city: addForm.city,
+          owner_email: addForm.email,
+          status: 'active',
+        }),
+      });
+      const phData = await phRes.json();
+      const newP = phData.data || {
+        id: `manual-${Date.now()}`,
+        name_ar: addForm.nameAr,
+        name: addForm.nameAr,
+        license_number: addForm.licenseNumber,
+        phone: addForm.phone,
+        address: addForm.address,
+        city: addForm.city,
+        owner_email: addForm.email,
+        status: 'active',
+        rating: 0,
+      };
+      setPharmacies(prev => [newP, ...prev]);
+      logAction('add', 'إضافة صيدلية', 'صيدلية', addForm.nameAr, newP.id, '/dashboard/pharmacies');
+      setShowAddModal(false);
+      setAddForm({ nameAr: '', licenseNumber: '', phone: '', address: '', city: '', email: '', password: '', addedBy: 'platform' });
+      showToast('✅ تم إضافة الصيدلية وإنشاء حسابها');
+    } catch (err: any) {
+      showToast(`❌ ${err.message || 'حدث خطأ أثناء الإضافة'}`);
+    } finally {
+      setAddingSave(false);
+    }
   };
 
   const updateStatus = async (id: string, status: string) => {
@@ -185,8 +222,24 @@ export default function PharmaciesPage() {
       body: JSON.stringify({ email, newPassword: newPass, secret: SECRET }),
     });
     setResetting(false);
-    if (res.ok) { setResetDone(newPass); showToast('✅ تم تغيير كلمة المرور'); }
-    else showToast('❌ فشل تغيير كلمة المرور');
+    if (res.ok) {
+      setResetDone(newPass);
+      showToast('✅ تم تغيير كلمة المرور');
+      // Reactivate auth account and pharmacy status
+      await fetch(`${AUTH_API}/auth/admin/activate-user`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, secret: SECRET }),
+      }).catch(() => {});
+      if (resetTarget?.id) {
+        const patchRes = await fetch(`${PHARMACY_API}/pharmacies/admin/${resetTarget.id}/status`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'active' }),
+        }).catch(() => null);
+        if (patchRes?.ok) {
+          setPharmacies(prev => prev.map(p => p.id === resetTarget.id ? { ...p, status: 'active' } : p));
+        }
+      }
+    } else showToast('❌ فشل تغيير كلمة المرور');
   };
 
   const forceSignOut = async (pharmacy: any) => {
@@ -271,7 +324,7 @@ export default function PharmaciesPage() {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-500">لا توجد صيدليات</td></tr>
             ) : filtered.map((pharmacy: any) => {
-              const status = STATUS_LABELS[pharmacy.status] || STATUS_LABELS.pending_verification;
+              const status = STATUS_LABELS[pharmacy.status] || { label: pharmacy.status || 'معلق', color: 'bg-amber-100 text-amber-700' };
               return (
                 <tr key={pharmacy.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
@@ -286,8 +339,8 @@ export default function PharmaciesPage() {
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
                       <button onClick={() => setSelected(pharmacy)} title="عرض" className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg"><Eye className="w-4 h-4" /></button>
-                      {pharmacy.status === 'pending_verification' && <>
-                        <button onClick={() => updateStatus(pharmacy.id,'active')} title="موافقة" className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"><CheckCircle className="w-4 h-4" /></button>
+                      {(pharmacy.status === 'pending_verification' || pharmacy.status === 'inactive') && <>
+                        <button onClick={() => updateStatus(pharmacy.id,'active')} title="تفعيل" className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"><CheckCircle className="w-4 h-4" /></button>
                         <button onClick={() => updateStatus(pharmacy.id,'rejected')} title="رفض" className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"><XCircle className="w-4 h-4" /></button>
                       </>}
                       {pharmacy.status === 'active' && (
@@ -440,10 +493,28 @@ export default function PharmaciesPage() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                 </div>
               ))}
+              <hr className="border-gray-200" />
+              <p className="text-xs text-gray-500 font-medium">بيانات تسجيل الدخول للصيدلية</p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">البريد الإلكتروني *</label>
+                <input type="email" dir="ltr"
+                  value={addForm.email} onChange={e => setAddForm(f => ({...f, email: e.target.value}))}
+                  placeholder="pharmacy@example.com"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">كلمة المرور * (8 أحرف على الأقل)</label>
+                <input type="password" dir="ltr"
+                  value={addForm.password} onChange={e => setAddForm(f => ({...f, password: e.target.value}))}
+                  placeholder="••••••••"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+              </div>
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setShowAddModal(false)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-              <button onClick={handleAdd} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">إضافة</button>
+              <button onClick={handleAdd} disabled={addingSave} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm disabled:opacity-60">
+                {addingSave ? 'جاري الإضافة...' : 'إضافة'}
+              </button>
             </div>
           </div>
         </div>

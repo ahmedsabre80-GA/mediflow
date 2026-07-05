@@ -4,28 +4,24 @@ import { Send, Bell, Building2, Users, Search, X, CheckCircle, RefreshCw, Messag
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
-interface Pharmacy { id: string; name: string; name_ar: string; phone: string; city: string; }
-interface SentMsg   { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
+type Mode = 'broadcast' | 'specific';
 
-const RECIPIENT_GROUPS = [
-  { key: 'all_pharmacies', label: 'جميع الصيدليات',   icon: Building2, portalTypes: ['pharmacy'], recipientId: 'broadcast', adminVisible: true },
-  { key: 'specific',       label: 'صيدلية محددة',     icon: Search,    portalTypes: ['pharmacy'], recipientId: '',          adminVisible: true },
-  { key: 'employees',      label: 'موظفو المستودع',   icon: Users,     portalTypes: ['warehouse-internal'], recipientId: 'broadcast', adminVisible: false },
-];
+interface Pharmacy { id: string; name: string; name_ar: string; phone: string; city: string; }
+interface SentMsg  { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
 
 export default function WarehouseMessagesPage() {
-  const [selectedGroup, setSelectedGroup]   = useState('all_pharmacies');
+  const [mode,    setMode]    = useState<Mode>('broadcast');
   const [title,   setTitle]   = useState('');
   const [body,    setBody]    = useState('');
   const [sending, setSending] = useState(false);
   const [toast,   setToast]   = useState('');
   const [tab,     setTab]     = useState<'compose' | 'sent'>('compose');
 
-  // Specific pharmacy search
-  const [pharmacies,   setPharmacies]   = useState<Pharmacy[]>([]);
-  const [userSearch,   setUserSearch]   = useState('');
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [selectedPh,   setSelectedPh]   = useState<Pharmacy | null>(null);
+  // Multi-select specific pharmacies
+  const [pharmacies,    setPharmacies]    = useState<Pharmacy[]>([]);
+  const [selectedPharm, setSelectedPharm] = useState<Pharmacy[]>([]);
+  const [userSearch,    setUserSearch]    = useState('');
+  const [showDropdown,  setShowDropdown]  = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
   // Sent messages
@@ -33,8 +29,8 @@ export default function WarehouseMessagesPage() {
   const [sentLoading,  setSentLoading]  = useState(false);
 
   const warehouseName = typeof window !== 'undefined'
-    ? (localStorage.getItem('warehouse-name') || 'مستودع ميديفلو')
-    : 'مستودع ميديفلو';
+    ? (localStorage.getItem('warehouse-name') || 'مستودع')
+    : 'مستودع';
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000); };
 
@@ -51,7 +47,6 @@ export default function WarehouseMessagesPage() {
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];
-        // Warehouse only sees messages it sent (sender_name matches or portal_type is warehouse-internal)
         setSentMessages(all.filter((m: SentMsg) =>
           m.sender_name === warehouseName || m.portal_type === 'warehouse-internal'
         ));
@@ -70,50 +65,46 @@ export default function WarehouseMessagesPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filteredPharmacies = pharmacies.filter(p =>
-    (p.name_ar || p.name || '').toLowerCase().includes(userSearch.toLowerCase()) ||
-    (p.phone || '').includes(userSearch) ||
-    (p.city || '').toLowerCase().includes(userSearch.toLowerCase())
-  ).slice(0, 8);
+  const filteredPharm = pharmacies.filter(p => {
+    const q = userSearch.toLowerCase();
+    return (p.name_ar || p.name || '').toLowerCase().includes(q) ||
+      (p.city || '').toLowerCase().includes(q) ||
+      (p.phone || '').includes(q);
+  }).slice(0, 10);
+
+  const togglePharm = (p: Pharmacy) => {
+    setSelectedPharm(prev =>
+      prev.find(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, p]
+    );
+  };
 
   const handleSend = async () => {
     if (!title.trim() || !body.trim()) { showToast('⚠️ يرجى كتابة العنوان والرسالة'); return; }
-    if (selectedGroup === 'specific' && !selectedPh) { showToast('⚠️ يرجى اختيار الصيدلية'); return; }
+    if (mode === 'specific' && selectedPharm.length === 0) { showToast('⚠️ يرجى اختيار صيدلية واحدة على الأقل'); return; }
 
     setSending(true);
     const fullMessage = `${title}\n\n${body}`;
-    const group = RECIPIENT_GROUPS.find(g => g.key === selectedGroup)!;
 
     try {
-      if (selectedGroup === 'specific' && selectedPh) {
-        await fetch(`${PHARMACY_API}/portal-notifications`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            portalType: 'pharmacy',
-            recipientId: selectedPh.id,
-            senderName: warehouseName,
-            message: fullMessage,
-          }),
-        });
+      if (mode === 'specific') {
+        await Promise.all(selectedPharm.map(p =>
+          fetch(`${PHARMACY_API}/portal-notifications`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ portalType: 'pharmacy', recipientId: p.id, senderName: warehouseName, message: fullMessage }),
+          })
+        ));
+        showToast(`✅ تم الإرسال إلى ${selectedPharm.length} صيدلية بنجاح`);
       } else {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            portalTypes: group.portalTypes,
-            recipientId: group.recipientId,
-            senderName: warehouseName,
-            message: fullMessage,
-          }),
+          body: JSON.stringify({ portalTypes: ['pharmacy'], recipientId: 'broadcast', senderName: warehouseName, message: fullMessage }),
         });
+        showToast('✅ تم الإرسال إلى جميع الصيدليات بنجاح');
       }
 
-      const label = selectedGroup === 'specific'
-        ? (selectedPh?.name_ar || selectedPh?.name)
-        : group.label;
-      showToast(`✅ تم الإرسال إلى ${label} بنجاح`);
-      setTitle(''); setBody(''); setSelectedPh(null); setUserSearch('');
+      setTitle(''); setBody(''); setSelectedPharm([]); setUserSearch('');
       setTab('sent');
     } catch {
       showToast('❌ فشل الإرسال، يرجى المحاولة مجدداً');
@@ -122,11 +113,7 @@ export default function WarehouseMessagesPage() {
     }
   };
 
-  const portalLabel = (t: string) => ({
-    pharmacy: 'صيدلية', 'warehouse-internal': 'موظفو المستودع',
-  }[t] || t);
-
-  const currentGroup = RECIPIENT_GROUPS.find(g => g.key === selectedGroup);
+  const canSend = title && body && (mode === 'broadcast' || selectedPharm.length > 0);
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -134,7 +121,7 @@ export default function WarehouseMessagesPage() {
 
       <div>
         <h1 className="text-2xl font-bold text-gray-900">الرسائل</h1>
-        <p className="text-sm text-gray-500 mt-1">أرسل إشعارات للصيدليات أو موظفي المستودع</p>
+        <p className="text-sm text-gray-500 mt-1">أرسل إشعارات للصيدليات</p>
       </div>
 
       {/* Tabs */}
@@ -149,86 +136,108 @@ export default function WarehouseMessagesPage() {
 
       {tab === 'compose' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recipients */}
+          {/* Left: Recipients */}
           <div className="space-y-5">
             <div className="bg-white rounded-2xl shadow-sm p-5">
               <h2 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
                 <Bell className="w-5 h-5 text-amber-500" /> المستلمون
               </h2>
-              <div className="space-y-2">
-                {RECIPIENT_GROUPS.map(group => {
-                  const Icon = group.icon;
-                  const selected = selectedGroup === group.key;
-                  return (
-                    <button key={group.key} onClick={() => { setSelectedGroup(group.key); setSelectedPh(null); setUserSearch(''); }}
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-right ${selected ? 'border-amber-500 bg-amber-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                      <Icon className={`w-4 h-4 shrink-0 ${selected ? 'text-amber-600' : 'text-gray-400'}`} />
-                      <div className="flex-1 text-right">
-                        <p className="text-sm font-medium text-gray-800">{group.label}</p>
-                        {group.adminVisible && (
-                          <p className="text-xs text-gray-400">مرئي للإدارة</p>
-                        )}
-                      </div>
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${selected ? 'bg-amber-500 border-amber-500' : 'border-gray-300'}`}>
-                        {selected && <span className="w-2 h-2 bg-white rounded-full block" />}
-                      </div>
-                    </button>
-                  );
-                })}
+
+              {/* Mode toggle */}
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button onClick={() => setMode('broadcast')}
+                  className={`py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${mode === 'broadcast' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                  <Users className="w-4 h-4 inline ml-1" />
+                  الكل
+                </button>
+                <button onClick={() => setMode('specific')}
+                  className={`py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${mode === 'specific' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                  <Search className="w-4 h-4 inline ml-1" />
+                  تحديد
+                </button>
               </div>
 
-              {/* Specific pharmacy search */}
-              {selectedGroup === 'specific' && (
-                <div className="mt-3 relative" ref={searchRef}>
-                  {selectedPh ? (
-                    <div className="flex items-center gap-2 p-3 bg-amber-50 rounded-xl border-2 border-amber-500">
-                      <Building2 className="w-4 h-4 text-amber-600 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-amber-800 truncate">{selectedPh.name_ar || selectedPh.name}</p>
-                        <p className="text-xs text-amber-600">{selectedPh.city} · {selectedPh.phone}</p>
-                      </div>
-                      <button onClick={() => { setSelectedPh(null); setUserSearch(''); }}
-                        className="text-amber-400 hover:text-amber-600"><X className="w-4 h-4" /></button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="relative">
-                        <Search className="absolute right-3 top-3 w-4 h-4 text-gray-400" />
-                        <input value={userSearch} onChange={e => { setUserSearch(e.target.value); setShowDropdown(true); }}
-                          onFocus={() => setShowDropdown(true)}
-                          placeholder="ابحث عن صيدلية..."
-                          className="w-full pr-9 pl-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                      </div>
-                      {showDropdown && userSearch && (
-                        <div className="absolute top-full right-0 left-0 mt-1 bg-white rounded-xl shadow-lg border z-10 max-h-48 overflow-y-auto">
-                          {filteredPharmacies.length === 0 ? (
-                            <p className="text-xs text-gray-400 text-center py-3">لا توجد نتائج</p>
-                          ) : filteredPharmacies.map(p => (
-                            <button key={p.id} onClick={() => { setSelectedPh(p); setUserSearch(''); setShowDropdown(false); }}
-                              className="w-full text-right px-4 py-2.5 hover:bg-amber-50 border-b last:border-0">
-                              <p className="text-sm font-medium text-gray-800">{p.name_ar || p.name}</p>
-                              <p className="text-xs text-gray-500">{p.city} · {p.phone}</p>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
+              {/* Broadcast info */}
+              {mode === 'broadcast' && (
+                <div className="flex items-center gap-3 p-3 rounded-xl border-2 border-amber-500 bg-amber-50">
+                  <Building2 className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">جميع الصيدليات</p>
+                    <p className="text-xs text-amber-600">{pharmacies.length} صيدلية نشطة</p>
+                  </div>
                 </div>
               )}
 
-              {/* Visibility note */}
-              {currentGroup && (
-                <div className={`mt-3 p-3 rounded-xl text-xs ${currentGroup.adminVisible ? 'bg-blue-50 text-blue-700' : 'bg-gray-50 text-gray-600'}`}>
-                  {currentGroup.adminVisible
-                    ? '📋 هذه الرسالة ستظهر لإدارة المنصة في سجل الرسائل'
-                    : '🔒 هذه الرسالة خاصة بموظفي المستودع فقط'}
+              {/* Multi-select specific */}
+              {mode === 'specific' && (
+                <div className="space-y-3" ref={searchRef}>
+                  <div className="relative">
+                    <Search className="absolute right-3 top-3 w-4 h-4 text-gray-400" />
+                    <input value={userSearch}
+                      onChange={e => { setUserSearch(e.target.value); setShowDropdown(true); }}
+                      onFocus={() => setShowDropdown(true)}
+                      placeholder="ابحث عن صيدلية..."
+                      className="w-full pr-9 pl-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    {userSearch && (
+                      <button onClick={() => { setUserSearch(''); setShowDropdown(false); }}
+                        className="absolute left-3 top-3 text-gray-400 hover:text-gray-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Dropdown */}
+                  {showDropdown && (userSearch || filteredPharm.length > 0) && (
+                    <div className="absolute z-20 mt-1 bg-white rounded-xl shadow-lg border max-h-56 overflow-y-auto w-64">
+                      {filteredPharm.length === 0 ? (
+                        <p className="text-xs text-gray-400 text-center py-3">لا توجد نتائج</p>
+                      ) : filteredPharm.map(p => {
+                        const isSel = !!selectedPharm.find(x => x.id === p.id);
+                        return (
+                          <button key={p.id} onClick={() => togglePharm(p)}
+                            className={`w-full text-right px-4 py-2.5 border-b last:border-0 transition-colors flex items-center gap-3 ${isSel ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${isSel ? 'bg-amber-500 border-amber-500' : 'border-gray-300'}`}>
+                              {isSel && <span className="text-white text-xs">✓</span>}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{p.name_ar || p.name}</p>
+                              <p className="text-xs text-gray-500">{p.city} · {p.phone}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Selected chips */}
+                  {selectedPharm.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500">المحددة ({selectedPharm.length})</span>
+                        <button onClick={() => setSelectedPharm([])} className="text-xs text-red-500 hover:text-red-700">إلغاء الكل</button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                        {selectedPharm.map(p => (
+                          <div key={p.id} className="flex items-center gap-1.5 bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg text-xs font-medium">
+                            <span className="truncate max-w-24">{p.name_ar || p.name}</span>
+                            <button onClick={() => togglePharm(p)} className="hover:opacity-70 shrink-0">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedPharm.length === 0 && !userSearch && (
+                    <p className="text-xs text-gray-400 text-center py-2">ابحث واختر صيدلية أو أكثر</p>
+                  )}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Message composer */}
+          {/* Right: Message composer */}
           <div className="lg:col-span-2 space-y-5">
             <div className="bg-white rounded-2xl shadow-sm p-5">
               <h2 className="font-bold text-gray-900 mb-4">محتوى الرسالة</h2>
@@ -254,20 +263,23 @@ export default function WarehouseMessagesPage() {
               <div className="bg-white rounded-2xl shadow-sm p-5">
                 <h3 className="font-bold text-gray-900 mb-3">معاينة الرسالة</h3>
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
                     <Bell className="w-4 h-4" />
                     <span>من: {warehouseName}</span>
                     <span>•</span>
-                    <span>إلى: {selectedGroup === 'specific' ? (selectedPh?.name_ar || selectedPh?.name || 'لم يُحدد') : currentGroup?.label}</span>
+                    <span>إلى: {mode === 'broadcast'
+                      ? 'جميع الصيدليات'
+                      : selectedPharm.length === 0 ? 'لم يُحدد بعد'
+                      : selectedPharm.length === 1 ? (selectedPharm[0].name_ar || selectedPharm[0].name)
+                      : `${selectedPharm.length} صيدليات`}</span>
                   </div>
                   {title && <p className="font-bold text-gray-900">{title}</p>}
-                  {body && <p className="text-sm text-gray-700 leading-relaxed">{body}</p>}
+                  {body  && <p className="text-sm text-gray-700 leading-relaxed">{body}</p>}
                 </div>
               </div>
             )}
 
-            <button onClick={handleSend}
-              disabled={sending || !title || !body || (selectedGroup === 'specific' && !selectedPh)}
+            <button onClick={handleSend} disabled={sending || !canSend}
               className="w-full flex items-center justify-center gap-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-2xl text-base transition-colors shadow-lg">
               {sending ? (
                 <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> جاري الإرسال...</>
@@ -302,14 +314,13 @@ export default function WarehouseMessagesPage() {
             return (
               <div key={msg.id} className="bg-white rounded-2xl shadow-sm p-5">
                 <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <CheckCircle className="w-4 h-4 text-green-500" />
                     <span className="text-xs bg-green-100 text-green-700 font-medium px-2.5 py-1 rounded-full">تم الإرسال</span>
-                    <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">{portalLabel(msg.portal_type)}</span>
                     {msg.recipient_id === 'broadcast' && <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full">بث عام</span>}
                     {msg.is_read && <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full">مقروءة</span>}
                   </div>
-                  <span className="text-xs text-gray-400">{new Date(msg.created_at).toLocaleString('ar-IQ')}</span>
+                  <span className="text-xs text-gray-400 shrink-0">{new Date(msg.created_at).toLocaleString('ar-IQ')}</span>
                 </div>
                 <p className="font-bold text-gray-900 text-sm">{firstLine}</p>
                 {rest && <p className="text-sm text-gray-600 mt-1 leading-relaxed">{rest}</p>}

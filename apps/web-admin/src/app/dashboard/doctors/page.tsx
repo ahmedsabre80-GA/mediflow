@@ -239,16 +239,16 @@ export default function DoctorsPage() {
         <table className="w-full">
           <thead className="bg-gray-50 border-b">
             <tr>
-              {['الطبيب','التخصص','البريد الإلكتروني','الترخيص','حالة الطلب','حالة الحساب','إجراءات'].map(h => (
+              {['الطبيب','التخصص','البريد الإلكتروني','الترخيص','الحالة','إجراءات'].map(h => (
                 <th key={h} className="px-4 py-3 text-right text-xs font-semibold text-gray-500">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              [...Array(3)].map((_, i) => <tr key={i}>{[...Array(7)].map((_, j) => <td key={j} className="px-4 py-4"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>)}</tr>)
+              [...Array(3)].map((_, i) => <tr key={i}>{[...Array(6)].map((_, j) => <td key={j} className="px-4 py-4"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>)}</tr>)
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-500">لا يوجد أطباء مسجلون</td></tr>
+              <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">لا يوجد أطباء مسجلون</td></tr>
             ) : filtered.map(doc => {
               const status = STATUS_LABELS[doc.status] || STATUS_LABELS.pending;
               const isSuspended = doc.authStatus === 'suspended';
@@ -265,9 +265,6 @@ export default function DoctorsPage() {
                   <td className="px-4 py-3 text-sm text-gray-600">{doc.employee_role || '—'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">{doc.employee_email || '—'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">{doc.reason?.replace('رقم الترخيص: ','') || '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${status.color}`}>{status.label}</span>
-                  </td>
                   <td className="px-4 py-3">
                     {doc.authStatus ? (
                       <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${

@@ -7,21 +7,19 @@ const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const SECRET = 'mediflow-delete-2026';
 
 // Roles considered "employees" — added by portals, not main owners
-const EMPLOYEE_ROLES = ['pharmacy_employee', 'warehouse_employee', 'doctor_assistant', 'driver', 'patient'];
+const EMPLOYEE_ROLES = ['pharmacy_employee', 'warehouse_employee', 'doctor_assistant', 'driver'];
 
 const ROLE_LABEL: Record<string, string> = {
   pharmacy_employee:  'موظف صيدلية',
   warehouse_employee: 'موظف مستودع',
   doctor_assistant:   'مساعد طبيب',
   driver:             'سائق',
-  patient:            'مريض',
 };
 const ROLE_COLOR: Record<string, string> = {
   pharmacy_employee:  'bg-sky-100 text-sky-700',
   warehouse_employee: 'bg-purple-100 text-purple-700',
   doctor_assistant:   'bg-teal-100 text-teal-700',
   driver:             'bg-orange-100 text-orange-700',
-  patient:            'bg-gray-100 text-gray-600',
 };
 const STATUS_COLOR: Record<string, string> = {
   active:               'bg-green-100 text-green-700',
@@ -192,7 +190,6 @@ export default function UsersPage() {
     { key: 'pharmacy_employee', label: 'موظفو الصيدليات' },
     { key: 'warehouse_employee', label: 'موظفو المستودعات' },
     { key: 'driver', label: 'السائقون' },
-    { key: 'patient', label: 'المرضى' },
   ];
 
   return (

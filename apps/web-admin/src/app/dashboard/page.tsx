@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Users, Building2, ShoppingCart, TrendingUp, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import Link from 'next/link';
+import { Users, Building2, ShoppingCart, TrendingUp, AlertTriangle, CheckCircle, Clock, HeartPulse } from 'lucide-react';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
@@ -23,11 +24,11 @@ function StatCard({ title, value, icon: Icon, color, subtitle }: any) {
 export default function AdminDashboard() {
   const [stats, setStats] = useState({ users: 0, pharmacies: 0, orders: 0, revenue: 0 });
   const [pendingPharmacies, setPendingPharmacies] = useState<any[]>([]);
+  const [pendingPatients,   setPendingPatients]   = useState<any[]>([]);
+  const [patientCounts,     setPatientCounts]     = useState({ total: 0, pending: 0, approved: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('admin-token') : '';
-
     // Load pending pharmacies
     fetch(`${PHARMACY_API}/pharmacies/nearby?lat=33.31&lng=44.36&radiusKm=999`)
       .then(r => r.json())
@@ -38,13 +39,27 @@ export default function AdminDashboard() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Load patient stats
+    fetch(`${PHARMACY_API}/pharmacies/admin-requests?portal_type=patient`)
+      .then(r => r.json())
+      .then(d => {
+        const all = d.data || [];
+        setPatientCounts({
+          total:    all.length,
+          pending:  all.filter((p: any) => p.status === 'pending').length,
+          approved: all.filter((p: any) => p.status === 'approved').length,
+        });
+        setPendingPatients(all.filter((p: any) => p.status === 'pending').slice(0, 5));
+      })
+      .catch(() => {});
   }, []);
 
   const kpis = [
-    { title: 'إجمالي المستخدمين', value: stats.users || '—', icon: Users, color: 'bg-sky-500', subtitle: 'مستخدم مسجل' },
-    { title: 'الصيدليات النشطة', value: stats.pharmacies || '—', icon: Building2, color: 'bg-teal-500', subtitle: 'صيدلية مسجلة' },
-    { title: 'إجمالي الطلبات', value: stats.orders || '—', icon: ShoppingCart, color: 'bg-indigo-500', subtitle: 'طلب منجز' },
-    { title: 'الإيرادات', value: '—', icon: TrendingUp, color: 'bg-amber-500', subtitle: 'دينار عراقي' },
+    { title: 'إجمالي المستخدمين', value: stats.users || '—',        icon: Users,       color: 'bg-sky-500',    subtitle: 'مستخدم مسجل' },
+    { title: 'الصيدليات النشطة', value: stats.pharmacies || '—',    icon: Building2,   color: 'bg-teal-500',   subtitle: 'صيدلية مسجلة' },
+    { title: 'المرضى المسجلون',  value: patientCounts.total || '—', icon: HeartPulse,  color: 'bg-rose-500',   subtitle: `${patientCounts.pending} بانتظار الموافقة` },
+    { title: 'الإيرادات',        value: '—',                        icon: TrendingUp,  color: 'bg-amber-500',  subtitle: 'دينار عراقي' },
   ];
 
   return (
@@ -96,16 +111,41 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Platform Alerts */}
+        {/* Pending Patients */}
         <div className="bg-white rounded-2xl shadow-sm">
-          <div className="px-6 py-4 border-b">
-            <h2 className="font-bold text-gray-900">تنبيهات المنصة</h2>
+          <div className="px-6 py-4 border-b flex items-center justify-between">
+            <Link href="/dashboard/patients" className="text-sm text-sky-600 hover:underline">عرض الكل</Link>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-gray-900">طلبات تسجيل المرضى</h2>
+              {patientCounts.pending > 0 && (
+                <span className="bg-rose-100 text-rose-700 text-xs font-medium px-2.5 py-1 rounded-full">
+                  {patientCounts.pending} بانتظار
+                </span>
+              )}
+            </div>
           </div>
           <div className="p-6">
-            <div className="text-center py-8 text-gray-400">
-              <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-2" />
-              <p>لا توجد تنبيهات حالياً</p>
-            </div>
+            {pendingPatients.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-2" />
+                <p>لا توجد طلبات معلقة</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pendingPatients.map((p: any) => (
+                  <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                    <div>
+                      <p className="font-medium text-gray-900 text-sm">{p.requester_name}</p>
+                      <p className="text-xs text-gray-500">{p.requester_entity}</p>
+                    </div>
+                    <Link href="/dashboard/patients"
+                      className="text-xs bg-sky-500 text-white px-3 py-1.5 rounded-lg hover:bg-sky-600">
+                      مراجعة
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -116,9 +156,9 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'مراجعة الصيدليات', href: '/dashboard/pharmacies', color: 'bg-sky-50 text-sky-700 hover:bg-sky-100' },
-            { label: 'إدارة المستخدمين', href: '/dashboard/users', color: 'bg-teal-50 text-teal-700 hover:bg-teal-100' },
-            { label: 'عرض التحليلات', href: '/dashboard/analytics', color: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' },
-            { label: 'سجل المراقبة', href: '/dashboard/audit', color: 'bg-amber-50 text-amber-700 hover:bg-amber-100' },
+            { label: 'إدارة المرضى',     href: '/dashboard/patients',  color: 'bg-rose-50 text-rose-700 hover:bg-rose-100' },
+            { label: 'إدارة المستخدمين', href: '/dashboard/users',      color: 'bg-teal-50 text-teal-700 hover:bg-teal-100' },
+            { label: 'سجل المراقبة',     href: '/dashboard/audit',      color: 'bg-amber-50 text-amber-700 hover:bg-amber-100' },
           ].map((action) => (
             <a key={action.label} href={action.href}
               className={`${action.color} p-4 rounded-xl text-center text-sm font-medium transition-colors`}>

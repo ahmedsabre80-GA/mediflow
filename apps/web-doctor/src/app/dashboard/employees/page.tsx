@@ -54,12 +54,14 @@ export default function DoctorEmployeesPage() {
   const [requesterName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('doctor-name') || 'الطبيب' : 'الطبيب');
 
   useEffect(() => {
-    fetch(`${API}/admin-requests?requester_id=${requesterId}`)
+    // Filter strictly by portal_type AND action_type to avoid matching unrelated records
+    fetch(`${API}/admin-requests?portal_type=doctor&requester_id=${requesterId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success && Array.isArray(d.data)) {
-          setRequests(d.data);
-          const approved = d.data.find((r: AdminRequest) => r.action_type === 'add_employee' && r.status === 'approved');
+          const doctorReqs = d.data.filter((r: AdminRequest) => r.action_type === 'add_employee' || r.action_type === 'remove_employee');
+          setRequests(doctorReqs);
+          const approved = doctorReqs.find((r: AdminRequest) => r.action_type === 'add_employee' && r.status === 'approved');
           setApprovedRequestId(approved?.id || null);
         }
       }).catch(() => {});

@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { Search, Eye, EyeOff, Key, Shield, Plus, Trash2, Ban, CheckCircle, X, Copy } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, Eye, EyeOff, Key, Shield, Plus, Trash2, Ban, CheckCircle, X, Copy, UserCircle, Mail } from 'lucide-react';
 import { logAction } from '@/lib/auditSystem';
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
@@ -133,6 +133,18 @@ export default function TeamPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [currentAdminEmail, setCurrentAdminEmail] = useState('');
+  const [substituteEmail, setSubstituteEmail] = useState('');
+  const [editingSubEmail, setEditingSubEmail] = useState(false);
+  const [subEmailInput, setSubEmailInput] = useState('');
+
+  useEffect(() => {
+    const email = localStorage.getItem('admin-email') || '';
+    setCurrentAdminEmail(email);
+    const sub = localStorage.getItem('admin-substitute-email') || '';
+    setSubstituteEmail(sub);
+    setSubEmailInput(sub);
+  }, []);
 
   const [addForm, setAddForm] = useState({
     name: '', email: '', role: 'assistant', password: '',
@@ -140,6 +152,13 @@ export default function TeamPage() {
   });
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
+
+  const saveSubstituteEmail = () => {
+    localStorage.setItem('admin-substitute-email', subEmailInput);
+    setSubstituteEmail(subEmailInput);
+    setEditingSubEmail(false);
+    showToast('✅ تم حفظ البريد الاحتياطي');
+  };
   const togglePassword = (id: string) => setShowPasswords(prev => ({ ...prev, [id]: !prev[id] }));
   const copyPassword = (pw: string) => { navigator.clipboard?.writeText(pw); showToast('✅ تم نسخ كلمة المرور'); };
 
@@ -282,11 +301,17 @@ export default function TeamPage() {
           const roleInfo = getRoleInfo(member.role);
           const showPass = showPasswords[member.id];
           const permCount = member.permissions?.length || 0;
+          const isSelf = currentAdminEmail && member.email === currentAdminEmail;
           return (
-            <div key={member.id} className={`bg-white rounded-2xl shadow-sm p-5 ${member.status === 'suspended' ? 'opacity-75 border border-red-100' : ''}`}>
+            <div key={member.id} className={`bg-white rounded-2xl shadow-sm p-5 ${member.status === 'suspended' ? 'opacity-75 border border-red-100' : ''} ${isSelf ? 'ring-2 ring-sky-400' : ''}`}>
               <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${roleInfo.color}`}>{roleInfo.label}</span>
+                  {isSelf && (
+                    <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-sky-100 text-sky-700 flex items-center gap-1">
+                      <UserCircle className="w-3 h-3" /> أنت
+                    </span>
+                  )}
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${member.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                     {member.status === 'active' ? '● نشط' : '● موقوف'}
                   </span>
@@ -314,39 +339,78 @@ export default function TeamPage() {
                 </div>
               )}
 
-              {/* Password Row */}
-              <div className="bg-gray-50 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <button onClick={() => copyPassword(member.password)}
-                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg" title="نسخ">
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => setResetPasswordFor(member)}
-                    className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg">
-                    <Key className="w-3.5 h-3.5" /> إعادة تعيين
-                  </button>
+              {/* Password Row — hidden for self */}
+              {!isSelf && (
+                <div className="bg-gray-50 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => copyPassword(member.password)}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg" title="نسخ">
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setResetPasswordFor(member)}
+                      className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg">
+                      <Key className="w-3.5 h-3.5" /> إعادة تعيين
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 flex-1 justify-end">
+                    <code className="text-sm font-mono text-gray-800">{showPass ? member.password : '••••••••••'}</code>
+                    <button onClick={() => togglePassword(member.id)} className="text-gray-400 hover:text-gray-600">
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    <span className="text-xs text-gray-500">كلمة المرور:</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 flex-1 justify-end">
-                  <code className="text-sm font-mono text-gray-800">{showPass ? member.password : '••••••••••'}</code>
-                  <button onClick={() => togglePassword(member.id)} className="text-gray-400 hover:text-gray-600">
-                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                  <span className="text-xs text-gray-500">كلمة المرور:</span>
+              )}
+
+              {/* Substitute email row — only for self */}
+              {isSelf && (
+                <div className="bg-sky-50 border border-sky-100 rounded-xl p-3 mb-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      {editingSubEmail ? (
+                        <>
+                          <input type="email" dir="ltr" value={subEmailInput} onChange={e => setSubEmailInput(e.target.value)}
+                            placeholder="backup@example.com"
+                            className="px-3 py-1.5 border border-sky-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white w-52" />
+                          <button onClick={saveSubstituteEmail}
+                            className="text-xs bg-sky-500 text-white px-2.5 py-1.5 rounded-lg hover:bg-sky-600">حفظ</button>
+                          <button onClick={() => { setEditingSubEmail(false); setSubEmailInput(substituteEmail); }}
+                            className="text-xs text-gray-500 hover:text-gray-700">إلغاء</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm text-sky-800 font-mono dir-ltr">{substituteEmail || <span className="text-gray-400 italic text-xs">لم يُضَف بعد</span>}</span>
+                          <button onClick={() => setEditingSubEmail(true)}
+                            className="text-xs text-sky-600 hover:underline">تعديل</button>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-sky-500" />
+                      <span className="text-xs font-medium text-sky-700">البريد الاحتياطي</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-sky-600">يُستخدم كبديل عند استعادة كلمة المرور</p>
                 </div>
-              </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center justify-between">
                 <div className="flex gap-2">
-                  <button onClick={() => toggleStatus(member.id)}
-                    className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors ${member.status === 'active' ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-green-50 text-green-700 hover:bg-green-100'}`}>
-                    {member.status === 'active' ? <><Ban className="w-3.5 h-3.5" /> إيقاف</> : <><CheckCircle className="w-3.5 h-3.5" /> تفعيل</>}
-                  </button>
-                  {member.role !== 'super_admin' && (
-                    <button onClick={() => setConfirmDelete(member.id)}
-                      className="flex items-center gap-1.5 text-xs bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg">
-                      <Trash2 className="w-3.5 h-3.5" /> حذف
-                    </button>
+                  {/* Never show إيقاف or delete for own account */}
+                  {!isSelf && (
+                    <>
+                      <button onClick={() => toggleStatus(member.id)}
+                        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors ${member.status === 'active' ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-green-50 text-green-700 hover:bg-green-100'}`}>
+                        {member.status === 'active' ? <><Ban className="w-3.5 h-3.5" /> إيقاف</> : <><CheckCircle className="w-3.5 h-3.5" /> تفعيل</>}
+                      </button>
+                      {member.role !== 'super_admin' && (
+                        <button onClick={() => setConfirmDelete(member.id)}
+                          className="flex items-center gap-1.5 text-xs bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg">
+                          <Trash2 className="w-3.5 h-3.5" /> حذف
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
                 <p className="text-xs text-gray-400">أُضيف: {member.createdAt}</p>

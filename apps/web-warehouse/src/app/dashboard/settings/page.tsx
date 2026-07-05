@@ -36,12 +36,33 @@ export default function WarehouseSettingsPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleSave = () => {
-    if (config) {
-      saveConfig(config);
-      setSaved(true);
-      setTimeout(() => { setSaved(false); window.location.reload(); }, 1200);
-    }
+  const handleSave = async () => {
+    if (!config) return;
+    saveConfig(config);
+    // Sync warehouse name to admin_requests so admin portal stays current
+    try {
+      const token = localStorage.getItem('warehouse-token');
+      const userId = localStorage.getItem('warehouse-user-id');
+      if (userId) {
+        const reqsRes = await fetch(
+          `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests?portal_type=warehouse&requester_id=${userId}`
+        );
+        const reqsData = await reqsRes.json();
+        const record = reqsData.data?.[0];
+        if (record?.id) {
+          await fetch(
+            `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests/${record.id}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ requester_entity: config.name }),
+            }
+          );
+        }
+      }
+    } catch { /* silent — name sync is best-effort */ }
+    setSaved(true);
+    setTimeout(() => { setSaved(false); window.location.reload(); }, 1200);
   };
 
   if (!config) return null;

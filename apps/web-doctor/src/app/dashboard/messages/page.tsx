@@ -5,7 +5,7 @@ import { Send, Users, UserCheck, CheckCircle, RefreshCw, MessageCircle, Bell } f
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 interface Employee { id: string; name: string; role: string; status: string; }
-interface SentMsg  { id: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
+interface SentMsg  { id: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; portal_type?: string; }
 
 const ROLE_LABELS: Record<string, string> = {
   receptionist: 'موظف استقبال', nurse: 'ممرض/ة', assistant: 'مساعد طبي',

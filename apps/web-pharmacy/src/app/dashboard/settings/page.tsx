@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Save, Truck, Store, Calculator, Upload, X, MapPin, Clock, Navigation, Send, Lock, Palette, FileText, Globe } from 'lucide-react';
+import { Save, Truck, Store, Calculator, Upload, X, MapPin, Clock, Navigation, Send, Lock, Palette, FileText, Globe, KeyRound } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -33,6 +33,53 @@ const DAYS_AR = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأرب
 const LocationMap = dynamic(() => import('@/components/LocationMap'), { ssr: false, loading: () => (
   <div className="w-full h-64 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm">جاري تحميل الخريطة...</div>
 )});
+
+function PasswordResetRequest({ pharmacyName, settingsObj }: { pharmacyName: string; settingsObj: any }) {
+  const [sending, setSending] = useState(false);
+  const [sent,    setSent]    = useState(false);
+
+  const handleRequest = async () => {
+    setSending(true);
+    try {
+      const pharmacyId = localStorage.getItem('pharmacy-id') || '';
+      const email      = localStorage.getItem('pharmacy-email') || settingsObj.email || '';
+      const name       = pharmacyName || localStorage.getItem('pharmacy-name') || 'صيدلية';
+      await fetch('https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portalType: 'admin',
+          recipientId: 'admin',
+          senderName: name,
+          message: `🔑 طلب إعادة تعيين كلمة المرور\n━━━━━━━━━━━━━━━\nالصيدلية: ${name}\nالبريد الإلكتروني: ${email}\n[reset_password_request]\n[pharmacy_id:${pharmacyId}]\n[pharmacy_email:${email}]`,
+        }),
+      });
+      setSent(true);
+      setTimeout(() => setSent(false), 4000);
+    } catch {}
+    setSending(false);
+  };
+
+  return (
+    <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
+      <h3 className="font-bold text-gray-900 flex items-center gap-2"><KeyRound className="w-5 h-5 text-orange-500" /> إعادة تعيين كلمة المرور</h3>
+      <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-xs text-orange-700">
+        إذا نسيت كلمة المرور أو تريد تغييرها، أرسل طلباً للإدارة وسيتم إرسال كلمة مرور مؤقتة إليك.
+      </div>
+      {sent ? (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 font-medium text-center">
+          ✓ تم إرسال الطلب — ستتلقى كلمة المرور الجديدة قريباً
+        </div>
+      ) : (
+        <button onClick={handleRequest} disabled={sending}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white rounded-xl text-sm font-medium transition-colors">
+          {sending ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <KeyRound className="w-4 h-4" />}
+          {sending ? 'جاري الإرسال...' : 'طلب إعادة تعيين كلمة المرور'}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [saved,         setSaved]         = useState(false);
@@ -358,6 +405,9 @@ export default function SettingsPage() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm" />
             </div>
           </div>
+
+          {/* Password reset request */}
+          <PasswordResetRequest pharmacyName={settings.name} settingsObj={settings} />
 
           {/* Extra info */}
           <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">

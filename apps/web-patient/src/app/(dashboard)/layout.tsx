@@ -2,11 +2,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle } from 'lucide-react';
+import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle, CalendarDays } from 'lucide-react';
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const CANCELLED_KEY = 'mediflow-cancelled-orders';
+const REMINDERS_KEY = 'mediflow-appt-reminders';
 
 const CANCEL_REASONS = [
   'وجدت الدواء في صيدلية أخرى',
@@ -17,10 +18,11 @@ const CANCEL_REASONS = [
 ];
 
 const NAV = [
-  { href: '/dashboard', icon: LayoutDashboard, label: 'الرئيسية' },
-  { href: '/search',    icon: Search,          label: 'بحث' },
-  { href: '/doctors',   icon: Stethoscope,     label: 'أطباء' },
-  { href: '/orders',    icon: Package,         label: 'طلباتي' },
+  { href: '/dashboard',      icon: LayoutDashboard, label: 'الرئيسية' },
+  { href: '/search',         icon: Search,          label: 'بحث' },
+  { href: '/doctors',        icon: Stethoscope,     label: 'أطباء' },
+  { href: '/appointments',   icon: CalendarDays,    label: 'مواعيدي' },
+  { href: '/orders',         icon: Package,         label: 'طلباتي' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -45,6 +47,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setNotifs(data);
   }, []);
 
+  const checkReminders = useCallback(async (uid: string) => {
+    if (!uid) return;
+    const stored: any[] = JSON.parse(localStorage.getItem(REMINDERS_KEY) || '[]');
+    if (!stored.length) return;
+    const now = Date.now();
+    let changed = false;
+    for (const appt of stored) {
+      const [h, m] = (appt.prefTime || '09:00').split(':').map(Number);
+      const apptTime = new Date(appt.date + 'T00:00:00').getTime() + h * 3600000 + m * 60000;
+      for (const hrs of (appt.hours as number[])) {
+        const key = `${hrs}h`;
+        if (appt.sent.includes(key)) continue;
+        const fireAt = apptTime - hrs * 3600000;
+        if (now >= fireAt && now < fireAt + 3600000) {
+          const label = hrs === 24 ? 'غداً' : hrs === 6 ? 'بعد 6 ساعات' : 'بعد ساعتين';
+          await fetch(`${PHARMACY_API}/portal-notifications`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              portalType: 'patient',
+              recipientId: uid,
+              senderName: 'ميديفلو',
+              message: `🔔 تذكير بموعدك\nلديك موعد مع ${appt.doctorName} ${label}\nالتاريخ: ${appt.date}${appt.prefTime ? '\nالوقت: ' + appt.prefTime : ''}`,
+            }),
+          }).catch(() => {});
+          appt.sent.push(key);
+          changed = true;
+        }
+      }
+    }
+    // Remove past appointments (> 1 day old)
+    const filtered = stored.filter(a => new Date(a.date + 'T23:59:00').getTime() > now - 86400000);
+    if (changed || filtered.length !== stored.length) {
+      localStorage.setItem(REMINDERS_KEY, JSON.stringify(filtered));
+      refresh(uid);
+    }
+  }, [refresh]);
+
   useEffect(() => {
     const stored = localStorage.getItem('mediflow-auth');
     if (!stored) { router.push('/login'); return; }
@@ -57,10 +97,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setUserId(uid);
       setUserName(user?.name || user?.email?.split('@')[0] || 'مريض');
       refresh(uid);
-      const iv = setInterval(() => refresh(uid), 30000);
-      return () => clearInterval(iv);
+      checkReminders(uid);
+      const iv1 = setInterval(() => refresh(uid), 30000);
+      const iv2 = setInterval(() => checkReminders(uid), 60000);
+      return () => { clearInterval(iv1); clearInterval(iv2); };
     } catch { router.push('/login'); }
-  }, [router, refresh]);
+  }, [router, refresh, checkReminders]);
 
   const unread = notifs.filter(n => !n.isRead).length;
 
@@ -213,7 +255,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* ── BOTTOM NAV ──────────────────────────────────────────── */}
       <nav className="fixed bottom-0 inset-x-0 bg-white border-t shadow-lg z-50">
-        <div className="grid grid-cols-4 h-16">
+        <div className="grid grid-cols-5 h-16">
           {NAV.map(item => {
             const Icon   = item.icon;
             const active = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));

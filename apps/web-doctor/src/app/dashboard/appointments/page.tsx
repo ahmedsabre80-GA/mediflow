@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar, Clock, Users, CheckCircle, XCircle, Trash2, Plus, X, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, Clock, Users, CheckCircle, XCircle, Trash2, Plus, X, RefreshCw, ChevronLeft, ChevronRight, ClipboardCheck } from 'lucide-react';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
 
@@ -36,7 +36,9 @@ function fmt(d: Date) {
 
 export default function AppointmentsPage() {
   const [doctorId, setDoctorId] = useState('');
-  const [tab, setTab] = useState<'calendar' | 'schedule'>('calendar');
+  const [tab, setTab] = useState<'calendar' | 'all' | 'schedule'>('calendar');
+  const [allBookings, setAllBookings] = useState<any[]>([]);
+  const [allLoading, setAllLoading] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState(fmt(new Date()));
   const [bookings, setBookings] = useState<any[]>([]);
@@ -49,6 +51,14 @@ export default function AppointmentsPage() {
   const [editDay, setEditDay] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ start_time: '09:00', end_time: '17:00', max_patients: '10', is_active: true });
   const [saving, setSaving] = useState(false);
+
+  // Template state
+  const [template, setTemplate] = useState({ start_time: '09:00', end_time: '17:00', max_patients: '10' });
+  const [templateDays, setTemplateDays] = useState<boolean[]>([true, true, true, true, true, false, false]);
+  const [templateMode, setTemplateMode] = useState<'weekly' | 'monthly'>('weekly');
+  const [templateMonth, setTemplateMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [disabledDates, setDisabledDates] = useState<Set<string>>(new Set());
+  const [templateSaving, setTemplateSaving] = useState(false);
 
   // New booking modal (for manual add by doctor)
   const [showAdd, setShowAdd] = useState(false);
@@ -95,6 +105,62 @@ export default function AppointmentsPage() {
     setEditDay(null);
     loadSchedule();
     showToast('✅ تم حفظ الجدول');
+  };
+
+  const applyTemplate = async () => {
+    if (!doctorId) return;
+    setTemplateSaving(true);
+
+    if (templateMode === 'weekly') {
+      await Promise.all(
+        templateDays.map((active, dow) =>
+          fetch(`${API}/${doctorId}/schedule`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              day_of_week: dow,
+              start_time: template.start_time,
+              end_time: template.end_time,
+              max_patients: Number(template.max_patients),
+              is_active: active,
+            }),
+          }).catch(() => {})
+        )
+      );
+      showToast('✅ تم تطبيق القالب الأسبوعي');
+    } else {
+      // Monthly: figure out which day_of_week are active vs disabled based on selections
+      const { y, m } = templateMonth;
+      const total = new Date(y, m + 1, 0).getDate();
+      // For each day_of_week, check if at least one date in month is selected (not disabled)
+      const activeDows = new Set<number>();
+      const inactiveDows = new Set<number>();
+      for (let d = 1; d <= total; d++) {
+        const date = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const dow = new Date(date + 'T00:00:00').getDay();
+        const isSelected = templateDays[dow] && !disabledDates.has(date);
+        if (isSelected) activeDows.add(dow); else inactiveDows.add(dow);
+      }
+      await Promise.all(
+        Array.from({ length: 7 }, (_, dow) =>
+          fetch(`${API}/${doctorId}/schedule`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              day_of_week: dow,
+              start_time: template.start_time,
+              end_time: template.end_time,
+              max_patients: Number(template.max_patients),
+              is_active: activeDows.has(dow),
+            }),
+          }).catch(() => {})
+        )
+      );
+      showToast('✅ تم تطبيق القالب الشهري');
+    }
+
+    setTemplateSaving(false);
+    loadSchedule();
   };
 
   const openEditDay = (dow: number) => {
@@ -144,6 +210,28 @@ export default function AppointmentsPage() {
 
   const getScheduleForDay = (dow: number) => schedule.find(s => s.day_of_week === dow);
 
+  const loadAllBookings = useCallback(async () => {
+    if (!doctorId) return;
+    setAllLoading(true);
+    const today = new Date();
+    const dates = Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      return fmt(d);
+    });
+    const results = await Promise.all(
+      dates.map(date =>
+        fetch(`${API}/${doctorId}/bookings?date=${date}`)
+          .then(r => r.json())
+          .then(d => (d.data || []).map((b: any) => ({ ...b, appointment_date: date })))
+          .catch(() => [])
+      )
+    );
+    const flat = results.flat().sort((a, b) => a.appointment_date.localeCompare(b.appointment_date));
+    setAllBookings(flat);
+    setAllLoading(false);
+  }, [doctorId]);
+
   return (
     <div className="space-y-6" dir="rtl">
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm font-medium">{toast}</div>}
@@ -153,7 +241,11 @@ export default function AppointmentsPage() {
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
           <button onClick={() => setTab('calendar')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'calendar' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'}`}>
-            <Calendar className="w-4 h-4 inline ml-2" />المواعيد
+            <Calendar className="w-4 h-4 inline ml-2" />اليوم
+          </button>
+          <button onClick={() => { setTab('all'); loadAllBookings(); }}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'}`}>
+            <Users className="w-4 h-4 inline ml-2" />كل المواعيد
           </button>
           <button onClick={() => setTab('schedule')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'schedule' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'}`}>
@@ -256,9 +348,16 @@ export default function AppointmentsPage() {
                       </span>
                       {b.status === 'pending' && (
                         <>
-                          <button onClick={() => updateStatus(b.id, 'confirmed')} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"><CheckCircle className="w-4 h-4" /></button>
-                          <button onClick={() => updateStatus(b.id, 'cancelled')} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><XCircle className="w-4 h-4" /></button>
+                          <button onClick={() => updateStatus(b.id, 'confirmed')} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg" title="تأكيد"><CheckCircle className="w-4 h-4" /></button>
+                          <button onClick={() => updateStatus(b.id, 'cancelled')} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="إلغاء"><XCircle className="w-4 h-4" /></button>
                         </>
+                      )}
+                      {b.status === 'confirmed' && (
+                        <button onClick={() => updateStatus(b.id, 'completed')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold rounded-lg transition-colors"
+                          title="إنهاء الفحص وإتاحة التقييم للمريض">
+                          <ClipboardCheck className="w-3.5 h-3.5" /> إنهاء الفحص
+                        </button>
                       )}
                       <button onClick={() => deleteBooking(b.id)} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                     </div>
@@ -270,7 +369,218 @@ export default function AppointmentsPage() {
         </>
       )}
 
+      {tab === 'all' && (
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b flex items-center justify-between">
+            <h2 className="font-bold text-gray-900">جميع المواعيد القادمة (30 يوم)</h2>
+            <div className="flex items-center gap-2">
+              {allBookings.length > 0 && (
+                <span className="bg-teal-100 text-teal-700 text-xs font-medium px-2.5 py-1 rounded-full">{allBookings.length} موعد</span>
+              )}
+              <button onClick={loadAllBookings} disabled={allLoading}
+                className="p-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                <RefreshCw className={`w-4 h-4 ${allLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+          {allLoading ? (
+            <div className="p-12 text-center text-gray-400">جاري التحميل...</div>
+          ) : allBookings.length === 0 ? (
+            <div className="p-12 text-center text-gray-400">
+              <Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              لا توجد مواعيد خلال الـ 30 يوم القادمة
+            </div>
+          ) : (
+            <div className="divide-y">
+              {allBookings.map((b, i) => {
+                const prevDate = i > 0 ? allBookings[i-1].appointment_date : null;
+                const showDateHeader = b.appointment_date !== prevDate;
+                const dateLabel = new Date(b.appointment_date + 'T00:00:00').toLocaleDateString('ar-IQ', { weekday: 'long', day: 'numeric', month: 'long' });
+                return (
+                  <div key={b.id}>
+                    {showDateHeader && (
+                      <div className="px-6 py-2 bg-gray-50 border-b">
+                        <p className="text-xs font-semibold text-gray-500">{dateLabel}</p>
+                      </div>
+                    )}
+                    <div className="px-6 py-4 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center shrink-0">
+                          <span className="text-teal-700 font-bold text-sm">{b.patient_name?.[0] || 'م'}</span>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900 text-sm">{b.patient_name}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{b.patient_phone || b.patient_email || '—'}</p>
+                          {b.notes && <p className="text-xs text-gray-400 mt-0.5">{b.notes}</p>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_STYLE[b.status] || STATUS_STYLE.pending}`}>
+                          {STATUS_LABEL[b.status] || b.status}
+                        </span>
+                        {b.status === 'pending' && (
+                          <>
+                            <button onClick={() => { updateStatus(b.id, 'confirmed'); setAllBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'confirmed' } : x)); }}
+                              className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"><CheckCircle className="w-4 h-4" /></button>
+                            <button onClick={() => { updateStatus(b.id, 'cancelled'); setAllBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'cancelled' } : x)); }}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><XCircle className="w-4 h-4" /></button>
+                          </>
+                        )}
+                        {b.status === 'confirmed' && (
+                          <button onClick={() => { updateStatus(b.id, 'completed'); setAllBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'completed' } : x)); }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold rounded-lg transition-colors">
+                            <ClipboardCheck className="w-3.5 h-3.5" /> إنهاء الفحص
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'schedule' && (
+        <>
+        {/* Template */}
+        <div className="bg-white rounded-2xl shadow-sm p-5 border border-teal-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-teal-500" /> قالب الدوام
+            </h3>
+            {/* Mode toggle */}
+            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+              <button onClick={() => setTemplateMode('weekly')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${templateMode === 'weekly' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'}`}>
+                أسبوعي
+              </button>
+              <button onClick={() => { setTemplateMode('monthly'); setDisabledDates(new Set()); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${templateMode === 'monthly' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'}`}>
+                شهري
+              </button>
+            </div>
+          </div>
+
+          {/* Time + patients */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">وقت البدء</label>
+              <input type="time" value={template.start_time}
+                onChange={e => setTemplate(t => ({ ...t, start_time: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">وقت الانتهاء</label>
+              <input type="time" value={template.end_time}
+                onChange={e => setTemplate(t => ({ ...t, end_time: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">أقصى مرضى / يوم</label>
+              <input type="number" min="1" max="100" value={template.max_patients}
+                onChange={e => setTemplate(t => ({ ...t, max_patients: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            </div>
+          </div>
+
+          {/* Working days (always shown) */}
+          <p className="text-xs font-medium text-gray-600 mb-2">أيام الدوام</p>
+          <div className="flex gap-2 mb-3 flex-wrap">
+            {DAYS.map((d, i) => (
+              <button key={i}
+                onClick={() => { setTemplateDays(prev => prev.map((v, idx) => idx === i ? !v : v)); setDisabledDates(new Set()); }}
+                className={`flex-1 min-w-[52px] py-2 rounded-xl text-xs font-bold border transition-colors ${templateDays[i] ? 'bg-teal-500 text-white border-teal-500' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                {DAY_SHORT[i]}
+              </button>
+            ))}
+          </div>
+
+          {/* Quick presets */}
+          <div className="flex gap-2 mb-4 flex-wrap">
+            {[
+              { label: 'أحد–خميس', days: [true,true,true,true,true,false,false] },
+              { label: 'اثنين–خميس', days: [false,true,true,true,true,false,false] },
+              { label: 'أحد–جمعة', days: [true,true,true,true,true,true,false] },
+              { label: 'كل الأيام', days: [true,true,true,true,true,true,true] },
+              { label: 'إجازة كاملة', days: [false,false,false,false,false,false,false] },
+            ].map(({ label, days }) => (
+              <button key={label} onClick={() => { setTemplateDays(days); setDisabledDates(new Set()); }}
+                className="text-xs px-3 py-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 font-medium">
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Monthly calendar */}
+          {templateMode === 'monthly' && (() => {
+            const { y, m } = templateMonth;
+            const firstDow = new Date(y, m, 1).getDay();
+            const total = new Date(y, m + 1, 0).getDate();
+            const today = fmt(new Date());
+            return (
+              <div className="bg-gray-50 rounded-2xl p-4 mb-4">
+                {/* Month nav */}
+                <div className="flex items-center justify-between mb-3">
+                  <button onClick={() => setTemplateMonth(c => { const d = new Date(c.y, c.m + 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
+                    className="p-1.5 hover:bg-gray-200 rounded-lg"><ChevronLeft className="w-4 h-4 text-gray-600" /></button>
+                  <p className="text-sm font-bold text-gray-800">
+                    {new Date(y, m, 1).toLocaleDateString('ar-IQ', { month: 'long', year: 'numeric' })}
+                  </p>
+                  <button onClick={() => setTemplateMonth(c => { const d = new Date(c.y, c.m - 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
+                    disabled={y === new Date().getFullYear() && m === new Date().getMonth()}
+                    className="p-1.5 hover:bg-gray-200 rounded-lg disabled:opacity-30"><ChevronRight className="w-4 h-4 text-gray-600" /></button>
+                </div>
+                <div className="grid grid-cols-7 mb-1">
+                  {DAY_SHORT.map(d => <div key={d} className="text-center text-xs text-gray-400 font-medium py-1">{d}</div>)}
+                </div>
+                <div className="grid grid-cols-7 gap-y-1">
+                  {Array.from({ length: firstDow }, (_, i) => <div key={`e${i}`} />)}
+                  {Array.from({ length: total }, (_, i) => {
+                    const day = i + 1;
+                    const date = `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                    const dow = new Date(date + 'T00:00:00').getDay();
+                    const isWorkDay = templateDays[dow];
+                    const isDisabled = disabledDates.has(date);
+                    const isPast = date < today;
+                    const isOn = isWorkDay && !isDisabled && !isPast;
+                    return (
+                      <button key={day}
+                        disabled={isPast || !isWorkDay}
+                        onClick={() => setDisabledDates(prev => {
+                          const next = new Set(prev);
+                          if (next.has(date)) next.delete(date); else next.add(date);
+                          return next;
+                        })}
+                        title={isPast ? 'يوم سابق' : !isWorkDay ? 'يوم إجازة' : isDisabled ? 'اضغط لإعادة التفعيل' : 'اضغط لإلغاء هذا اليوم'}
+                        className={`h-9 flex items-center justify-center rounded-xl text-sm font-medium transition-colors
+                          ${isPast || !isWorkDay ? 'text-gray-300 cursor-not-allowed' :
+                            isDisabled ? 'bg-red-100 text-red-400 line-through' :
+                            'bg-teal-500 text-white hover:bg-teal-600'}`}>
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 bg-teal-500 rounded" /> يوم دوام</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-100 rounded" /> ملغي</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 bg-gray-100 rounded border" /> إجازة</span>
+                </div>
+                {disabledDates.size > 0 && (
+                  <p className="text-xs text-amber-600 mt-2 font-medium">{disabledDates.size} يوم مستثنى من الشهر</p>
+                )}
+              </div>
+            );
+          })()}
+
+          <button onClick={applyTemplate} disabled={templateSaving}
+            className="w-full bg-teal-500 hover:bg-teal-600 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+            {templateSaving ? 'جاري التطبيق...' : templateMode === 'weekly' ? 'تطبيق على الجدول الأسبوعي' : 'تطبيق على الشهر'}
+          </button>
+        </div>
+
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b">
             <h2 className="font-bold text-gray-900">جدول الدوام الأسبوعي</h2>
@@ -305,6 +615,7 @@ export default function AppointmentsPage() {
             })}
           </div>
         </div>
+        </>
       )}
 
       {/* Edit schedule day modal */}
@@ -319,8 +630,8 @@ export default function AppointmentsPage() {
               <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                 <span className="text-sm font-medium text-gray-700">يوم دوام</span>
                 <button onClick={() => setEditForm(f => ({ ...f, is_active: !f.is_active }))}
-                  className={`w-11 h-6 rounded-full transition-colors ${editForm.is_active ? 'bg-teal-500' : 'bg-gray-300'}`}>
-                  <div className={`w-4 h-4 bg-white rounded-full shadow mx-1 transition-transform ${editForm.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
+                  className={`relative w-11 h-6 rounded-full shrink-0 transition-colors ${editForm.is_active ? 'bg-teal-500' : 'bg-gray-300'}`}>
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${editForm.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>
               </div>
               {editForm.is_active && <>

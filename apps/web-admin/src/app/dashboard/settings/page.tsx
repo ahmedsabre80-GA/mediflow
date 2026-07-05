@@ -137,8 +137,8 @@ export default function SettingsPage() {
 
   const Toggle = ({ value, onChange }: { value: boolean; onChange: () => void }) => (
     <button type="button" onClick={onChange}
-      className={`w-11 h-6 rounded-full transition-colors ${value ? 'bg-sky-500' : 'bg-gray-300'}`}>
-      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-1 ${value ? 'translate-x-5' : 'translate-x-0'}`} />
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${value ? 'bg-sky-500' : 'bg-gray-300'}`}>
+      <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0'}`} />
     </button>
   );
 

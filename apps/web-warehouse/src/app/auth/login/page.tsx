@@ -95,6 +95,11 @@ export default function WarehouseLoginPage() {
                 required />
             </div>
 
+            <div className="flex justify-end">
+              <a href="/auth/forgot-password" className="text-sm hover:underline" style={{ color: primary }}>
+                نسيت كلمة المرور؟
+              </a>
+            </div>
             <button type="submit" disabled={loading}
               className="w-full text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60 hover:opacity-90"
               style={{ backgroundColor: primary }}>

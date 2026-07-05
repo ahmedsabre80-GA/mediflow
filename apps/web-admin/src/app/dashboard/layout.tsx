@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, Building2, Users, ShoppingCart,
   BarChart3, Shield, Settings, LogOut, Menu, X, Bell,
-  Package, Stethoscope, ClipboardList, UserCog, FlaskConical, MessageSquare, Trash2
+  Package, Stethoscope, ClipboardList, UserCog, MessageSquare, Trash2, HeartPulse, KeyRound
 } from 'lucide-react';
 import {
   startSession, endSession,
@@ -18,15 +18,17 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
   { href: '/dashboard/approvals', label: 'طلبات الموافقة', icon: ClipboardList },
   { href: '/dashboard/pharmacies', label: 'الصيدليات', icon: Building2 },
-  { href: '/dashboard/pharmacists', label: 'الصيادلة', icon: FlaskConical },
+
   { href: '/dashboard/warehouses', label: 'المذاخر', icon: Package },
   { href: '/dashboard/doctors', label: 'الأطباء', icon: Stethoscope },
+  { href: '/dashboard/patients', label: 'المرضى', icon: HeartPulse },
   { href: '/dashboard/users', label: 'المستخدمون', icon: Users },
   { href: '/dashboard/team', label: 'فريق المنصة', icon: UserCog },
   { href: '/dashboard/orders', label: 'الطلبات', icon: ShoppingCart },
   { href: '/dashboard/analytics', label: 'التحليلات', icon: BarChart3 },
   { href: '/dashboard/messages', label: 'مركز الرسائل', icon: MessageSquare },
   { href: '/dashboard/audit', label: 'سجل المراقبة', icon: Shield },
+  { href: '/dashboard/password-resets', label: 'إعادة كلمة المرور', icon: KeyRound },
   { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
 ];
 

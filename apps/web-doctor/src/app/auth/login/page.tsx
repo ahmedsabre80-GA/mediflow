@@ -67,6 +67,11 @@ export default function DoctorLoginPage() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 required />
             </div>
+            <div className="flex justify-end">
+              <a href="/auth/forgot-password" className="text-sm text-teal-600 hover:underline">
+                نسيت كلمة المرور؟
+              </a>
+            </div>
             <button type="submit" disabled={loading}
               className="w-full bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
