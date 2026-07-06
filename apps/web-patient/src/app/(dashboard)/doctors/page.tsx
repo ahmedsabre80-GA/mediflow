@@ -43,6 +43,9 @@ export default function DoctorsPage() {
   const [prefTime, setPrefTime]   = useState('');
   const [patientName, setPatientName] = useState('');
   const [patientPhone, setPatientPhone] = useState('');
+  const [patientAge, setPatientAge] = useState('');
+  const [patientGender, setPatientGender] = useState('');
+  const [patientFileNo, setPatientFileNo] = useState('');
   const [notes, setNotes]         = useState('');
   const [booking, setBooking]     = useState(false);
   const [booked, setBooked]       = useState(false);
@@ -52,6 +55,9 @@ export default function DoctorsPage() {
   useEffect(() => {
     setPatientName(localStorage.getItem('patient-name') || '');
     setPatientPhone(localStorage.getItem('patient-phone') || '');
+    setPatientAge(localStorage.getItem('patient-age') || '');
+    setPatientGender(localStorage.getItem('patient-gender') || '');
+    setPatientFileNo(localStorage.getItem('patient-file-no') || '');
 
     Promise.all([
       fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
@@ -124,6 +130,8 @@ export default function DoctorsPage() {
 
   const reserve = async () => {
     if (!selected || !patientName.trim()) { setBookError('يرجى إدخال اسمك'); return; }
+    if (!patientAge.trim()) { setBookError('يرجى إدخال عمرك'); return; }
+    if (!patientGender) { setBookError('يرجى تحديد الجنس'); return; }
     if (!avail?.available) return;
     setBooking(true);
     setBookError('');
@@ -139,7 +147,12 @@ export default function DoctorsPage() {
         patient_email: localStorage.getItem('patient-email') || '',
         appointment_date: bookDate,
         preferred_time: prefTime || undefined,
-        notes: notesWithTime,
+        notes: [
+          notesWithTime,
+          patientAge.trim()    ? `عمر المريض: ${patientAge.trim()}` : '',
+          patientGender.trim() ? `جنس المريض: ${patientGender.trim()}` : '',
+          patientFileNo.trim() ? `رقم الملف: ${patientFileNo.trim()}` : '',
+        ].filter(Boolean).join('\n'),
       }),
     });
     setBooking(false);
@@ -160,8 +173,11 @@ export default function DoctorsPage() {
       }
 
       // Persist patient identity for future syncs
-      if (patientName.trim()) localStorage.setItem('patient-name', patientName.trim());
-      if (patientPhone.trim()) localStorage.setItem('patient-phone', patientPhone.trim());
+      if (patientName.trim())   localStorage.setItem('patient-name',    patientName.trim());
+      if (patientPhone.trim())  localStorage.setItem('patient-phone',   patientPhone.trim());
+      if (patientAge.trim())    localStorage.setItem('patient-age',     patientAge.trim());
+      if (patientGender.trim()) localStorage.setItem('patient-gender',  patientGender.trim());
+      if (patientFileNo.trim()) localStorage.setItem('patient-file-no', patientFileNo.trim());
 
       // Save booking to my appointments
       const myBookings = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
@@ -432,16 +448,43 @@ export default function DoctorsPage() {
                 {/* Patient info */}
                 <div className="space-y-3 mb-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">اسمك *</label>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">الاسم الكامل *</label>
                     <input value={patientName} onChange={e => setPatientName(e.target.value)}
-                      placeholder="الاسم الكامل"
+                      placeholder="الاسم الثلاثي"
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">رقم الهاتف</label>
-                    <input value={patientPhone} onChange={e => setPatientPhone(e.target.value)}
-                      placeholder="07xxxxxxxxx" dir="ltr"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">العمر *</label>
+                      <input value={patientAge} onChange={e => setPatientAge(e.target.value)}
+                        placeholder="مثال: 35" type="number" min="1" max="120"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">الجنس *</label>
+                      <div className="grid grid-cols-2 gap-2 h-[46px]">
+                        {[['ذكر','M'],['أنثى','F']].map(([label, val]) => (
+                          <button key={val} type="button" onClick={() => setPatientGender(val)}
+                            className={`rounded-xl text-sm font-medium border-2 transition-all ${patientGender === val ? 'bg-sky-500 border-sky-500 text-white' : 'border-gray-200 text-gray-600 hover:border-sky-300'}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">رقم الهاتف</label>
+                      <input value={patientPhone} onChange={e => setPatientPhone(e.target.value)}
+                        placeholder="07xxxxxxxxx" dir="ltr"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">رقم الملف</label>
+                      <input value={patientFileNo} onChange={e => setPatientFileNo(e.target.value)}
+                        placeholder="اختياري"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">ملاحظات (اختياري)</label>

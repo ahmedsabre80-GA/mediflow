@@ -41,7 +41,10 @@ const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pha
 function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription' | 'doctor'>('drug');
+  const initTab = searchParams.get('tab');
+  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription' | 'doctor'>(
+    initTab === 'doctor' ? 'doctor' : initTab === 'prescription' ? 'prescription' : 'drug'
+  );
 
   // Doctor search state
   const [docSearch,   setDocSearch]   = useState('');

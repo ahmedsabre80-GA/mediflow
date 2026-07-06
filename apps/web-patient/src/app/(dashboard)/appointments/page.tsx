@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { CalendarDays, Clock, Stethoscope, Trash2, CheckCircle, XCircle, AlertCircle, RefreshCw, Star } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { CalendarDays, Clock, Stethoscope, Trash2, CheckCircle, XCircle, AlertCircle, RefreshCw, Star, Bell, BellOff, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 
 const RATING_CATEGORIES = [
   { key: 'cleanliness',    label: 'نظافة العيادة',                                      emoji: '🏥' },
@@ -30,7 +31,11 @@ const STATUS_ICON: Record<string, any> = {
   pending: AlertCircle, confirmed: CheckCircle, cancelled: XCircle, completed: CheckCircle,
 };
 
+function getReminders(): any[] { return JSON.parse(localStorage.getItem('mediflow-appt-reminders') || '[]'); }
+function saveReminders(r: any[]) { localStorage.setItem('mediflow-appt-reminders', JSON.stringify(r)); }
+
 export default function AppointmentsPage() {
+  const router = useRouter();
   const [bookings, setBookings]   = useState<any[]>([]);
   const [filter, setFilter]       = useState<'upcoming' | 'past' | 'all'>('upcoming');
   const [syncing, setSyncing]     = useState(false);
@@ -39,6 +44,62 @@ export default function AppointmentsPage() {
   const [ratingNote, setRatingNote] = useState('');
   const [ratingDone, setRatingDone] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [reminderMap, setReminderMap] = useState<Record<string, { h24: boolean; h6: boolean; custom: boolean }>>({});
+  // customMin per booking id (default 30 min)
+  const [customMin, setCustomMin] = useState<Record<string, number>>({});
+
+  // Load reminder state for all bookings
+  useEffect(() => {
+    const stored = getReminders();
+    const map: Record<string, { h24: boolean; h6: boolean; custom: boolean }> = {};
+    const mins: Record<string, number> = {};
+    for (const r of stored) {
+      if (!map[r.id]) map[r.id] = { h24: false, h6: false, custom: false };
+      if (r.hoursBeforeTarget === 24) map[r.id].h24 = !r.sent;
+      if (r.hoursBeforeTarget === 6)  map[r.id].h6  = !r.sent;
+      if (r.minutesBeforeTarget != null && r.minutesBeforeTarget !== 120) {
+        map[r.id].custom = !r.sent;
+        mins[r.id] = r.minutesBeforeTarget;
+      }
+    }
+    setReminderMap(map);
+    setCustomMin(prev => ({ ...prev, ...mins }));
+  }, []);
+
+  const toggleReminder = (b: any, key: 'h24' | 'h6' | 'custom') => {
+    const apptMs = new Date(`${b.date}T${b.prefTime || '09:00'}:00`).getTime();
+    const current = reminderMap[b.id] || { h24: false, h6: false, custom: false };
+    const newVal = !current[key];
+
+    if (key === 'custom') {
+      const mins = customMin[b.id] ?? 30;
+      const stored = getReminders().filter((r: any) => !(r.id === b.id && r.minutesBeforeTarget != null));
+      if (newVal) {
+        stored.push({ id: b.id, doctorName: b.doctorName, date: b.date, time: b.prefTime, minutesBeforeTarget: mins, fireAt: apptMs - mins * 60000, sent: false });
+      }
+      saveReminders(stored);
+    } else {
+      const hours = key === 'h24' ? 24 : 6;
+      const stored = getReminders().filter((r: any) => !(r.id === b.id && r.hoursBeforeTarget === hours));
+      if (newVal) {
+        stored.push({ id: b.id, doctorName: b.doctorName, date: b.date, time: b.prefTime, hoursBeforeTarget: hours, fireAt: apptMs - hours * 3600000, sent: false });
+      }
+      saveReminders(stored);
+    }
+    setReminderMap(prev => ({ ...prev, [b.id]: { ...current, [key]: newVal } }));
+  };
+
+  const updateCustomMin = (b: any, mins: number) => {
+    setCustomMin(prev => ({ ...prev, [b.id]: mins }));
+    // If already enabled, update the stored reminder fireAt
+    if (reminderMap[b.id]?.custom) {
+      const apptMs = new Date(`${b.date}T${b.prefTime || '09:00'}:00`).getTime();
+      const stored = getReminders().filter((r: any) => !(r.id === b.id && r.minutesBeforeTarget != null));
+      stored.push({ id: b.id, doctorName: b.doctorName, date: b.date, time: b.prefTime, minutesBeforeTarget: mins, fireAt: apptMs - mins * 60000, sent: false });
+      saveReminders(stored);
+    }
+  };
 
   const getRated = (): string[] => JSON.parse(localStorage.getItem('mediflow-rated-bookings') || '[]');
 
@@ -126,11 +187,13 @@ export default function AppointmentsPage() {
         }
       }));
 
-      // Merge: API bookings take priority, supplement with local
+      // Merge: API bookings are authoritative.
+      // Only keep local-only bookings that were NEVER from the API (i.e. manually added offline).
+      // If a booking was previously fromAPI:true but is absent now, it was deleted — drop it.
       const local = loadLocal();
       const merged = [...allApiBookings];
       for (const lb of local) {
-        if (!merged.find(a => a.id === lb.id)) merged.push(lb);
+        if (!lb.fromAPI && !merged.find(a => a.id === lb.id)) merged.push(lb);
       }
       merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       localStorage.setItem('mediflow-my-bookings', JSON.stringify(merged));
@@ -186,10 +249,16 @@ export default function AppointmentsPage() {
             <h1 className="text-xl font-bold text-white">مواعيدي</h1>
             <p className="text-sky-100 text-sm mt-1">جميع حجوزاتك مع الأطباء</p>
           </div>
-          <button onClick={syncFromAPI} disabled={syncing}
-            className="p-2 bg-sky-400/50 rounded-xl text-white hover:bg-sky-400 transition-colors disabled:opacity-50">
-            <RefreshCw className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => router.push('/search?tab=doctor')}
+              className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-500 text-white text-sm font-bold px-3 py-2 rounded-xl transition-colors">
+              <Plus className="w-4 h-4" /> حجز موعد
+            </button>
+            <button onClick={syncFromAPI} disabled={syncing}
+              className="p-2 bg-sky-400/50 rounded-xl text-white hover:bg-sky-400 transition-colors disabled:opacity-50">
+              <RefreshCw className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -198,7 +267,7 @@ export default function AppointmentsPage() {
         <div className="flex bg-white rounded-2xl p-1 shadow-sm gap-1">
           {([['upcoming','القادمة'],['past','السابقة'],['all','الكل']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setFilter(key)}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${filter === key ? 'bg-sky-500 text-white' : 'text-gray-500'}`}>
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${filter === key ? 'bg-amber-400 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
               {label}
             </button>
           ))}
@@ -213,9 +282,15 @@ export default function AppointmentsPage() {
               <CalendarDays className="w-10 h-10 text-sky-400" />
             </div>
             <h2 className="text-lg font-bold text-gray-700 mb-2">لا توجد مواعيد</h2>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-400 mb-6">
               {filter === 'upcoming' ? 'ليس لديك مواعيد قادمة حالياً.' : 'لا توجد مواعيد سابقة.'}
             </p>
+            {filter === 'upcoming' && (
+              <button onClick={() => router.push('/search?tab=doctor')}
+                className="flex items-center gap-2 bg-amber-400 hover:bg-amber-500 text-white font-bold px-6 py-3 rounded-2xl transition-colors shadow-md">
+                <Plus className="w-5 h-5" /> احجز موعد مع طبيب
+              </button>
+            )}
           </div>
         ) : sortedDates.map(date => {
           const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('ar-IQ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -224,10 +299,9 @@ export default function AppointmentsPage() {
             <div key={date}>
               {/* Date header */}
               <div className="flex items-center gap-2 mb-2">
-                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${isToday ? 'bg-sky-500 text-white' : 'bg-gray-200 text-gray-600'}`}>
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${isToday ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-600'}`}>
                   {isToday ? 'اليوم' : dateLabel}
                 </span>
-                {!isToday && <span className="text-xs text-gray-400">{dateLabel}</span>}
               </div>
 
               {/* Bookings for this date */}
@@ -236,7 +310,8 @@ export default function AppointmentsPage() {
                   const Icon = STATUS_ICON[b.status] || AlertCircle;
                   const isPast = b.date < today;
                   return (
-                    <div key={b.id} className="bg-white rounded-2xl shadow-sm p-4">
+                    <div key={b.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                      <button className="w-full p-4 text-right" onClick={() => setExpandedId(expandedId === b.id ? null : b.id)}>
                       <div className="flex items-start gap-3">
                         {/* Doctor avatar */}
                         <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center shrink-0">
@@ -270,21 +345,27 @@ export default function AppointmentsPage() {
                                 الوقت المفضل: {b.prefTime}
                               </p>
                             )}
-                            {b.notes && (
-                              <p className="text-xs text-gray-400 mt-1 line-clamp-2">{b.notes}</p>
-                            )}
+                            {(() => {
+                              const cleanNotes = (b.notes || '')
+                                .split('\n')
+                                .filter((l: string) => !l.startsWith('الوقت المفضل') && !l.startsWith('وقت الانتهاء') && !l.startsWith('نوع الزيارة') && !l.startsWith('التشخيص') && !l.startsWith('رقم الوصفة') && !l.startsWith('عمر المريض') && !l.startsWith('جنس المريض') && !l.startsWith('رقم الملف'))
+                                .join('\n').trim();
+                              return cleanNotes ? (
+                                <p className="text-xs text-gray-400 mt-1 line-clamp-2">{cleanNotes}</p>
+                              ) : null;
+                            })()}
                           </div>
 
                           {/* Actions */}
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
                             {!isPast && b.status === 'pending' && (
-                              <button onClick={() => cancelBooking(b.id)}
+                              <button onClick={(e) => { e.stopPropagation(); cancelBooking(b.id); }}
                                 className="text-xs text-red-500 font-medium border border-red-200 px-3 py-1.5 rounded-xl hover:bg-red-50 transition-colors">
                                 إلغاء الموعد
                               </button>
                             )}
                             {b.status === 'completed' && !getRated().includes(b.id) && (
-                              <button onClick={() => openRating(b)}
+                              <button onClick={(e) => { e.stopPropagation(); openRating(b); }}
                                 className="text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-white px-3 py-1.5 rounded-xl flex items-center gap-1 transition-colors">
                                 <Star className="w-3.5 h-3.5 fill-white" /> قيّم الطبيب
                               </button>
@@ -295,14 +376,65 @@ export default function AppointmentsPage() {
                               </span>
                             )}
                             {(isPast || b.status === 'cancelled') && (
-                              <button onClick={() => deleteBooking(b.id)}
+                              <button onClick={(e) => { e.stopPropagation(); deleteBooking(b.id); }}
                                 className="text-xs text-gray-400 flex items-center gap-1 hover:text-red-400 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" /> حذف
                               </button>
                             )}
                           </div>
                         </div>
+                        {/* Expand indicator */}
+                        <div className="mt-2 flex justify-center">
+                          {expandedId === b.id
+                            ? <ChevronUp className="w-4 h-4 text-gray-300" />
+                            : <ChevronDown className="w-4 h-4 text-gray-300" />}
+                        </div>
                       </div>
+                      </button>
+
+                      {/* Expanded: Notification boxes */}
+                      {expandedId === b.id && !isPast && b.status !== 'cancelled' && (
+                        <div className="border-t px-4 py-3 bg-gray-50">
+                          <p className="text-xs font-semibold text-gray-600 mb-2.5 flex items-center gap-1.5">
+                            <Bell className="w-3.5 h-3.5 text-amber-500" /> تذكيرات الموعد
+                          </p>
+                          {/* Fixed reminder boxes row */}
+                          <div className="grid grid-cols-3 gap-2 mb-2">
+                            {([['h24','٢٤ س','قبل ٢٤ ساعة'],['h6','٦ س','قبل ٦ ساعات']] as const).map(([key, short, label]) => {
+                              const on = reminderMap[b.id]?.[key] ?? false;
+                              return (
+                                <button key={key} onClick={() => toggleReminder(b, key)}
+                                  className={`flex flex-col items-center justify-center gap-1 py-3 rounded-2xl border-2 transition-all ${on ? 'bg-amber-400 border-amber-400 text-white shadow-md' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-200'}`}>
+                                  {on ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+                                  <span className="text-xs font-bold">{short}</span>
+                                  <span className="text-[10px] opacity-75 leading-none text-center">{label}</span>
+                                </button>
+                              );
+                            })}
+                            {/* Custom reminder box */}
+                            <button onClick={() => toggleReminder(b, 'custom')}
+                              className={`flex flex-col items-center justify-center gap-1 py-3 rounded-2xl border-2 transition-all ${reminderMap[b.id]?.custom ? 'bg-amber-400 border-amber-400 text-white shadow-md' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-200'}`}>
+                              {reminderMap[b.id]?.custom ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+                              <span className="text-xs font-bold">{customMin[b.id] ?? 30} د</span>
+                              <span className="text-[10px] opacity-75 leading-none">مخصص</span>
+                            </button>
+                          </div>
+                          {/* Slider shown only when custom is active */}
+                          {reminderMap[b.id]?.custom && (
+                            <div className="bg-white rounded-2xl border border-amber-200 px-3 pt-2 pb-3">
+                              <p className="text-xs text-amber-700 font-medium mb-1.5 text-center">قبل {customMin[b.id] ?? 30} دقيقة</p>
+                              <input type="range" min={5} max={120} step={5}
+                                value={customMin[b.id] ?? 30}
+                                onChange={e => updateCustomMin(b, Number(e.target.value))}
+                                onClick={e => e.stopPropagation()}
+                                className="w-full accent-amber-400" />
+                              <div className="flex justify-between text-xs text-gray-400 mt-0.5">
+                                <span>٥ د</span><span>٦٠ د</span><span>١٢٠ د</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
