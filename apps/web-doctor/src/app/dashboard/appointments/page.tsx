@@ -113,7 +113,8 @@ function AppointmentsContent() {
   const [rxDrProfile, setRxDrProfile] = useState({ name:'', degree:'', specialty:'', address:'', phone:'', social:'', certNumber:'', clinicName:'', themeColor:'#2d6b5e', fontSize:'md' });
   const [rxCertificates, setRxCertificates] = useState<string[]>([]);
   const [rxClinicLogo, setRxClinicLogo] = useState('');
-  const [rxActivationMins, setRxActivationMins] = useState(60);
+  // Per-booking arrived map: bookingId → true when doctor marks patient as arrived & paid
+  const [arrivedMap, setArrivedMap] = useState<Record<string, boolean>>({});
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -140,9 +141,8 @@ function AppointmentsContent() {
     const id = localStorage.getItem('doctor-id') || '';
     setDoctorId(id);
     loadEV();
-    // Load rx activation time
-    const rxRaw = localStorage.getItem('doctor-rx-profile');
-    if (rxRaw) { try { const rx = JSON.parse(rxRaw); if (rx.rxActivationMins) setRxActivationMins(rx.rxActivationMins); } catch {} }
+    // Load arrived map
+    try { const a = localStorage.getItem('doctor-patient-arrived'); if (a) setArrivedMap(JSON.parse(a)); } catch {}
     // Load booking open time settings
     const raw = localStorage.getItem('doctor-booking-open-times');
     if (raw) {
@@ -204,20 +204,12 @@ function AppointmentsContent() {
   const week = weekDates(weekOffset);
 
   // Prescription button is active if: booking date is today (within 1h of start) or past
-  const isRxActive = (b: any): boolean => {
-    const todayStr = fmt(new Date());
-    const bDate = (b.appointment_date || b.date || '').slice(0, 10);
-    if (bDate < todayStr) return true;
-    if (bDate > todayStr) return false;
-    // booking is today — check 1h before doctor start time
-    const dayOfWeek = new Date(bDate + 'T00:00:00').getDay();
-    const sched = schedule.find((s: any) => s.day_of_week === dayOfWeek);
-    if (!sched?.start_time) return true;
-    const [sh, sm] = sched.start_time.split(':').map(Number);
-    const activateMin = sh * 60 + sm - rxActivationMins;
-    const now = new Date();
-    const nowMin = now.getHours() * 60 + now.getMinutes();
-    return nowMin >= activateMin;
+  const toggleArrived = (id: string) => {
+    setArrivedMap(prev => {
+      const next = { ...prev, [id]: !prev[id] };
+      try { localStorage.setItem('doctor-patient-arrived', JSON.stringify(next)); } catch {}
+      return next;
+    });
   };
 
   const saveBookingOpenTimes = () => {
@@ -518,13 +510,32 @@ function AppointmentsContent() {
           </>
         )}
         {b.status === 'confirmed' && !savedRx[b.id] && (() => {
-          const active = isRxActive(b);
+          const arrived = !!arrivedMap[b.id];
           return (
-            <button onClick={() => active && openRx(b)} disabled={!active}
-              title={!active ? `تُفعَّل قبل ${rxActivationMins} دقيقة من موعد الدوام في يوم الحجز` : ''}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${active ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>
-              <FileText className="w-3.5 h-3.5" /> كتابة وصفة
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Arrived checkbox */}
+              <button
+                onClick={() => toggleArrived(b.id)}
+                title={arrived ? 'إلغاء الحضور' : 'تأكيد حضور المريض ودفع الرسوم'}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border-2 transition-all ${
+                  arrived
+                    ? 'bg-green-50 border-green-400 text-green-700'
+                    : 'bg-gray-50 border-dashed border-gray-300 text-gray-400 hover:border-green-300 hover:text-green-600'
+                }`}>
+                <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${arrived ? 'bg-green-500 border-green-500' : 'border-gray-400'}`}>
+                  {arrived && <svg viewBox="0 0 10 8" className="w-2 h-2 fill-white"><path d="M1 4l2.5 2.5L9 1"/></svg>}
+                </div>
+                حضر ودفع
+              </button>
+              {/* Prescription button — only active when arrived */}
+              <button onClick={() => arrived && openRx(b)} disabled={!arrived}
+                title={!arrived ? 'يجب تأكيد حضور المريض ودفع الرسوم أولاً' : 'كتابة وصفة طبية'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                  arrived ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                }`}>
+                <FileText className="w-3.5 h-3.5" /> كتابة وصفة
+              </button>
+            </div>
           );
         })()}
         {b.status === 'confirmed' && savedRx[b.id] && (
