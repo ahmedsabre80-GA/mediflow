@@ -54,27 +54,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const now = Date.now();
     let changed = false;
     for (const appt of stored) {
-      const [h, m] = (appt.prefTime || '09:00').split(':').map(Number);
-      const apptTime = new Date(appt.date + 'T00:00:00').getTime() + h * 3600000 + m * 60000;
-      for (const hrs of (appt.hours as number[])) {
-        const key = `${hrs}h`;
-        if (appt.sent.includes(key)) continue;
-        const fireAt = apptTime - hrs * 3600000;
-        if (now >= fireAt && now < fireAt + 3600000) {
-          const label = hrs === 24 ? 'غداً' : hrs === 6 ? 'بعد 6 ساعات' : 'بعد ساعتين';
-          await fetch(`${PHARMACY_API}/portal-notifications`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              portalType: 'patient',
-              recipientId: uid,
-              senderName: 'ميديفلو',
-              message: `🔔 تذكير بموعدك\nلديك موعد مع ${appt.doctorName} ${label}\nالتاريخ: ${appt.date}${appt.prefTime ? '\nالوقت: ' + appt.prefTime : ''}`,
-            }),
-          }).catch(() => {});
-          appt.sent.push(key);
-          changed = true;
-        }
+      if (appt.sent) continue; // already fired
+      const fireAt: number = appt.fireAt || (() => {
+        const [h, m] = (appt.time || appt.prefTime || '09:00').split(':').map(Number);
+        const base = new Date(appt.date + 'T00:00:00').getTime() + h * 3600000 + m * 60000;
+        return appt.minutesBeforeTarget != null
+          ? base - appt.minutesBeforeTarget * 60000
+          : base - (appt.hoursBeforeTarget || 2) * 3600000;
+      })();
+      if (now >= fireAt && now < fireAt + 3600000) {
+        const mins = appt.minutesBeforeTarget;
+        const hrs  = appt.hoursBeforeTarget;
+        const label = mins != null
+          ? `بعد ${mins} دقيقة`
+          : hrs === 24 ? 'غداً' : hrs === 6 ? 'بعد ٦ ساعات' : 'بعد ساعتين';
+        await fetch(`${PHARMACY_API}/portal-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'patient',
+            recipientId: uid,
+            senderName: 'ميديفلو',
+            message: `🔔 تذكير بموعدك\nلديك موعد مع ${appt.doctorName} ${label}\nالتاريخ: ${appt.date}${appt.time || appt.prefTime ? '\nالوقت: ' + (appt.time || appt.prefTime) : ''}`,
+          }),
+        }).catch(() => {});
+        appt.sent = true;
+        changed = true;
       }
     }
     // Remove past appointments (> 1 day old)

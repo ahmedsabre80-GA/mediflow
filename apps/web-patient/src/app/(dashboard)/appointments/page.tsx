@@ -189,14 +189,20 @@ export default function AppointmentsPage() {
       }));
 
       // Merge: API bookings are authoritative.
-      // Only keep local-only bookings that were NEVER from the API (i.e. manually added offline).
-      // If a booking was previously fromAPI:true but is absent now, it was deleted — drop it.
+      // Drop local entries that match an API booking by doctorName+date+patientName
+      // (they have different IDs so ID-only check would duplicate them).
       const local = loadLocal();
       const merged = [...allApiBookings];
       for (const lb of local) {
-        if (!lb.fromAPI && !merged.find(a => a.id === lb.id)) merged.push(lb);
+        if (lb.fromAPI) continue; // old API-sourced entry, skip
+        const isDuplicate = merged.some(a =>
+          (a.date || '').slice(0,10) === (lb.date || '').slice(0,10) &&
+          (a.doctorName || '') === (lb.doctorName || '') &&
+          (a.patientName || '').trim().toLowerCase() === (lb.patientName || '').trim().toLowerCase()
+        );
+        if (!isDuplicate) merged.push(lb);
       }
-      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       localStorage.setItem('mediflow-my-bookings', JSON.stringify(merged));
       setBookings(merged);
     } catch {}

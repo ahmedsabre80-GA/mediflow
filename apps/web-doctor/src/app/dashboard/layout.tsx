@@ -40,6 +40,19 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
 
   const unread = notifs.filter(n => !n.isRead).length;
 
+  // Amber badge: expected visitors needing a call within 2 days
+  const [pendingCalls, setPendingCalls] = useState(0);
+  useEffect(() => {
+    const ev: any[] = JSON.parse(localStorage.getItem('mediflow-expected-visitors') || '[]');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const count = ev.filter(v => {
+      if (v.called || v.booked) return false;
+      const d = Math.ceil((new Date(v.revisitDate+'T00:00:00').getTime() - today.getTime()) / 86400000);
+      return d >= 0 && d <= 2;
+    }).length;
+    setPendingCalls(count);
+  }, [pathname]);
+
   const handleRead = (notif: PortalNotif) => {
     markNotifRead(notif.id);
     setSelectedNotif(notif);
@@ -89,6 +102,13 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
           <h1 className="font-bold text-gray-900">
             {NAV.find(i => i.href === pathname)?.label || 'لوحة التحكم'}
           </h1>
+          <div className="flex items-center gap-2">
+            {pendingCalls > 0 && (
+              <button onClick={() => router.push('/dashboard/appointments?tab=expected')}
+                className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-colors">
+                <span>📞</span> {pendingCalls} اتصال مطلوب
+              </button>
+            )}
           <div className="relative">
             <button onClick={() => setShowNotifs(!showNotifs)}
               className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
@@ -130,6 +150,7 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
                 </div>
               </>
             )}
+          </div>
           </div>
         </header>
         <main className="flex-1 overflow-auto p-6">{children}</main>

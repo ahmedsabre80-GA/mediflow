@@ -6,9 +6,10 @@ import { Calendar, Clock, Users, CheckCircle, XCircle, Trash2, Plus, X, RefreshC
   UserCheck, Stethoscope, AlertCircle, Eye } from 'lucide-react';
 import { PrescriptionPreview } from '@/components/PrescriptionPreview';
 
-const API      = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
-const NOTIF_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
-const EV_KEY   = 'mediflow-expected-visitors';
+const API        = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
+const NOTIF_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
+const PHARM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin/all';
+const EV_KEY     = 'mediflow-expected-visitors';
 
 const DAYS     = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const DAY_SHORT = ['أحد', 'اثن', 'ثلا', 'أرب', 'خمس', 'جمع', 'سبت'];
@@ -39,6 +40,18 @@ interface ExpectedVisitor {
 
 function getEV(): ExpectedVisitor[] { return JSON.parse(localStorage.getItem(EV_KEY) || '[]'); }
 function saveEV(ev: ExpectedVisitor[]) { localStorage.setItem(EV_KEY, JSON.stringify(ev)); }
+
+const PT_RX_KEY = 'doctor-patient-rx-history';
+interface PatientRxRecord { patientName: string; rxId: string; date: string; rxText: string; }
+function getPatientRxHistory(): PatientRxRecord[] { try { return JSON.parse(localStorage.getItem(PT_RX_KEY) || '[]'); } catch { return []; } }
+function savePatientRx(record: PatientRxRecord) {
+  const list = getPatientRxHistory();
+  list.unshift(record);
+  localStorage.setItem(PT_RX_KEY, JSON.stringify(list.slice(0, 500)));
+}
+function getHistoryForPatient(patientName: string) {
+  return getPatientRxHistory().filter(r => r.patientName.trim().toLowerCase() === patientName.trim().toLowerCase());
+}
 
 function weekDates(offset = 0) {
   const now = new Date();
@@ -113,14 +126,24 @@ function AppointmentsContent() {
   const [rxDrProfile, setRxDrProfile] = useState({ name:'', degree:'', specialty:'', address:'', phone:'', social:'', certNumber:'', clinicName:'', themeColor:'#2d6b5e', fontSize:'md' });
   const [rxCertificates, setRxCertificates] = useState<string[]>([]);
   const [rxClinicLogo, setRxClinicLogo] = useState('');
+  const [rxHandToPatient, setRxHandToPatient] = useState(true);
+  const [rxSendToPharmacy, setRxSendToPharmacy] = useState(false);
+  const [pharmacies, setPharmacies] = useState<any[]>([]);
+  const [pharmaciesLoading, setPharmaciesLoading] = useState(false);
+  const [selectedPharmacyId, setSelectedPharmacyId] = useState('');
+  const [pharmSearch, setPharmSearch] = useState('');
   // Per-booking arrived map: bookingId → true when doctor marks patient as arrived & paid
   const [arrivedMap, setArrivedMap] = useState<Record<string, boolean>>({});
+  // Per-booking history choice: null = not chosen yet, 'show' = view history, 'skip' = skip
+  const [historyChoice, setHistoryChoice] = useState<Record<string, 'show'|'skip'>>({});
+  // Patient history modal
+  const [patientHistoryModal, setPatientHistoryModal] = useState<{name: string; records: {rxId:string; date:string; rxText:string}[]} | null>(null);
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // Booking open time setting
-  const [bookingOpenMode, setBookingOpenMode] = useState<'general'|'per-day'>('general');
+  const [bookingOpenMode, setBookingOpenMode] = useState<'general'|'per-day'|'always'>('general');
   const [bookingOpenGeneral, setBookingOpenGeneral] = useState('08:00');
   const [bookingOpenPerDay, setBookingOpenPerDay] = useState<Record<number,string>>({0:'08:00',1:'08:00',2:'08:00',3:'08:00',4:'08:00',5:'08:00',6:'08:00'});
   const [bookingOpenSaved, setBookingOpenSaved] = useState(false);
@@ -230,6 +253,10 @@ function AppointmentsContent() {
     setRevisitDate('');
     setRxSaving(false);
     setRxTab('edit');
+    setRxHandToPatient(true);
+    setRxSendToPharmacy(false);
+    setSelectedPharmacyId('');
+    setPharmSearch('');
     // Load doctor prescription profile from settings
     const raw = localStorage.getItem('doctor-rx-profile');
     if (raw) {
@@ -266,9 +293,40 @@ function AppointmentsContent() {
     }
   };
 
+  const loadPharmacies = async () => {
+    setPharmaciesLoading(true);
+    try {
+      const res = await fetch(PHARM_API);
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data.data || data.pharmacies || []);
+      setPharmacies(list.filter((p: any) => p.status === 'active' || !p.status));
+    } catch { setPharmacies([]); }
+    setPharmaciesLoading(false);
+  };
+
+  const savePdf = (rxId: string) => {
+    const el = document.getElementById('rx-print-area');
+    if (!el) return;
+    const html = el.innerHTML;
+    const w = window.open('', '_blank', 'width=860,height=1000');
+    if (!w) return;
+    w.document.title = rxId;
+    w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
+      <title>${rxId}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+      <style>
+        body{margin:0;padding:24px;font-family:'Cairo','Segoe UI',sans-serif;background:#fff}
+        @media print{body{padding:0}@page{size:A4;margin:15mm}}
+      </style>
+      </head><body>${html}<script>window.addEventListener('load',function(){setTimeout(function(){window.print();},400);})<\/script></body></html>`);
+    w.document.close();
+  };
+
   const saveRx = async () => {
     if (!rxBooking) return;
     setRxSaving(true);
+
+    // Build prescription ID and text
     const rxId = prescriptionId(rxBooking.patient_name || 'مريض');
     const lines = [
       `رقم الوصفة: ${rxId}`,
@@ -283,12 +341,15 @@ function AppointmentsContent() {
       ...(enableRevisit && revisitDate ? ['', `موعد المراجعة: ${new Date(revisitDate+'T00:00:00').toLocaleDateString('ar-IQ',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`] : []),
     ];
     const rxText = lines.join('\n');
+    const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
+    const patientId  = rxBooking.patient_id || rxBooking.patientId || '';
 
-    // Notify patient
-    try {
-      const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
-      const patientId = rxBooking.patient_id || rxBooking.patientId || '';
-      if (patientId) {
+    // 1. Mark booking as completed
+    try { await updateStatus(rxBooking.id, 'completed'); } catch {}
+
+    // 2. Notify patient with prescription
+    if (patientId) {
+      try {
         await fetch(NOTIF_API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -299,10 +360,24 @@ function AppointmentsContent() {
             message: `📋 وصفتك الطبية\nمن الدكتور: ${doctorName}\n\n${rxText}`,
           }),
         });
-      }
-    } catch {}
+      } catch {}
 
-    // Save expected visitor if revisit is enabled
+      // 3. Send rating request to patient
+      try {
+        await fetch(NOTIF_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'patient',
+            recipientId: patientId,
+            senderName: doctorName,
+            message: `⭐ كيف كانت تجربتك مع ${rxDrProfile.name ? `د. ${rxDrProfile.name}` : 'الطبيب'}؟\nنرجو تقييم زيارتك من 1 إلى 5 نجوم عبر بوابة المريض.`,
+          }),
+        });
+      } catch {}
+    }
+
+    // 4. Save expected visitor if revisit enabled
     if (enableRevisit && revisitDate) {
       const ev = getEV();
       ev.push({
@@ -321,10 +396,51 @@ function AppointmentsContent() {
       loadEV();
     }
 
+    // 5. Send to pharmacy if selected
+    if (rxSendToPharmacy && selectedPharmacyId) {
+      try {
+        const pharm = pharmacies.find(p => String(p.id || p._id) === selectedPharmacyId);
+        // Use owner_id as recipientId — that's what the pharmacy portal polls with
+        const pharmRecipientId = pharm?.owner_id || selectedPharmacyId;
+        await fetch(NOTIF_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portalType: 'pharmacy',
+            recipientId: pharmRecipientId,
+            senderName: rxDrProfile.name ? `د. ${rxDrProfile.name}` : 'الطبيب',
+            message: `💊 وصفة طبية جديدة\nالمريض: ${rxBooking.patient_name || '—'}\nمن الدكتور: ${rxDrProfile.name || 'الطبيب'}\n\n${rxText}`,
+          }),
+        });
+        showToast(`✅ تم إرسال الوصفة إلى ${pharm?.name_ar || pharm?.name || 'الصيدلية'} وحفظها`);
+      } catch {
+        showToast('✅ تم حفظ الوصفة (تعذر إرسالها للصيدلية)');
+      }
+    } else {
+      showToast('✅ تم حفظ الوصفة وإنهاء الفحص');
+    }
+
+    // Save to patient history
+    savePatientRx({
+      patientName: rxBooking.patient_name || 'مريض',
+      rxId,
+      date: new Date().toLocaleDateString('ar-IQ', { day: 'numeric', month: 'long', year: 'numeric' }),
+      rxText,
+    });
+
     setSavedRx(prev => ({ ...prev, [rxBooking.id]: rxText }));
     setRxSaving(false);
-    setRxBooking(null);
-    showToast('✅ تم حفظ الوصفة وإرسالها للمريض');
+
+    // 6. Switch to preview, trigger PDF save, then close modal
+    setRxTab('preview');
+    setTimeout(() => {
+      savePdf(rxId);
+      setTimeout(() => setRxBooking(null), 800);
+    }, 350);
+
+    // Refresh bookings list to reflect completed status
+    loadBookings();
+    if (tab === 'all') loadAllBookings();
   };
 
   // ── Schedule ──────────────────────────────────────────────────────────────
@@ -510,31 +626,74 @@ function AppointmentsContent() {
           </>
         )}
         {b.status === 'confirmed' && !savedRx[b.id] && (() => {
-          const arrived = !!arrivedMap[b.id];
+          const arrived  = !!arrivedMap[b.id];
+          const choice   = historyChoice[b.id] ?? null;
+          const canWrite = arrived && choice !== null;
+          const patientName = b.patient_name || '';
+          const hasHistory  = getHistoryForPatient(patientName).length > 0;
           return (
-            <div className="flex items-center gap-2">
-              {/* Arrived checkbox */}
-              <button
-                onClick={() => toggleArrived(b.id)}
-                title={arrived ? 'إلغاء الحضور' : 'تأكيد حضور المريض ودفع الرسوم'}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border-2 transition-all ${
-                  arrived
-                    ? 'bg-green-50 border-green-400 text-green-700'
-                    : 'bg-gray-50 border-dashed border-gray-300 text-gray-400 hover:border-green-300 hover:text-green-600'
-                }`}>
-                <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${arrived ? 'bg-green-500 border-green-500' : 'border-gray-400'}`}>
-                  {arrived && <svg viewBox="0 0 10 8" className="w-2 h-2 fill-white"><path d="M1 4l2.5 2.5L9 1"/></svg>}
-                </div>
-                حضر ودفع
-              </button>
-              {/* Prescription button — only active when arrived */}
-              <button onClick={() => arrived && openRx(b)} disabled={!arrived}
-                title={!arrived ? 'يجب تأكيد حضور المريض ودفع الرسوم أولاً' : 'كتابة وصفة طبية'}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  arrived ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                }`}>
-                <FileText className="w-3.5 h-3.5" /> كتابة وصفة
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Arrived checkbox */}
+                <button
+                  onClick={() => toggleArrived(b.id)}
+                  title={arrived ? 'إلغاء الحضور' : 'تأكيد حضور المريض ودفع الرسوم'}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border-2 transition-all ${
+                    arrived
+                      ? 'bg-green-50 border-green-400 text-green-700'
+                      : 'bg-gray-50 border-dashed border-gray-300 text-gray-400 hover:border-green-300 hover:text-green-600'
+                  }`}>
+                  <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${arrived ? 'bg-green-500 border-green-500' : 'border-gray-400'}`}>
+                    {arrived && <svg viewBox="0 0 10 8" className="w-2 h-2 fill-white"><path d="M1 4l2.5 2.5L9 1"/></svg>}
+                  </div>
+                  حضر ودفع
+                </button>
+
+                {/* History choice — appears after arrival is confirmed */}
+                {arrived && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setHistoryChoice(prev => ({ ...prev, [b.id]: 'show' }));
+                        const records = getHistoryForPatient(patientName);
+                        setPatientHistoryModal({ name: patientName, records });
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border-2 transition-all ${
+                        choice === 'show'
+                          ? 'bg-purple-500 border-purple-500 text-white'
+                          : 'bg-white border-purple-300 text-purple-600 hover:bg-purple-50'
+                      }`}>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                      </svg>
+                      {hasHistory ? 'عرض التاريخ المرضي' : 'لا يوجد تاريخ مرضي'}
+                    </button>
+                    <button
+                      onClick={() => setHistoryChoice(prev => ({ ...prev, [b.id]: 'skip' }))}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border-2 transition-all ${
+                        choice === 'skip'
+                          ? 'bg-gray-500 border-gray-500 text-white'
+                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                      }`}>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                      تخطي
+                    </button>
+                  </>
+                )}
+
+                {/* Prescription button — only active after arrival + history choice */}
+                <button
+                  onClick={() => canWrite && openRx(b)}
+                  disabled={!canWrite}
+                  title={!arrived ? 'يجب تأكيد حضور المريض ودفع الرسوم أولاً' : !choice ? 'اختر خيار التاريخ المرضي أولاً' : 'كتابة وصفة طبية'}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                    canWrite ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}>
+                  <FileText className="w-3.5 h-3.5" /> كتابة وصفة
+                </button>
+              </div>
             </div>
           );
         })()}
@@ -1003,15 +1162,20 @@ function AppointmentsContent() {
 
             {/* Mode toggle */}
             <div className="flex gap-2 mb-4">
-              {([['general','وقت موحد لجميع الأيام'],['per-day','وقت مختلف لكل يوم']] as const).map(([key, label]) => (
-                <button key={key} onClick={() => setBookingOpenMode(key)}
+              {([['always','مفتوح دائماً'],['general','وقت موحد لجميع الأيام'],['per-day','وقت مختلف لكل يوم']] as [string,string][]).map(([key, label]) => (
+                <button key={key} onClick={() => setBookingOpenMode(key as any)}
                   className={`flex-1 py-2.5 rounded-xl text-xs font-semibold border-2 transition-all ${bookingOpenMode === key ? 'bg-amber-400 border-amber-400 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-200'}`}>
                   {label}
                 </button>
               ))}
             </div>
 
-            {bookingOpenMode === 'general' ? (
+            {bookingOpenMode === 'always' ? (
+              <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl">
+                <span className="text-green-600 text-sm">✓</span>
+                <span className="text-sm text-green-700 font-medium">الحجز مفتوح في أي وقت — لا يوجد قيد على وقت الحجز</span>
+              </div>
+            ) : bookingOpenMode === 'general' ? (
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-700 shrink-0">يفتح الحجز في الساعة:</label>
                 <input type="time" value={bookingOpenGeneral}
@@ -1041,7 +1205,7 @@ function AppointmentsContent() {
                   );
                 })}
               </div>
-            )}
+            ) }
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -1082,8 +1246,8 @@ function AppointmentsContent() {
         const genderLabel   = patientGender === 'M' ? 'ذكر' : patientGender === 'F' ? 'أنثى' : patientGender || '—';
         const today = new Date().toLocaleDateString('ar-IQ', { day: 'numeric', month: 'long', year: 'numeric' });
         return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl w-full max-w-2xl my-4" dir="rtl">
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl my-6" dir="rtl">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-blue-500" /> وصفة طبية
@@ -1205,6 +1369,7 @@ function AppointmentsContent() {
             ) : (
               /* PREVIEW TAB */
               <div className="p-5 max-h-[65vh] overflow-y-auto">
+                <div id="rx-print-area">
                 <PrescriptionPreview
                   rxProfile={rxDrProfile}
                   certificates={rxCertificates}
@@ -1218,6 +1383,7 @@ function AppointmentsContent() {
                   rxId={rxId}
                   diagnosis={rxDiagnosis}
                 />
+                </div>
                 {(!rxDrProfile.name || !rxDrProfile.degree || !rxDrProfile.certNumber) && (
                   <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
                     ⚠️ بعض معلومات الوصفة ناقصة — اذهب إلى <strong>الإعدادات ← الوصفة الطبية</strong> لإكمالها
@@ -1226,18 +1392,176 @@ function AppointmentsContent() {
               </div>
             )}
 
+            {/* ── DISPATCH OPTIONS ── */}
+            <div className="px-5 pt-3 pb-3 border-t bg-gray-50 space-y-2">
+              <p className="text-xs font-semibold text-gray-500 mb-1">تسليم الوصفة:</p>
+
+              {/* Option 1: Hand to patient */}
+              <label className="flex items-center gap-3 cursor-pointer select-none p-2 rounded-xl hover:bg-white transition-colors">
+                <input
+                  type="checkbox"
+                  checked={rxHandToPatient}
+                  onChange={e => setRxHandToPatient(e.target.checked)}
+                  className="w-4 h-4 accent-blue-500 cursor-pointer"
+                />
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11"/>
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">تسليم الوصفة للمريض يدوياً</span>
+                  <span className="text-xs text-gray-400">(طباعة + تسليم بالإيد)</span>
+                </div>
+              </label>
+
+              {/* Option 2: Send to pharmacy */}
+              <label className="flex items-start gap-3 cursor-pointer select-none p-2 rounded-xl hover:bg-white transition-colors">
+                <input
+                  type="checkbox"
+                  checked={rxSendToPharmacy}
+                  onChange={e => {
+                    setRxSendToPharmacy(e.target.checked);
+                    if (e.target.checked && pharmacies.length === 0) loadPharmacies();
+                  }}
+                  className="w-4 h-4 accent-emerald-500 cursor-pointer mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                    </svg>
+                    <span className="text-sm font-medium text-gray-700">إرسال الوصفة لصيدلية</span>
+                  </div>
+                  {rxSendToPharmacy && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="relative">
+                        <svg className="absolute right-3 top-2.5 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <input
+                          type="text"
+                          value={pharmSearch}
+                          onChange={e => setPharmSearch(e.target.value)}
+                          placeholder="ابحث عن صيدلية..."
+                          className="w-full pr-9 pl-3 py-2 border border-gray-300 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+                        />
+                      </div>
+                      {pharmaciesLoading ? (
+                        <p className="text-xs text-gray-400 py-1 text-center">جاري التحميل...</p>
+                      ) : (
+                        <div className="max-h-32 overflow-y-auto space-y-1 rounded-xl border border-gray-200 bg-white p-1">
+                          {pharmacies
+                            .filter(p => {
+                              const name = (p.name_ar || p.name || p.pharmacy_name || '').toLowerCase();
+                              return !pharmSearch.trim() || name.includes(pharmSearch.toLowerCase());
+                            })
+                            .map(p => {
+                              const pid = String(p.id || p._id);
+                              const pname = p.name_ar || p.name || p.pharmacy_name || 'صيدلية';
+                              return (
+                                <button
+                                  key={pid}
+                                  type="button"
+                                  onClick={() => setSelectedPharmacyId(pid)}
+                                  className={`w-full text-right px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                    selectedPharmacyId === pid
+                                      ? 'bg-emerald-500 text-white font-semibold'
+                                      : 'hover:bg-gray-100 text-gray-700'
+                                  }`}
+                                >
+                                  {pname}
+                                  {selectedPharmacyId === pid && <span className="float-left text-xs">✓</span>}
+                                </button>
+                              );
+                            })}
+                          {pharmacies.filter(p => {
+                            const name = (p.name_ar || p.name || p.pharmacy_name || '').toLowerCase();
+                            return !pharmSearch.trim() || name.includes(pharmSearch.toLowerCase());
+                          }).length === 0 && (
+                            <p className="text-xs text-gray-400 text-center py-2">
+                              {pharmacies.length === 0 ? 'لا توجد صيدليات مسجلة في المنصة' : 'لا توجد نتائج'}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </label>
+            </div>
+
             <div className="flex gap-3 px-5 py-4 border-t">
               <button onClick={() => setRxBooking(null)}
                 className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">إلغاء</button>
-              <button onClick={saveRx} disabled={rxSaving||!rxDrugs.some(d=>d.name.trim())}
+              <button onClick={saveRx}
+                disabled={rxSaving || !rxDrugs.some(d=>d.name.trim()) || (rxSendToPharmacy && !selectedPharmacyId)}
                 className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                {rxSaving?'جاري الحفظ...':<><FileText className="w-4 h-4" /> حفظ الوصفة</>}
+                {rxSaving ? (
+                  <span className="flex items-center gap-2"><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> جاري الحفظ...</span>
+                ) : (
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg> إنهاء الفحص وحفظ الوصفة</>
+                )}
               </button>
             </div>
           </div>
         </div>
         );
       })()}
+
+      {/* ── PATIENT HISTORY MODAL ── */}
+      {patientHistoryModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-lg my-6" dir="rtl">
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div>
+                <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                  </svg>
+                  التاريخ المرضي
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">{patientHistoryModal.name}</p>
+              </div>
+              <button onClick={() => setPatientHistoryModal(null)}><X className="w-5 h-5 text-gray-400" /></button>
+            </div>
+
+            <div className="p-4 max-h-[70vh] overflow-y-auto space-y-3">
+              {patientHistoryModal.records.length === 0 ? (
+                <div className="text-center py-10">
+                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg className="w-7 h-7 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-gray-500">لا يوجد تاريخ مرضي سابق</p>
+                  <p className="text-xs text-gray-400 mt-1">هذه أول زيارة للمريض</p>
+                </div>
+              ) : (
+                patientHistoryModal.records.map((rec, i) => (
+                  <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="bg-purple-50 px-4 py-2.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">#{patientHistoryModal.records.length - i}</span>
+                        <span className="text-xs font-semibold text-gray-700">{rec.date}</span>
+                      </div>
+                      <span className="text-xs text-gray-400 font-mono">{rec.rxId.split('_').slice(-2).join('_')}</span>
+                    </div>
+                    <div className="px-4 py-3">
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{rec.rxText}</pre>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t">
+              <button onClick={() => setPatientHistoryModal(null)}
+                className="w-full bg-purple-500 hover:bg-purple-600 text-white py-2.5 rounded-xl text-sm font-semibold">
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── DELETE CONFIRMATION ── */}
       {deleteConfirm && (
