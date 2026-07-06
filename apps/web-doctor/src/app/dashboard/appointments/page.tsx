@@ -113,6 +113,7 @@ function AppointmentsContent() {
   const [rxDrProfile, setRxDrProfile] = useState({ name:'', degree:'', specialty:'', address:'', phone:'', social:'', certNumber:'', clinicName:'', themeColor:'#2d6b5e', fontSize:'md' });
   const [rxCertificates, setRxCertificates] = useState<string[]>([]);
   const [rxClinicLogo, setRxClinicLogo] = useState('');
+  const [rxActivationMins, setRxActivationMins] = useState(60);
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -139,6 +140,9 @@ function AppointmentsContent() {
     const id = localStorage.getItem('doctor-id') || '';
     setDoctorId(id);
     loadEV();
+    // Load rx activation time
+    const rxRaw = localStorage.getItem('doctor-rx-profile');
+    if (rxRaw) { try { const rx = JSON.parse(rxRaw); if (rx.rxActivationMins) setRxActivationMins(rx.rxActivationMins); } catch {} }
     // Load booking open time settings
     const raw = localStorage.getItem('doctor-booking-open-times');
     if (raw) {
@@ -210,7 +214,7 @@ function AppointmentsContent() {
     const sched = schedule.find((s: any) => s.day_of_week === dayOfWeek);
     if (!sched?.start_time) return true;
     const [sh, sm] = sched.start_time.split(':').map(Number);
-    const activateMin = sh * 60 + sm - 60; // 1 hour before
+    const activateMin = sh * 60 + sm - rxActivationMins;
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
     return nowMin >= activateMin;
@@ -517,7 +521,7 @@ function AppointmentsContent() {
           const active = isRxActive(b);
           return (
             <button onClick={() => active && openRx(b)} disabled={!active}
-              title={!active ? 'تُفعَّل قبل ساعة من موعد الدوام في يوم الحجز' : ''}
+              title={!active ? `تُفعَّل قبل ${rxActivationMins} دقيقة من موعد الدوام في يوم الحجز` : ''}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${active ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>
               <FileText className="w-3.5 h-3.5" /> كتابة وصفة
             </button>

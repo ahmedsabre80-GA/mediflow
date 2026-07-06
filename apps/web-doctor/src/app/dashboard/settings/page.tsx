@@ -32,10 +32,27 @@ export default function DoctorSettingsPage() {
   const [certImage, setCertImage] = useState('');
   const [certImageLocked, setCertImageLocked] = useState(false);
   const [clinicLogo, setClinicLogo] = useState('');
+  const [rxActivationMins, setRxActivationMins] = useState(60);
   const [rxSaved, setRxSaved] = useState(false);
   const certFileRef = useRef<HTMLInputElement>(null);
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Auto-persist visual settings whenever they change (so tab-switching doesn't lose them)
+  useEffect(() => {
+    const existing = localStorage.getItem('doctor-rx-profile');
+    if (!existing) return;
+    try {
+      const rx = JSON.parse(existing);
+      localStorage.setItem('doctor-rx-profile', JSON.stringify({
+        ...rx,
+        themeColor: rxProfile.themeColor,
+        fontSize: rxProfile.fontSize,
+        clinicName: rxProfile.clinicName,
+        clinicLogo,
+      }));
+    } catch {}
+  }, [rxProfile.themeColor, rxProfile.fontSize, rxProfile.clinicName, clinicLogo]);
 
   useEffect(() => {
     const stored = localStorage.getItem('doctor-logo-image');
@@ -66,6 +83,7 @@ export default function DoctorSettingsPage() {
       if (rx.certificates) setCertificates(rx.certificates.length > 0 ? rx.certificates : ['']);
       if (rx.certImage) { setCertImage(rx.certImage); setCertImageLocked(true); }
       if (rx.clinicLogo) setClinicLogo(rx.clinicLogo);
+      if (rx.rxActivationMins) setRxActivationMins(rx.rxActivationMins);
     } else {
       setRxProfile(p => ({ ...p, name, specialty, phone }));
     }
@@ -125,6 +143,7 @@ export default function DoctorSettingsPage() {
       certImage,
       certImageLocked: certImageLock,
       clinicLogo,
+      rxActivationMins,
     };
     localStorage.setItem('doctor-rx-profile', JSON.stringify(toSave));
     setCertImageLocked(certImageLock);
@@ -417,6 +436,32 @@ export default function DoctorSettingsPage() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* Prescription activation time */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+            <h3 className="font-bold text-gray-900 text-sm text-gray-500 uppercase tracking-wide">وقت تفعيل كتابة الوصفة</h3>
+            <p className="text-xs text-gray-400">يُفعَّل زر كتابة الوصفة قبل بداية الدوام بـ</p>
+            <div className="flex items-center gap-4">
+              <input
+                type="range" min={15} max={180} step={15}
+                value={rxActivationMins}
+                onChange={e => setRxActivationMins(Number(e.target.value))}
+                className="flex-1 accent-teal-500"
+              />
+              <div className="w-20 text-center bg-teal-50 border border-teal-200 rounded-xl py-2 px-3">
+                <span className="text-teal-700 font-bold text-sm">{rxActivationMins}</span>
+                <span className="text-teal-500 text-xs"> دقيقة</span>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {[15, 30, 60, 90, 120].map(v => (
+                <button key={v} onClick={() => setRxActivationMins(v)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${rxActivationMins === v ? 'bg-teal-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  {v} د
+                </button>
+              ))}
             </div>
           </div>
 
