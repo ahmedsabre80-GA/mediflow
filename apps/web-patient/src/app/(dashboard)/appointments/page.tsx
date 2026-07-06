@@ -175,6 +175,7 @@ export default function AppointmentsPage() {
           allApiBookings.push({
             id: b.id,
             doctorName: doc.name,
+            doctorAuthId: doc.authId || doc.id || '',
             specialization: doc.specialization,
             date: (b.appointment_date || '').slice(0, 10),
             prefTime: b.appointment_time?.slice(0, 5) || b.notes?.match(/الوقت المفضل: (\d{2}:\d{2})/)?.[1] || '',

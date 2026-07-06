@@ -133,6 +133,22 @@ export default function DoctorsPage() {
     if (!patientAge.trim()) { setBookError('يرجى إدخال عمرك'); return; }
     if (!patientGender) { setBookError('يرجى تحديد الجنس'); return; }
     if (!avail?.available) return;
+
+    // Duplicate booking guard — one booking per doctor per day per patient
+    const existingBookings: any[] = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
+    const doctorAuthId = selected.authId || selected.id || '';
+    const alreadyBooked = existingBookings.some(b => {
+      if ((b.status || '') === 'cancelled') return false;
+      const bDate = (b.date || b.appointment_date || '').slice(0, 10);
+      if (bDate !== bookDate) return false;
+      return (doctorAuthId && b.doctorAuthId === doctorAuthId) ||
+             (b.doctorName && b.doctorName === (selected.name || ''));
+    });
+    if (alreadyBooked) {
+      setBookError('لديك حجز بالفعل مع هذا الطبيب في هذا اليوم');
+      return;
+    }
+
     setBooking(true);
     setBookError('');
     const notesWithTime = prefTime
@@ -184,6 +200,7 @@ export default function DoctorsPage() {
       const bookingRecord = {
         id: `local-${Date.now()}`,
         doctorName: selected.name || 'الطبيب',
+        doctorAuthId: selected.authId || selected.id || '',
         specialization: selected.specialization || 'طب عام',
         date: bookDate,
         prefTime: prefTime || '',
