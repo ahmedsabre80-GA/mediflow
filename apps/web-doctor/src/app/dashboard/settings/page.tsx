@@ -38,21 +38,14 @@ export default function DoctorSettingsPage() {
   const logoFileRef = useRef<HTMLInputElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  // Auto-persist visual settings whenever they change (so tab-switching doesn't lose them)
-  useEffect(() => {
-    const existing = localStorage.getItem('doctor-rx-profile');
-    if (!existing) return;
+  // Immediately persist a visual field to localStorage (called inline in handlers)
+  const persistVisual = (updates: Record<string, unknown>) => {
     try {
-      const rx = JSON.parse(existing);
-      localStorage.setItem('doctor-rx-profile', JSON.stringify({
-        ...rx,
-        themeColor: rxProfile.themeColor,
-        fontSize: rxProfile.fontSize,
-        clinicName: rxProfile.clinicName,
-        clinicLogo,
-      }));
+      const existing = localStorage.getItem('doctor-rx-profile');
+      const base = existing ? JSON.parse(existing) : {};
+      localStorage.setItem('doctor-rx-profile', JSON.stringify({ ...base, ...updates }));
     } catch {}
-  }, [rxProfile.themeColor, rxProfile.fontSize, rxProfile.clinicName, clinicLogo]);
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem('doctor-logo-image');
@@ -371,7 +364,7 @@ export default function DoctorSettingsPage() {
           {/* Clinic name */}
           <div className="bg-white rounded-2xl p-5 shadow-sm">
             <h3 className="font-bold text-gray-900 text-sm text-gray-500 uppercase tracking-wide mb-4">اسم العيادة / المستشفى</h3>
-            <input value={rxProfile.clinicName} onChange={e => setRxProfile(p => ({ ...p, clinicName: e.target.value }))}
+            <input value={rxProfile.clinicName} onChange={e => { setRxProfile(p => ({ ...p, clinicName: e.target.value })); persistVisual({ clinicName: e.target.value }); }}
               placeholder="مثال: مجمع النخبة الطبي"
               className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
             <p className="text-xs text-gray-400 mt-1.5">سيظهر في أعلى يسار الوصفة</p>
@@ -396,14 +389,14 @@ export default function DoctorSettingsPage() {
                     id="themeColorInput"
                     type="color"
                     value={rxProfile.themeColor}
-                    onChange={e => setRxProfile(p => ({ ...p, themeColor: e.target.value }))}
+                    onChange={e => { setRxProfile(p => ({ ...p, themeColor: e.target.value })); persistVisual({ themeColor: e.target.value }); }}
                     className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
                   />
                 </div>
                 {/* Quick presets */}
                 <div className="flex gap-2 flex-wrap">
                   {['#2d6b5e','#1e3a5f','#4c1d95','#7c1d1d','#166534','#b45309','#0e7490','#be185d'].map(hex => (
-                    <button key={hex} onClick={() => setRxProfile(p => ({ ...p, themeColor: hex }))}
+                    <button key={hex} onClick={() => { setRxProfile(p => ({ ...p, themeColor: hex })); persistVisual({ themeColor: hex }); }}
                       title={hex}
                       className="w-7 h-7 rounded-full border-2 transition-all hover:scale-110"
                       style={{
@@ -427,7 +420,7 @@ export default function DoctorSettingsPage() {
                   { key: 'md', label: 'متوسط', sample: 'A' },
                   { key: 'lg', label: 'كبير', sample: 'A' },
                 ].map((s, si) => (
-                  <button key={s.key} onClick={() => setRxProfile(p => ({ ...p, fontSize: s.key }))}
+                  <button key={s.key} onClick={() => { setRxProfile(p => ({ ...p, fontSize: s.key })); persistVisual({ fontSize: s.key }); }}
                     className={`flex-1 flex flex-col items-center gap-1 py-3 rounded-xl border-2 transition-all ${
                       rxProfile.fontSize === s.key ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                     }`}>
