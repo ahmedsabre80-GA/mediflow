@@ -4,6 +4,15 @@ import { Package, Clock, CheckCircle, RefreshCw, ShoppingCart, XCircle } from 'l
 import Link from 'next/link';
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+
+function patientH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('mediflow-auth');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const t = parsed.state?.accessToken || parsed.accessToken || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 const PLATFORM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
 const AUTO_REJECTED_KEY  = 'mediflow-auto-rejected-orders';
 const CANCELLED_KEY      = 'mediflow-cancelled-orders';
@@ -127,7 +136,7 @@ export default function OrdersPage() {
         // Notify patient
         fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: patientH(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: patientId,
@@ -141,7 +150,7 @@ export default function OrdersPage() {
         if (pharmId) {
           fetch(`${PHARMACY_API.replace('/pharmacies', '')}/${pharmId}/rating-decrement`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: patientH(),
             body: JSON.stringify({ amount: 0.2 }),
           }).catch(() => {});
         }
@@ -168,7 +177,7 @@ export default function OrdersPage() {
       if (order.pharmacyOwnerId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: patientH(),
           body: JSON.stringify({
             portalType: 'pharmacy',
             recipientId: order.pharmacyOwnerId,

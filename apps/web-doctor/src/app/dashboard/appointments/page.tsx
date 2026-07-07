@@ -11,6 +11,14 @@ const NOTIF_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharm
 const PHARM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin/all';
 const EV_KEY     = 'mediflow-expected-visitors';
 
+function drToken(): string {
+  try { return localStorage.getItem('doctor-token') || ''; } catch { return ''; }
+}
+function notifHeaders(): Record<string, string> {
+  const t = drToken();
+  return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+}
+
 const DAYS     = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const DAY_SHORT = ['أحد', 'اثن', 'ثلا', 'أرب', 'خمس', 'جمع', 'سبت'];
 
@@ -195,7 +203,7 @@ function AppointmentsContent() {
     const names = due.map(v => v.patientName).join('، ');
     fetch(NOTIF_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: notifHeaders(),
       body: JSON.stringify({
         portalType: 'doctor',
         recipientId: userId,
@@ -296,7 +304,8 @@ function AppointmentsContent() {
   const loadPharmacies = async () => {
     setPharmaciesLoading(true);
     try {
-      const res = await fetch(PHARM_API);
+      const t = drToken();
+      const res = await fetch(PHARM_API, t ? { headers: { Authorization: `Bearer ${t}` } } : undefined);
       const data = await res.json();
       const list = Array.isArray(data) ? data : (data.data || data.pharmacies || []);
       setPharmacies(list.filter((p: any) => p.status === 'active' || !p.status));
@@ -352,7 +361,7 @@ function AppointmentsContent() {
       try {
         await fetch(NOTIF_API, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: notifHeaders(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: patientId,
@@ -366,7 +375,7 @@ function AppointmentsContent() {
       try {
         await fetch(NOTIF_API, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: notifHeaders(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: patientId,
@@ -404,12 +413,12 @@ function AppointmentsContent() {
         const pharmRecipientId = pharm?.owner_id || selectedPharmacyId;
         await fetch(NOTIF_API, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: notifHeaders(),
           body: JSON.stringify({
             portalType: 'pharmacy',
             recipientId: pharmRecipientId,
             senderName: rxDrProfile.name ? `د. ${rxDrProfile.name}` : 'الطبيب',
-            message: `💊 وصفة طبية جديدة\nالمريض: ${rxBooking.patient_name || '—'}\nمن الدكتور: ${rxDrProfile.name || 'الطبيب'}\n\n${rxText}`,
+            message: `💊 وصفة طبية جديدة\nالمريض: ${rxBooking.patient_name || '—'}\nمن الدكتور: ${rxDrProfile.name || 'الطبيب'}\n\n${rxText.split('\n').filter(l => !l.startsWith('موعد المراجعة')).join('\n').trimEnd()}`,
           }),
         });
         showToast(`✅ تم إرسال الوصفة إلى ${pharm?.name_ar || pharm?.name || 'الصيدلية'} وحفظها`);
@@ -692,6 +701,39 @@ function AppointmentsContent() {
                     canWrite ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   }`}>
                   <FileText className="w-3.5 h-3.5" /> كتابة وصفة
+                </button>
+
+                {/* Finish without prescription */}
+                <button
+                  onClick={async () => {
+                    if (!canWrite) return;
+                    await updateStatus(b.id, 'completed');
+                    const patientId = b.patient_id || b.patientId || '';
+                    const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
+                    const drProfile = (() => { try { return JSON.parse(localStorage.getItem('doctor-rx-profile') || '{}'); } catch { return {}; } })();
+                    if (patientId) {
+                      try {
+                        await fetch(NOTIF_API, {
+                          method: 'POST',
+                          headers: notifHeaders(),
+                          body: JSON.stringify({
+                            portalType: 'patient', recipientId: patientId, senderName: doctorName,
+                            message: `✅ تم إنهاء زيارتك مع ${drProfile.name ? `د. ${drProfile.name}` : 'الطبيب'} بنجاح.\n\n⭐ نرجو تقييم زيارتك من 1 إلى 5 نجوم عبر بوابة المريض.`,
+                          }),
+                        });
+                      } catch {}
+                    }
+                    setArrivedMap(prev => { const n = { ...prev }; delete n[b.id]; return n; });
+                    setHistoryChoice(prev => { const n = { ...prev }; delete n[b.id]; return n; });
+                    showToast('✅ تم إنهاء الفحص بدون وصفة');
+                    loadBookings();
+                  }}
+                  disabled={!canWrite}
+                  title={!canWrite ? 'اختر خيار التاريخ المرضي أولاً' : 'إنهاء الفحص بدون وصفة رقمية'}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border-2 transition-colors ${
+                    canWrite ? 'bg-white border-teal-400 text-teal-600 hover:bg-teal-50' : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}>
+                  <ClipboardCheck className="w-3.5 h-3.5" /> بدون وصفة
                 </button>
               </div>
             </div>

@@ -4,6 +4,13 @@ import { Send, Bell, Users, CheckCircle, RefreshCw, MessageCircle } from 'lucide
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
+function pharmH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('pharmacy-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 interface StaffMember { id: string; name: string; email: string; role: string; status: string; }
 interface SentMsg     { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
 
@@ -61,7 +68,7 @@ export default function PharmacyMessagesPage() {
     try {
       await fetch(`${PHARMACY_API}/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: pharmH(),
         body: JSON.stringify({
           portalType: 'pharmacy-internal',
           recipientId: selectedEmp ? selectedEmp.id : 'broadcast',

@@ -6,6 +6,13 @@ import { addLocalNotification } from '@/lib/portalNotifications';
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 
+function pharmH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('pharmacy-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const PERMISSION_GROUPS = [
   { group: 'الطلبات', permissions: [{ key: 'orders:read', label: 'عرض الطلبات' }, { key: 'orders:manage', label: 'قبول/رفض' }, { key: 'orders:dispatch', label: 'إرسال' }, { key: 'orders:cancel', label: 'إلغاء' }] },
   { group: 'المخزون', permissions: [{ key: 'inventory:read', label: 'عرض المخزون' }, { key: 'inventory:write', label: 'تعديل' }, { key: 'inventory:delete', label: 'حذف' }] },
@@ -123,7 +130,7 @@ export default function PharmacyEmployeesPage() {
     if (!notifTarget || !notifMsg.trim()) return;
     // Send via portal notification to this specific staff member's user account
     await fetch(`${API}/portal-notifications`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: pharmH(),
       body: JSON.stringify({ portalType: 'pharmacy', recipientId: notifTarget.id, senderName: 'مدير الصيدلية', message: notifMsg }),
     }).catch(() => {});
     setNotifTarget(null);

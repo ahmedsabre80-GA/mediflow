@@ -9,6 +9,15 @@ const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/ph
 const CANCELLED_KEY = 'mediflow-cancelled-orders';
 const REMINDERS_KEY = 'mediflow-appt-reminders';
 
+function patientAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('mediflow-auth');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const t = parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const CANCEL_REASONS = [
   'وجدت الدواء في صيدلية أخرى',
   'تغيرت حاجتي للدواء',
@@ -70,7 +79,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           : hrs === 24 ? 'غداً' : hrs === 6 ? 'بعد ٦ ساعات' : 'بعد ساعتين';
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: patientAuthHeaders(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: uid,
@@ -130,7 +139,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (pharmacyOwnerId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: patientAuthHeaders(),
           body: JSON.stringify({
             portalType: 'pharmacy',
             recipientId: pharmacyOwnerId,
@@ -216,7 +225,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {notifs.length > 0 && (
                   <div className="px-4 py-2 border-b flex items-center justify-end bg-gray-50">
                     <button onClick={async () => {
-                      await fetch(`${PHARMACY_API}/portal-notifications/read-all?portalType=patient&recipientId=${encodeURIComponent(userId)}`, { method: 'PATCH' }).catch(() => {});
+                      await fetch(`${PHARMACY_API}/portal-notifications/read-all?portalType=patient&recipientId=${encodeURIComponent(userId)}`, { method: 'PATCH', headers: patientAuthHeaders() }).catch(() => {});
                       setNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
                     }} className="text-xs text-sky-600 hover:text-sky-800 font-medium">
                       تحديد الكل كمقروء ✓

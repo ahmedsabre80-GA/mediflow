@@ -5,7 +5,15 @@ import { logAction } from '@/lib/auditSystem';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
+
 const SECRET = 'mediflow-delete-2026';
+
+function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_verification: { label: 'معلق',   color: 'bg-amber-100 text-amber-700' },
@@ -91,7 +99,7 @@ export default function PharmaciesPage() {
 
   const load = () => {
     setLoading(true);
-    fetch(`${PHARMACY_API}/pharmacies/admin/all`)
+    fetch(`${PHARMACY_API}/pharmacies/admin/all`, { headers: adminAuthHeaders() })
       .then(r => r.json())
       .then(d => setPharmacies(d.data || []))
       .catch(() => setPharmacies([]))
@@ -159,7 +167,7 @@ export default function PharmaciesPage() {
     try {
       await fetch(`${PHARMACY_API}/pharmacies/admin/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminAuthHeaders(),
         body: JSON.stringify({ status }),
       });
       // Also sync auth account
@@ -192,7 +200,7 @@ export default function PharmaciesPage() {
     try {
       await fetch(`${PHARMACY_API}/pharmacies/admin/${deleteTarget.id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminAuthHeaders(),
         body: JSON.stringify({ status: 'deleted' }),
       });
     } catch {}
@@ -232,7 +240,7 @@ export default function PharmaciesPage() {
       }).catch(() => {});
       if (resetTarget?.id) {
         const patchRes = await fetch(`${PHARMACY_API}/pharmacies/admin/${resetTarget.id}/status`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH', headers: adminAuthHeaders(),
           body: JSON.stringify({ status: 'active' }),
         }).catch(() => null);
         if (patchRes?.ok) {

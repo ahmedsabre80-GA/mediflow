@@ -6,6 +6,15 @@ import Link from 'next/link';
 
 const AUTH_API_URL  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARM_API_URL = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+
+function patientH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('mediflow-auth');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const t = parsed.state?.accessToken || parsed.accessToken || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 const SECRET_KEY    = 'mediflow-delete-2026';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -240,7 +249,7 @@ function SearchContent() {
 
       const uploadRes = await fetch(`${PHARMACY_API}/prescriptions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: patientH(),
         body: JSON.stringify({ patientId, notes: rxNotes, imageBase64, radiusKm: rxRadius, lat: coords.lat, lng: coords.lng }),
       });
       const uploadData = await uploadRes.json();
@@ -269,7 +278,7 @@ function SearchContent() {
           .map(p =>
             fetch(`${PHARMACY_API}/portal-notifications`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: patientH(),
               body: JSON.stringify({
                 portalType: 'pharmacy',
                 recipientId: p.owner_id,

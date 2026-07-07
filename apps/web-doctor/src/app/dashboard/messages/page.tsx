@@ -4,6 +4,13 @@ import { Send, Users, UserCheck, CheckCircle, RefreshCw, MessageCircle, Bell } f
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
+function drH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('doctor-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 interface Employee { id: string; name: string; role: string; status: string; }
 interface SentMsg  { id: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; portal_type?: string; }
 
@@ -57,7 +64,7 @@ export default function DoctorMessagesPage() {
     try {
       await fetch(`${PHARMACY_API}/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: drH(),
         body: JSON.stringify({
           portalType: 'doctor-internal',
           recipientId: selectedEmp ? selectedEmp.id : 'broadcast',

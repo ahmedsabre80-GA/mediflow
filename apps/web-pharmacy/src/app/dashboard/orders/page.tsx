@@ -4,6 +4,13 @@ import { Search, ShoppingBag, CheckCircle, Clock, Package, Send, X, FileImage, C
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
+function pharmH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('pharmacy-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 interface Reservation {
   id: string;
   drug: string;
@@ -174,7 +181,7 @@ export default function OrdersPage() {
             if (r.patientId) {
               fetch(`${PHARMACY_API}/portal-notifications`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: pharmH(),
                 body: JSON.stringify({
                   portalType: 'patient',
                   recipientId: r.patientId,
@@ -204,7 +211,7 @@ export default function OrdersPage() {
       if (r.patientId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmH(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: r.patientId,
@@ -227,7 +234,7 @@ export default function OrdersPage() {
       if (r.patientId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmH(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: r.patientId,
@@ -265,7 +272,7 @@ export default function OrdersPage() {
       if (r.patientId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmH(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: r.patientId,
@@ -289,7 +296,7 @@ export default function OrdersPage() {
       if (rx.prescriptionId) {
         await fetch(`${PHARMACY_API}/prescriptions/${rx.prescriptionId}/claim`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmH(),
           body: JSON.stringify({ pharmacyId: localStorage.getItem('pharmacy-id') }),
         });
       }
@@ -297,7 +304,7 @@ export default function OrdersPage() {
       if (rx.patientId) {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmH(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: rx.patientId,

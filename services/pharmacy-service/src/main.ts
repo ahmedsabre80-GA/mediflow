@@ -17,7 +17,6 @@ async function bootstrap() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 });
   await pool.connect().then((c) => { console.log('PostgreSQL connected'); c.release(); });
 
-  // Run lightweight schema migrations
   await pool.query(`
     ALTER TABLE pharmacies.pharmacies
       ADD COLUMN IF NOT EXISTS delivery_rate_per_km INTEGER DEFAULT 0,
@@ -63,7 +62,6 @@ async function bootstrap() {
     const client = await pool.connect();
     try {
       const b = req.body;
-      // Check require_certificate setting
       const settingRow = await client.query("SELECT value FROM public.platform_settings WHERE key='require_certificate'");
       const requireCert = settingRow.rows[0]?.value === 'true';
       if (requireCert && !b.certificateData) {
@@ -72,7 +70,6 @@ async function bootstrap() {
 
       await client.query('BEGIN');
 
-      // 1. Create user via auth service
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'https://mediflowauth-service-production.up.railway.app';
       const authRes = await fetch(`${AUTH_URL}/api/v1/auth/register`, {
         method: 'POST',
@@ -90,7 +87,6 @@ async function bootstrap() {
 
       let userId: string;
       if (!authRes.ok) {
-        // If email exists, try to get the user id via a lookup
         if (authRes.status === 409) {
           const existing = await client.query('SELECT id FROM auth.users WHERE email=$1', [b.email]);
           if (!existing.rows.length) {
@@ -106,7 +102,6 @@ async function bootstrap() {
         userId = authData.data?.userId;
       }
 
-      // 2. Create pharmacy
       const phRes = await client.query(`
         INSERT INTO pharmacies.pharmacies
           (owner_id, name, name_ar, license_number, license_expiry, phone, address, city, country, certificate_data)
@@ -125,7 +120,6 @@ async function bootstrap() {
         b.certificateData || null,
       ]);
 
-      // 3. Store certificate separately if provided
       if (b.certificateData) {
         await client.query(
           'INSERT INTO public.registration_certificates (user_id, certificate_data, entity_type) VALUES ($1,$2,$3)',
@@ -143,8 +137,8 @@ async function bootstrap() {
     }
   });
 
-  // ─── ADMIN ENDPOINTS ───────────────────────────────────────────────
-  router.get('/admin/all', async (_req, res, next) => {
+  // ─── ADMIN ENDPOINTS ── all require admin auth ──────────────────────
+  router.get('/admin/all', authenticate, requireRole('admin', 'super_admin'), async (_req, res, next) => {
     try {
       const result = await pool.query(`
         SELECT p.*, u.email as owner_email, u.phone as owner_phone
@@ -157,7 +151,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/admin/:id/status', async (req, res, next) => {
+  router.patch('/admin/:id/status', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     const client = await pool.connect();
     try {
       const { id } = req.params;
@@ -166,14 +160,8 @@ async function bootstrap() {
       if (!allowed.includes(status)) return res.status(400).json({ success: false, error: { title: 'Invalid status' } });
 
       await client.query('BEGIN');
+      await client.query('UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2', [status, id]);
 
-      // Update pharmacy status
-      await client.query(
-        'UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2',
-        [status, id]
-      );
-
-      // Also update the owner's auth.users status so they can log in
       const userStatus = status === 'active' ? 'active'
         : status === 'suspended' ? 'suspended'
         : status === 'rejected' ? 'rejected'
@@ -194,7 +182,7 @@ async function bootstrap() {
     }
   });
 
-  router.delete('/admin/:id', async (req, res, next) => {
+  router.delete('/admin/:id', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -205,8 +193,7 @@ async function bootstrap() {
     } catch (err) { await client.query('ROLLBACK'); next(err); } finally { client.release(); }
   });
 
-  // POST fallback for environments that block DELETE method
-  router.post('/admin/:id/delete', async (req, res, next) => {
+  router.post('/admin/:id/delete', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -217,7 +204,7 @@ async function bootstrap() {
     } catch (err) { await client.query('ROLLBACK'); next(err); } finally { client.release(); }
   });
 
-  // ─── PHARMACY MY PROFILE (status check for login gate) ────────────────────
+  // ─── PHARMACY MY PROFILE ────────────────────────────────────────────
   router.get('/my', authenticate, async (req: any, res, next) => {
     try {
       const r = await pool.query(
@@ -229,7 +216,6 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ─── PHARMACY SELF-SETTINGS (owner updates their own delivery rate) ────────
   router.get('/my/settings', authenticate, async (req, res, next) => {
     try {
       const r = await pool.query(
@@ -304,7 +290,7 @@ async function bootstrap() {
 
   router.get('/:id/inventory', authenticate, async (req, res, next) => {
     try {
-      const { search, lowStock, nearExpiry, page = 1, limit = 20 } = req.query;
+      const { search, lowStock, page = 1, limit = 20 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
       const result = await pool.query(`
         SELECT s.*, d.generic_name, d.brand_name, d.requires_prescription
@@ -369,8 +355,8 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ─── ADMIN REQUESTS (employee add/remove from portals) ─────────────
-  router.post('/admin-requests', async (req, res, next) => {
+  // ─── ADMIN REQUESTS ── require auth ────────────────────────────────
+  router.post('/admin-requests', authenticate, async (req, res, next) => {
     try {
       const b = req.body;
       const r = await pool.query(`
@@ -383,7 +369,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.get('/admin-requests', async (req, res, next) => {
+  router.get('/admin-requests', authenticate, async (req, res, next) => {
     try {
       const { status, requester_id } = req.query;
       const conditions: string[] = [];
@@ -396,7 +382,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/admin-requests/:id/status', async (req, res, next) => {
+  router.patch('/admin-requests/:id/status', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     try {
       await pool.query(
         'UPDATE public.admin_requests SET status=$1, decided_at=NOW() WHERE id=$2',
@@ -406,14 +392,14 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.delete('/admin-requests/:id', async (req, res, next) => {
+  router.delete('/admin-requests/:id', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     try {
       await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
 
-  router.delete('/admin-requests', async (req, res, next) => {
+  router.delete('/admin-requests', authenticate, requireRole('admin', 'super_admin'), async (req, res, next) => {
     try {
       const { status } = req.query;
       if (status) {
@@ -425,8 +411,8 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ─── PORTAL NOTIFICATIONS ───────────────────────────────────────────
-  router.post('/portal-notifications', async (req, res, next) => {
+  // ─── PORTAL NOTIFICATIONS ── require auth ──────────────────────────
+  router.post('/portal-notifications', authenticate, async (req, res, next) => {
     try {
       const b = req.body;
       const r = await pool.query(`
@@ -437,9 +423,13 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.get('/portal-notifications', async (req, res, next) => {
+  router.get('/portal-notifications', authenticate, async (req: any, res, next) => {
     try {
       const { portalType, recipientId } = req.query;
+      // Verify user can only read their own notifications
+      if (recipientId && recipientId !== req.user?.sub) {
+        return res.status(403).json({ success: false, error: { title: 'Access denied', status: 403 } });
+      }
       const r = await pool.query(
         'SELECT * FROM public.portal_notifications WHERE portal_type=$1 AND recipient_id=$2 ORDER BY created_at DESC LIMIT 50',
         [portalType, recipientId]
@@ -448,7 +438,21 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/portal-notifications/:id/read', async (req, res, next) => {
+  router.patch('/portal-notifications/read-all', authenticate, async (req: any, res, next) => {
+    try {
+      const { portalType, recipientId } = req.query;
+      if (recipientId && recipientId !== req.user?.sub) {
+        return res.status(403).json({ success: false, error: { title: 'Access denied', status: 403 } });
+      }
+      await pool.query(
+        'UPDATE public.portal_notifications SET is_read=TRUE WHERE portal_type=$1 AND recipient_id=$2',
+        [portalType, recipientId]
+      );
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
+  router.patch('/portal-notifications/:id/read', authenticate, async (req, res, next) => {
     try {
       await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);
       res.json({ success: true });

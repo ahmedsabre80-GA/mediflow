@@ -5,6 +5,13 @@ import dynamic from 'next/dynamic';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
+function pharmH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('pharmacy-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 // Iraq provinces with capital coordinates
 const IRAQ_PROVINCES: Record<string, { lat: number; lng: number; label: string }> = {
   baghdad:    { lat: 33.3152, lng: 44.3661, label: 'بغداد' },
@@ -46,7 +53,7 @@ function PasswordResetRequest({ pharmacyName, settingsObj }: { pharmacyName: str
       const name       = pharmacyName || localStorage.getItem('pharmacy-name') || 'صيدلية';
       await fetch('https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: pharmH(),
         body: JSON.stringify({
           portalType: 'admin',
           recipientId: 'admin',
@@ -232,7 +239,7 @@ export default function SettingsPage() {
       const token        = localStorage.getItem('pharmacy-token') || '';
       await fetch(`${API}/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: pharmH(),
         body: JSON.stringify({
           portalType: 'admin',
           recipientId: 'admin',

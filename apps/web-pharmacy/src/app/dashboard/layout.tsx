@@ -22,6 +22,13 @@ const NAV_ITEMS = [
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const PLATFORM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
 
+function pharmAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('pharmacy-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const CONFIRMED_KEY  = 'ph-confirmed-notifs';
 const DELIVERED_KEY  = 'ph-delivered-notifs';
 
@@ -114,7 +121,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (rx.patientId) {
         fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: pharmAuthHeaders(),
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: rx.patientId,
@@ -287,7 +294,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="px-4 py-2 border-b flex items-center justify-end bg-gray-50">
                       <button onClick={async () => {
                         const uid = localStorage.getItem('pharmacy-user-id') || '';
-                        await fetch(`${PHARMACY_API}/portal-notifications/read-all?portalType=pharmacy&recipientId=${encodeURIComponent(uid)}`, { method: 'PATCH' }).catch(() => {});
+                        await fetch(`${PHARMACY_API}/portal-notifications/read-all?portalType=pharmacy&recipientId=${encodeURIComponent(uid)}`, { method: 'PATCH', headers: pharmAuthHeaders() }).catch(() => {});
                         setNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
                       }} className="text-xs text-sky-600 hover:text-sky-800 font-medium">
                         تحديد الكل كمقروء ✓
@@ -366,7 +373,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           try {
             await fetch(`${PHARMACY_API}/portal-notifications`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: pharmAuthHeaders(),
               body: JSON.stringify({
                 portalType: 'patient',
                 recipientId: reservation.patientId,
@@ -402,7 +409,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             await fetch(`${PHARMACY_API}/portal-notifications`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: pharmAuthHeaders(),
               body: JSON.stringify({
                 portalType: 'patient',
                 recipientId: reservation.patientId,
@@ -430,7 +437,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               `صحتك تهمنا 💙`;
             await fetch(`${PHARMACY_API}/portal-notifications`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: pharmAuthHeaders(),
               body: JSON.stringify({
                 portalType: 'patient',
                 recipientId: reservation.patientId,
@@ -466,7 +473,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             if (prescription.patientId) {
               await fetch(`${PHARMACY_API}/portal-notifications`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: pharmAuthHeaders(),
                 body: JSON.stringify({
                   portalType: 'patient',
                   recipientId: prescription.patientId,

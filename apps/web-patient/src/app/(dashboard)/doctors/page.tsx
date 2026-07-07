@@ -7,6 +7,15 @@ const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharma
 const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
 const SECRET    = 'mediflow-delete-2026';
 
+function patientH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const raw = localStorage.getItem('mediflow-auth');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const t = parsed.state?.accessToken || parsed.accessToken || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const SPECIALIZATIONS = ['الكل', 'طب عام', 'طب القلب', 'طب الأطفال', 'طب النساء والتوليد', 'طب الأعصاب', 'طب الجلدية'];
 
 function fmt(d: Date) {
@@ -178,7 +187,7 @@ export default function DoctorsPage() {
         const notifAPI = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
         fetch(notifAPI, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: patientH(),
           body: JSON.stringify({
             portalType: 'doctor',
             recipientId: selected.authId,

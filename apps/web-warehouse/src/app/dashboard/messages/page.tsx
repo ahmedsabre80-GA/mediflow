@@ -4,6 +4,13 @@ import { Send, Bell, Building2, Users, Search, X, CheckCircle, RefreshCw, Messag
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
+function warehouseH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('warehouse-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 type Mode = 'broadcast' | 'specific';
 
 interface Pharmacy { id: string; name: string; name_ar: string; phone: string; city: string; }
@@ -90,7 +97,7 @@ export default function WarehouseMessagesPage() {
         await Promise.all(selectedPharm.map(p =>
           fetch(`${PHARMACY_API}/portal-notifications`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: warehouseH(),
             body: JSON.stringify({ portalType: 'pharmacy', recipientId: p.id, senderName: warehouseName, message: fullMessage }),
           })
         ));
@@ -98,7 +105,7 @@ export default function WarehouseMessagesPage() {
       } else {
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: warehouseH(),
           body: JSON.stringify({ portalTypes: ['pharmacy'], recipientId: 'broadcast', senderName: warehouseName, message: fullMessage }),
         });
         showToast('✅ تم الإرسال إلى جميع الصيدليات بنجاح');

@@ -7,6 +7,13 @@ const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const SECRET = 'mediflow-delete-2026';
 
+function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const PORTAL_TABS = [
   { key: 'all',       label: 'الكل',            color: 'text-gray-700'    },
   { key: 'pharmacy',  label: 'الصيدليات',       color: 'text-sky-600'     },
@@ -159,7 +166,7 @@ export default function ApprovalsPage() {
       if (recipientId) {
         await fetch(`${API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: adminAuthHeaders(),
           body: JSON.stringify({
             portalType,
             recipientId,

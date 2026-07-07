@@ -6,6 +6,13 @@ const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pha
 const AUTH_API     = 'https://mediflowauth-service-production.up.railway.app/api/v1/auth';
 const SECRET       = 'mediflow-delete-2026';
 
+function adminH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 interface ResetRequest {
   id: string;
   pharmacyName: string;
@@ -61,7 +68,7 @@ export default function PasswordResetsPage() {
       // Reset password in auth service
       const res = await fetch(`${AUTH_API}/admin/reset-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminH(),
         body: JSON.stringify({ email: req.pharmacyEmail, newPassword: tempPass, secret: SECRET }),
       });
 
@@ -70,7 +77,7 @@ export default function PasswordResetsPage() {
       // Notify pharmacy with temp password
       await fetch(`${PHARMACY_API}/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminH(),
         body: JSON.stringify({
           portalType: 'pharmacy',
           recipientId: req.pharmacyId,
@@ -93,7 +100,7 @@ export default function PasswordResetsPage() {
       // Notify pharmacy of rejection
       await fetch(`${PHARMACY_API}/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminH(),
         body: JSON.stringify({
           portalType: 'pharmacy',
           recipientId: req.pharmacyId,

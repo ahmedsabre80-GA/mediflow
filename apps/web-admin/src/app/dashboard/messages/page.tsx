@@ -8,6 +8,13 @@ const AUTH_API     = 'https://mediflowauth-service-production.up.railway.app/api
 const SECRET       = 'mediflow-delete-2026';
 const ADMIN_SENDER = 'فريق ميديفلو';
 
+function adminH(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
+
 const BROADCAST_GROUPS = [
   { key: 'all',         label: 'الجميع',      icon: Users,        portalTypes: ['pharmacy', 'doctor', 'warehouse', 'pharmacist', 'patient'] },
   { key: 'patients',    label: 'المرضى',      icon: Users,        portalTypes: ['patient'] },
@@ -226,7 +233,7 @@ export default function MessagesPage() {
           const portalType = u.type === 'pharmacy' ? 'pharmacy' : u.type === 'doctor' ? 'doctor' : 'warehouse';
           return fetch(`${PHARMACY_API}/portal-notifications`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: adminH(),
             body: JSON.stringify({ portalType, recipientId: u.id, senderName: ADMIN_SENDER, message: fullMessage }),
           });
         }));
@@ -235,7 +242,7 @@ export default function MessagesPage() {
         const group = BROADCAST_GROUPS.find(g => g.key === broadcastGroup);
         await fetch(`${PHARMACY_API}/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: adminH(),
           body: JSON.stringify({ portalTypes: group?.portalTypes, recipientId: 'broadcast', senderName: ADMIN_SENDER, message: fullMessage }),
         });
         showToast(`✅ تم الإرسال إلى ${group?.label} بنجاح`);
