@@ -278,6 +278,108 @@ async function bootstrap() {
     return r.rows[0];
   }
 
+  // Ensure inventory schema and pharmacy_stock table exist
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      pharmacy_id UUID NOT NULL,
+      drug_id UUID NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      reserved_qty INTEGER NOT NULL DEFAULT 0,
+      selling_price NUMERIC(12,2) DEFAULT 0,
+      buying_price NUMERIC(12,2) DEFAULT 0,
+      currency VARCHAR(10) DEFAULT 'IQD',
+      reorder_level INTEGER DEFAULT 10,
+      expiry_date DATE,
+      origin_country TEXT,
+      category TEXT,
+      batch_number TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  // Create products schema and drugs table if not exists
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.drugs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      generic_name TEXT NOT NULL,
+      brand_name TEXT,
+      dosage_form TEXT,
+      strength TEXT,
+      requires_prescription BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  // Seed common drugs if table is empty
+  const { rows: drugCount } = await pool.query('SELECT COUNT(*) FROM public.drugs').catch(() => ({ rows: [{ count: '1' }] }));
+  if (drugCount[0]?.count === '0') {
+    await pool.query(`
+      INSERT INTO public.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
+      ('باراسيتامول', 'بنادول', 'أقراص', '500 مغ', false),
+      ('باراسيتامول', 'تايلينول', 'أقراص', '500 مغ', false),
+      ('أيبوبروفين', 'بروفين', 'أقراص', '400 مغ', false),
+      ('أيبوبروفين', 'ادفيل', 'أقراص', '200 مغ', false),
+      ('أموكسيسيلين', 'أموكسيل', 'كبسولات', '500 مغ', true),
+      ('أموكسيسيلين', 'فليموكسين', 'أقراص', '1 غ', true),
+      ('أزيثروميسين', 'زيثروماكس', 'أقراص', '500 مغ', true),
+      ('ميتفورمين', 'غلوكوفاج', 'أقراص', '500 مغ', true),
+      ('ميتفورمين', 'غلوكوفاج', 'أقراص', '1000 مغ', true),
+      ('أتورفاستاتين', 'ليبيتور', 'أقراص', '20 مغ', true),
+      ('أتورفاستاتين', 'ليبيتور', 'أقراص', '40 مغ', true),
+      ('أومبرازول', 'لوسك', 'كبسولات', '20 مغ', false),
+      ('بانتوبرازول', 'بانتولوك', 'أقراص', '40 مغ', true),
+      ('لوراتادين', 'كلاريتين', 'أقراص', '10 مغ', false),
+      ('سيتيريزين', 'زيرتك', 'أقراص', '10 مغ', false),
+      ('ديكسامثازون', 'ديكسامثازون', 'أقراص', '4 مغ', true),
+      ('بريدنيزولون', 'بريدنيزولون', 'أقراص', '5 مغ', true),
+      ('ميترونيدازول', 'فلاجيل', 'أقراص', '500 مغ', true),
+      ('سيبروفلوكساسين', 'سيبروباي', 'أقراص', '500 مغ', true),
+      ('إنالابريل', 'ريناتك', 'أقراص', '10 مغ', true),
+      ('أملوديبين', 'نورفاسك', 'أقراص', '5 مغ', true),
+      ('ليفوثيروكسين', 'إلتروكسين', 'أقراص', '50 مكغ', true),
+      ('فيتامين D3', 'فيتامين D3', 'كبسولات', '1000 وحدة', false),
+      ('فيتامين C', 'سيفيت', 'أقراص فوارة', '1000 مغ', false),
+      ('أسبرين', 'أسبرين', 'أقراص', '100 مغ', false),
+      ('كلوبيدوغريل', 'بلافيكس', 'أقراص', '75 مغ', true),
+      ('راميبريل', 'تريتيس', 'كبسولات', '5 مغ', true),
+      ('ميلوكسيكام', 'موبيك', 'أقراص', '15 مغ', true),
+      ('ديكلوفيناك', 'فولتارين', 'أقراص', '50 مغ', true),
+      ('غابابنتين', 'نيورونتين', 'كبسولات', '300 مغ', true),
+      ('سيرترالين', 'زولوفت', 'أقراص', '50 مغ', true),
+      ('كلاريثروميسين', 'كلاريسيد', 'أقراص', '500 مغ', true),
+      ('فيتامين B12', 'نيوروبيون', 'أقراص', '200 مكغ', false),
+      ('حديد', 'فيروغراديوميت', 'أقراص', '105 مغ', false),
+      ('كالسيوم + D3', 'كالسيوم سانودوز', 'أقراص فوارة', '500 مغ', false),
+      ('ميزوبروستول', 'سايتوتيك', 'أقراص', '200 مكغ', true),
+      ('بيسوبرولول', 'كونكور', 'أقراص', '5 مغ', true),
+      ('فاموتيدين', 'بيبسيد', 'أقراص', '40 مغ', false),
+      ('ترامادول', 'ترامال', 'كبسولات', '50 مغ', true)
+    `).catch(() => {});
+  }
+
+  const app = express();
+  app.use(helmet());
+  const ALLOWED_ORIGINS = new Set([
+    ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+    'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002',
+    'http://localhost:3003', 'http://localhost:3004',
+  ]);
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // server-to-server / curl
+      if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+      cb(new Error('CORS: origin not allowed'));
+    },
+    credentials: true,
+  }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(traceIdMiddleware);
+  app.use(requestLogger);
+
+  const router = express.Router();
+
   // ── Warehouse: get my warehouse info ─────────────────────────────────────
   app.get('/api/v1/warehouses/me', authenticate, isWarehouse, async (req, res, next) => {
     try {
@@ -457,108 +559,6 @@ async function bootstrap() {
       res.json({ success: true, data: r.rows });
     } catch (err) { next(err); }
   });
-
-  // Ensure inventory schema and pharmacy_stock table exist
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS public.pharmacy_stock (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      pharmacy_id UUID NOT NULL,
-      drug_id UUID NOT NULL,
-      quantity INTEGER NOT NULL DEFAULT 0,
-      reserved_qty INTEGER NOT NULL DEFAULT 0,
-      selling_price NUMERIC(12,2) DEFAULT 0,
-      buying_price NUMERIC(12,2) DEFAULT 0,
-      currency VARCHAR(10) DEFAULT 'IQD',
-      reorder_level INTEGER DEFAULT 10,
-      expiry_date DATE,
-      origin_country TEXT,
-      category TEXT,
-      batch_number TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `).catch(() => {});
-
-  // Create products schema and drugs table if not exists
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS public.drugs (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      generic_name TEXT NOT NULL,
-      brand_name TEXT,
-      dosage_form TEXT,
-      strength TEXT,
-      requires_prescription BOOLEAN DEFAULT false,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `).catch(() => {});
-
-  // Seed common drugs if table is empty
-  const { rows: drugCount } = await pool.query('SELECT COUNT(*) FROM public.drugs').catch(() => ({ rows: [{ count: '1' }] }));
-  if (drugCount[0]?.count === '0') {
-    await pool.query(`
-      INSERT INTO public.drugs (generic_name, brand_name, dosage_form, strength, requires_prescription) VALUES
-      ('باراسيتامول', 'بنادول', 'أقراص', '500 مغ', false),
-      ('باراسيتامول', 'تايلينول', 'أقراص', '500 مغ', false),
-      ('أيبوبروفين', 'بروفين', 'أقراص', '400 مغ', false),
-      ('أيبوبروفين', 'ادفيل', 'أقراص', '200 مغ', false),
-      ('أموكسيسيلين', 'أموكسيل', 'كبسولات', '500 مغ', true),
-      ('أموكسيسيلين', 'فليموكسين', 'أقراص', '1 غ', true),
-      ('أزيثروميسين', 'زيثروماكس', 'أقراص', '500 مغ', true),
-      ('ميتفورمين', 'غلوكوفاج', 'أقراص', '500 مغ', true),
-      ('ميتفورمين', 'غلوكوفاج', 'أقراص', '1000 مغ', true),
-      ('أتورفاستاتين', 'ليبيتور', 'أقراص', '20 مغ', true),
-      ('أتورفاستاتين', 'ليبيتور', 'أقراص', '40 مغ', true),
-      ('أومبرازول', 'لوسك', 'كبسولات', '20 مغ', false),
-      ('بانتوبرازول', 'بانتولوك', 'أقراص', '40 مغ', true),
-      ('لوراتادين', 'كلاريتين', 'أقراص', '10 مغ', false),
-      ('سيتيريزين', 'زيرتك', 'أقراص', '10 مغ', false),
-      ('ديكسامثازون', 'ديكسامثازون', 'أقراص', '4 مغ', true),
-      ('بريدنيزولون', 'بريدنيزولون', 'أقراص', '5 مغ', true),
-      ('ميترونيدازول', 'فلاجيل', 'أقراص', '500 مغ', true),
-      ('سيبروفلوكساسين', 'سيبروباي', 'أقراص', '500 مغ', true),
-      ('إنالابريل', 'ريناتك', 'أقراص', '10 مغ', true),
-      ('أملوديبين', 'نورفاسك', 'أقراص', '5 مغ', true),
-      ('ليفوثيروكسين', 'إلتروكسين', 'أقراص', '50 مكغ', true),
-      ('فيتامين D3', 'فيتامين D3', 'كبسولات', '1000 وحدة', false),
-      ('فيتامين C', 'سيفيت', 'أقراص فوارة', '1000 مغ', false),
-      ('أسبرين', 'أسبرين', 'أقراص', '100 مغ', false),
-      ('كلوبيدوغريل', 'بلافيكس', 'أقراص', '75 مغ', true),
-      ('راميبريل', 'تريتيس', 'كبسولات', '5 مغ', true),
-      ('ميلوكسيكام', 'موبيك', 'أقراص', '15 مغ', true),
-      ('ديكلوفيناك', 'فولتارين', 'أقراص', '50 مغ', true),
-      ('غابابنتين', 'نيورونتين', 'كبسولات', '300 مغ', true),
-      ('سيرترالين', 'زولوفت', 'أقراص', '50 مغ', true),
-      ('كلاريثروميسين', 'كلاريسيد', 'أقراص', '500 مغ', true),
-      ('فيتامين B12', 'نيوروبيون', 'أقراص', '200 مكغ', false),
-      ('حديد', 'فيروغراديوميت', 'أقراص', '105 مغ', false),
-      ('كالسيوم + D3', 'كالسيوم سانودوز', 'أقراص فوارة', '500 مغ', false),
-      ('ميزوبروستول', 'سايتوتيك', 'أقراص', '200 مكغ', true),
-      ('بيسوبرولول', 'كونكور', 'أقراص', '5 مغ', true),
-      ('فاموتيدين', 'بيبسيد', 'أقراص', '40 مغ', false),
-      ('ترامادول', 'ترامال', 'كبسولات', '50 مغ', true)
-    `).catch(() => {});
-  }
-
-  const app = express();
-  app.use(helmet());
-  const ALLOWED_ORIGINS = new Set([
-    ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
-    'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002',
-    'http://localhost:3003', 'http://localhost:3004',
-  ]);
-  app.use(cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // server-to-server / curl
-      if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
-      cb(new Error('CORS: origin not allowed'));
-    },
-    credentials: true,
-  }));
-  app.use(express.json({ limit: '50mb' }));
-  app.use(traceIdMiddleware);
-  app.use(requestLogger);
-
-  const router = express.Router();
 
   // ─── PLATFORM SETTINGS ────────────────────────────────────────────────
   router.get('/settings', async (_req, res, next) => {
