@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react';
 const AUTH_API  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
-const SECRET    = 'mediflow-delete-2026';
 
 function patientH(extra: Record<string, string> = {}): Record<string, string> {
   try {
@@ -70,7 +69,7 @@ export default function DoctorsPage() {
 
     Promise.all([
       fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
-      fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([reqRes, authRes]) => {
       const authUsers: any[] = authRes.data || authRes.users || [];
       const approved = (reqRes.data || [])

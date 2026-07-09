@@ -5,7 +5,6 @@ import { CheckCircle, XCircle, Clock, Building2, Stethoscope, Package, RefreshCw
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
-const SECRET = 'mediflow-delete-2026';
 
 function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
   try {
@@ -122,8 +121,8 @@ export default function ApprovalsPage() {
     try {
       const res = await fetch(`${AUTH_API}/auth/admin/reset-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: resetEmail.trim(), newPassword: newPass, secret: SECRET }),
+        headers: adminAuthHeaders(),
+        body: JSON.stringify({ email: resetEmail.trim(), newPassword: newPass }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -133,8 +132,8 @@ export default function ApprovalsPage() {
       // Reactivate the auth account (it was suspended when they requested reset)
       await fetch(`${AUTH_API}/auth/admin/activate-user`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: resetEmail.trim(), secret: SECRET }),
+        headers: adminAuthHeaders(),
+        body: JSON.stringify({ email: resetEmail.trim() }),
       }).catch(() => {});
 
       // Reactivate the pharmacy/portal record status → active

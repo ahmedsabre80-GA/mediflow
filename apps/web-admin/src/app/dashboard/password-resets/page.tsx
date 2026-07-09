@@ -4,7 +4,6 @@ import { KeyRound, Check, X, RefreshCw } from 'lucide-react';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API     = 'https://mediflowauth-service-production.up.railway.app/api/v1/auth';
-const SECRET       = 'mediflow-delete-2026';
 
 function adminH(extra: Record<string, string> = {}): Record<string, string> {
   try {
@@ -72,7 +71,7 @@ export default function PasswordResetsPage() {
       const res = await fetch(`${AUTH_API}/admin/reset-password`, {
         method: 'POST',
         headers: adminH(),
-        body: JSON.stringify({ email: req.pharmacyEmail, newPassword: tempPass, secret: SECRET }),
+        body: JSON.stringify({ email: req.pharmacyEmail, newPassword: tempPass }),
       });
 
       if (!res.ok) { alert('فشل إعادة التعيين — تحقق من البريد الإلكتروني'); setActing(null); return; }

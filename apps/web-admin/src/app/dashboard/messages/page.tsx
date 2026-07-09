@@ -5,7 +5,6 @@ import { logAction } from '@/lib/auditSystem';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API     = 'https://mediflowauth-service-production.up.railway.app/api/v1';
-const SECRET       = 'mediflow-delete-2026';
 const ADMIN_SENDER = 'فريق ميديفلو';
 
 function adminH(extra: Record<string, string> = {}): Record<string, string> {
@@ -119,7 +118,7 @@ export default function MessagesPage() {
   useEffect(() => {
     Promise.all([
       fetch(`${PHARMACY_API}/admin/all`).then(r => r.json()).catch(() => ({ data: [] })),
-      fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${AUTH_API}/auth/admin/users`, { headers: adminH() }).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([pharmData, authData]) => {
       const pharmacies: User[] = (pharmData.data || []).map((p: any) => ({
         id: p.owner_id || p.id,

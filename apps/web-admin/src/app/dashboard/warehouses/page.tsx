@@ -11,7 +11,12 @@ function printWarehouseReport(w: WUser) {
 
 const AUTH_API  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
-const SECRET    = 'mediflow-delete-2026';
+function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_verification: { label: 'معلق',   color: 'bg-amber-100 text-amber-700' },
@@ -52,7 +57,7 @@ export default function WarehousesPage() {
     setLoading(true);
     try {
       const [usersRes, reqsRes] = await Promise.all([
-        fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}&role=warehouse_owner`),
+        fetch(`${AUTH_API}/auth/admin/users?role=warehouse_owner`, { headers: adminAuthHeaders() }),
         fetch(`${PHARM_API}/admin-requests?portal_type=warehouse`),
       ]);
       const usersData = await usersRes.json();
@@ -75,8 +80,8 @@ export default function WarehousesPage() {
   const callAuth = async (endpoint: string, body: object) =>
     fetch(`${AUTH_API}/auth/admin/${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret: SECRET, ...body }),
+      headers: adminAuthHeaders(),
+      body: JSON.stringify(body),
     });
 
   const approve = async (w: WUser) => {
@@ -126,8 +131,8 @@ export default function WarehousesPage() {
     try {
       await fetch(`${AUTH_API}/auth/admin/delete-user`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: deleteTarget.email, secret: SECRET }),
+        headers: adminAuthHeaders(),
+        body: JSON.stringify({ email: deleteTarget.email }),
       });
       setWarehouses(prev => prev.filter(u => u.id !== deleteTarget.id));
       showToast('🗑️ تم حذف المستودع بالكامل');

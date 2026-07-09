@@ -4,7 +4,13 @@ import { Search, RefreshCw, LogOut, KeyRound, Eye, CheckCircle, X, Copy, Ban, Tr
 
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
-const SECRET = 'mediflow-delete-2026';
+
+function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 
 // Roles considered "employees" — added by portals, not main owners
 const EMPLOYEE_ROLES = ['pharmacy_employee', 'warehouse_employee', 'doctor_assistant', 'driver'];
@@ -100,7 +106,7 @@ export default function UsersPage() {
   const load = async () => {
     setLoading(true);
     const [usersRes, pharmaciesRes] = await Promise.all([
-      fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${AUTH_API}/auth/admin/users`, { headers: adminAuthHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
       fetch(`${PHARMACY_API}/pharmacies/admin/all`).then(r => r.json()).catch(() => ({ data: [] })),
     ]);
     // Only show employee-type roles here
@@ -130,8 +136,8 @@ export default function UsersPage() {
 
   const forceSignOut = async (u: any) => {
     await fetch(`${AUTH_API}/auth/admin/force-signout`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: u.email, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: u.email }),
     }).catch(() => {});
     setUsers(prev => prev.map(x => x.id === u.id ? { ...x, status: 'force_logout' } : x));
     showToast(`🔒 تم تسجيل خروج ${u.email}`);
@@ -140,8 +146,8 @@ export default function UsersPage() {
 
   const reactivate = async (u: any) => {
     await fetch(`${AUTH_API}/auth/admin/activate-user`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: u.email, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: u.email }),
     }).catch(() => {});
     setUsers(prev => prev.map(x => x.id === u.id ? { ...x, status: 'active' } : x));
     showToast(`✅ تم تفعيل ${u.email}`);
@@ -152,8 +158,8 @@ export default function UsersPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     await fetch(`${AUTH_API}/auth/admin/delete-user`, {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: deleteTarget.email, secret: SECRET }),
+      method: 'DELETE', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: deleteTarget.email }),
     }).catch(() => {});
     setUsers(prev => prev.filter(x => x.id !== deleteTarget.id));
     setDeleting(false);
@@ -165,8 +171,8 @@ export default function UsersPage() {
     if (!newPass || newPass.length < 6) return;
     setResetting(true);
     const res = await fetch(`${AUTH_API}/auth/admin/reset-password`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: resetTarget.email, newPassword: newPass, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: resetTarget.email, newPassword: newPass }),
     });
     setResetting(false);
     if (res.ok) { setResetDone(newPass); showToast('✅ تم تغيير كلمة المرور'); }

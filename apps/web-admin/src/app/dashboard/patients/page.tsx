@@ -4,7 +4,6 @@ import { CheckCircle, XCircle, Clock, Search, RefreshCw, UserCheck, UserX, Ban, 
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API     = 'https://mediflowauth-service-production.up.railway.app/api/v1';
-const SECRET       = 'mediflow-delete-2026';
 
 interface Patient {
   id: string;           // admin_request id (or synthetic)
@@ -40,8 +39,8 @@ export default function PatientsPage() {
       const token = getAdminToken();
       // Fetch auth users with role=patient AND admin_requests in parallel
       const [usersRes, reqsRes] = await Promise.allSettled([
-        fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}`, {
-          headers: { Authorization: `Bearer ${token}` },
+        fetch(`${AUTH_API}/auth/admin/users`, {
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         }),
         fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&action_type=register`),
       ]);
@@ -155,7 +154,7 @@ export default function PatientsPage() {
       await fetch(`${AUTH_API}/auth/admin/${authEndpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAdminToken()}` },
-        body: JSON.stringify({ userId: patient.requester_id, adminSecret: 'mediflow-delete-2026' }),
+        body: JSON.stringify({ userId: patient.requester_id }),
       }).catch(() => {});
 
       setPatients(prev => prev.map(p =>

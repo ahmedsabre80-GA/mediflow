@@ -6,7 +6,12 @@ import { logAction } from '@/lib/auditSystem';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
-const SECRET = 'mediflow-delete-2026';
+function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  try {
+    const t = localStorage.getItem('admin-token') || '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
+  } catch { return { 'Content-Type': 'application/json', ...extra }; }
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending:   { label: 'معلق',    color: 'bg-amber-100 text-amber-700' },
@@ -87,7 +92,7 @@ export default function DoctorsPage() {
     try {
       const [reqRes, authRes] = await Promise.all([
         fetch(`${PHARMACY_API}/admin-requests?portal_type=doctor`).then(r => r.json()),
-        fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}&role=doctor`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${AUTH_API}/auth/admin/users?role=doctor`, { headers: adminAuthHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const authUsers: any[] = authRes.data || [];
       const docs = (reqRes.data || []).map((d: any) => {
@@ -110,9 +115,8 @@ export default function DoctorsPage() {
     }).catch(() => {});
     if (status === 'approved' && doc?.employee_email) {
       await fetch(`${AUTH_API}/auth/admin/activate-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: doc.employee_email, secret: SECRET }),
+        method: 'POST', headers: adminAuthHeaders(),
+        body: JSON.stringify({ email: doc.employee_email }),
       }).catch(() => {});
     }
     setDoctors(prev => prev.map(d => d.id === id ? { ...d, status } : d));
@@ -124,18 +128,9 @@ export default function DoctorsPage() {
   const suspend = async (doc: any) => {
     const isSuspended = doc.authStatus === 'suspended';
     await fetch(`${AUTH_API}/auth/admin/${isSuspended ? 'activate-user' : 'force-signout'}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: doc.employee_email, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: doc.employee_email }),
     }).catch(() => {});
-    if (!isSuspended) {
-      // Also set suspended status
-      await fetch(`${AUTH_API}/auth/admin/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: doc.employee_email, newPassword: '_suspended_', secret: SECRET }),
-      }).catch(() => {});
-    }
     setDoctors(prev => prev.map(d => d.id === doc.id ? { ...d, authStatus: isSuspended ? 'active' : 'suspended' } : d));
     if (selected?.id === doc.id) setSelected((s: any) => ({ ...s, authStatus: isSuspended ? 'active' : 'suspended' }));
     showToast(isSuspended ? '✅ تم تفعيل الطبيب' : '🚫 تم إيقاف الطبيب');
@@ -143,9 +138,8 @@ export default function DoctorsPage() {
 
   const forceSignOut = async (email: string) => {
     await fetch(`${AUTH_API}/auth/admin/force-signout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email }),
     }).catch(() => {});
     showToast('🔒 تم تسجيل الخروج القسري');
   };
@@ -157,8 +151,8 @@ export default function DoctorsPage() {
     if (deleteTarget.employee_email) {
       await fetch(`${AUTH_API}/auth/admin/delete-user`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: deleteTarget.employee_email, secret: SECRET }),
+        headers: adminAuthHeaders(),
+        body: JSON.stringify({ email: deleteTarget.employee_email }),
       }).catch(() => {});
     }
     setDoctors(prev => prev.filter(d => d.id !== deleteTarget.id));
@@ -173,8 +167,8 @@ export default function DoctorsPage() {
     setResetting(true);
     const res = await fetch(`${AUTH_API}/auth/admin/reset-password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: resetTarget.employee_email, newPassword: newPass, secret: SECRET }),
+      headers: adminAuthHeaders(),
+      body: JSON.stringify({ email: resetTarget.employee_email, newPassword: newPass }),
     });
     setResetting(false);
     if (res.ok) { setResetDone(newPass); showToast('✅ تم تغيير كلمة المرور'); }

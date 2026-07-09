@@ -16,7 +16,6 @@ const RATING_CATEGORIES = [
 const AUTH_API  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
-const SECRET    = 'mediflow-delete-2026';
 
 const STATUS_STYLE: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
@@ -145,7 +144,7 @@ export default function AppointmentsPage() {
       // Fetch all approved doctors
       const [reqRes, authRes] = await Promise.all([
         fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
-        fetch(`${AUTH_API}/auth/admin/users?secret=${SECRET}`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const authUsers: any[] = authRes.data || authRes.users || [];
       const approvedDoctors = (reqRes.data || [])

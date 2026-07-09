@@ -6,7 +6,6 @@ import { logAction } from '@/lib/auditSystem';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 
-const SECRET = 'mediflow-delete-2026';
 
 function adminAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
   try {
@@ -176,13 +175,13 @@ export default function PharmaciesPage() {
       if (email) {
         if (status === 'suspended') {
           await fetch(`${AUTH_API}/auth/admin/force-signout`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, secret: SECRET }),
+            method: 'POST', headers: adminAuthHeaders(),
+            body: JSON.stringify({ email }),
           }).catch(() => {});
         } else if (status === 'active') {
           await fetch(`${AUTH_API}/auth/admin/activate-user`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, secret: SECRET }),
+            method: 'POST', headers: adminAuthHeaders(),
+            body: JSON.stringify({ email }),
           }).catch(() => {});
         }
       }
@@ -207,9 +206,8 @@ export default function PharmaciesPage() {
     const email = deleteTarget.owner_email || deleteTarget.email;
     if (email) {
       await fetch(`${AUTH_API}/auth/admin/delete-user`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, secret: SECRET }),
+        method: 'DELETE', headers: adminAuthHeaders(),
+        body: JSON.stringify({ email }),
       }).catch(() => {});
     }
     setPharmacies(prev => prev.filter(p => p.id !== deleteTarget.id));
@@ -226,8 +224,8 @@ export default function PharmaciesPage() {
     setResetting(true);
     const res = await fetch(`${AUTH_API}/auth/admin/reset-password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, newPassword: newPass, secret: SECRET }),
+      headers: adminAuthHeaders(),
+      body: JSON.stringify({ email, newPassword: newPass }),
     });
     setResetting(false);
     if (res.ok) {
@@ -235,8 +233,8 @@ export default function PharmaciesPage() {
       showToast('✅ تم تغيير كلمة المرور');
       // Reactivate auth account and pharmacy status
       await fetch(`${AUTH_API}/auth/admin/activate-user`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, secret: SECRET }),
+        method: 'POST', headers: adminAuthHeaders(),
+        body: JSON.stringify({ email }),
       }).catch(() => {});
       if (resetTarget?.id) {
         const patchRes = await fetch(`${PHARMACY_API}/pharmacies/admin/${resetTarget.id}/status`, {
@@ -254,8 +252,8 @@ export default function PharmaciesPage() {
     const email = pharmacy.owner_email || pharmacy.email;
     if (!email) { showToast('❌ لا يوجد بريد إلكتروني'); return; }
     await fetch(`${AUTH_API}/auth/admin/force-signout`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, secret: SECRET }),
+      method: 'POST', headers: adminAuthHeaders(),
+      body: JSON.stringify({ email }),
     }).catch(() => {});
     showToast('🔒 تم تسجيل الخروج القسري');
   };

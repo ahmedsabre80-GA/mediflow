@@ -15,7 +15,6 @@ function patientH(extra: Record<string, string> = {}): Record<string, string> {
     return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
   } catch { return { 'Content-Type': 'application/json', ...extra }; }
 }
-const SECRET_KEY    = 'mediflow-delete-2026';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
@@ -67,7 +66,7 @@ function SearchContent() {
     setDocsLoading(true);
     Promise.all([
       fetch(`${PHARM_API_URL}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
-      fetch(`${AUTH_API_URL}/auth/admin/users?secret=${SECRET_KEY}`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${AUTH_API_URL}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([reqRes, authRes]) => {
       const authUsers: any[] = authRes.data || authRes.users || [];
       setDoctors((reqRes.data || [])

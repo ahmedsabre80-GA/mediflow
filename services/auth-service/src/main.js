@@ -67,6 +67,70 @@ function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
+// ─── RATE LIMITING ────────────────────────────────────────────────────────────
+// In-memory store: ip → { count, resetAt }
+const loginAttempts = new Map();
+const RATE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_ATTEMPTS = 5;
+
+function loginRateLimit(req, res, next) {
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+
+  if (entry && now < entry.resetAt && entry.count >= MAX_ATTEMPTS) {
+    const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
+    res.set('Retry-After', String(retryAfterSec));
+    return res.status(429).json({
+      success: false,
+      error: { title: 'Too many login attempts. Try again later.', status: 429 },
+    });
+  }
+  next();
+}
+
+function recordFailedLogin(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+  } else {
+    entry.count += 1;
+  }
+}
+
+function clearLoginAttempts(ip) {
+  loginAttempts.delete(ip);
+}
+
+// Clean up stale entries every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts.entries()) {
+    if (now >= entry.resetAt) loginAttempts.delete(ip);
+  }
+}, 30 * 60 * 1000);
+
+// ─── ADMIN AUTH MIDDLEWARE ────────────────────────────────────────────────────
+const ADMIN_ROLES = new Set(['admin', 'super_admin']);
+
+function requireAdmin(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, error: { title: 'Authorization required', status: 401 } });
+  }
+  try {
+    const payload = verifyToken(authHeader.slice(7));
+    if (!ADMIN_ROLES.has(payload.role)) {
+      return res.status(403).json({ success: false, error: { title: 'Admin access required', status: 403 } });
+    }
+    req.user = payload;
+    next();
+  } catch {
+    return res.status(401).json({ success: false, error: { title: 'Invalid or expired token', status: 401 } });
+  }
+}
+
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 
 // Health check
@@ -172,7 +236,8 @@ app.post('/api/v1/auth/register', async (req, res) => {
 });
 
 // LOGIN
-app.post('/api/v1/auth/login', async (req, res) => {
+app.post('/api/v1/auth/login', loginRateLimit, async (req, res) => {
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
   try {
     const { identifier, password } = req.body;
     if (!identifier || !password) {
@@ -187,6 +252,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
     const result = await pool.query(query, [identifier]);
 
     if (result.rows.length === 0) {
+      recordFailedLogin(ip);
       return res.status(401).json({ success: false, error: { title: 'Invalid credentials', status: 401 } });
     }
 
@@ -195,6 +261,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
     // Check password
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      recordFailedLogin(ip);
       return res.status(401).json({ success: false, error: { title: 'Invalid credentials', status: 401 } });
     }
 
@@ -216,6 +283,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
 
     // Update last login
     await pool.query('UPDATE auth.users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+    clearLoginAttempts(ip);
 
     const accessToken = generateToken(user.id, user.role);
     const refreshToken = generateRefreshToken(user.id);
@@ -284,9 +352,8 @@ app.get('/api/v1/auth/verify', (req, res) => {
 
 
 // ─── TEMP: reset password ────────────────────────────────────────────────────
-app.post('/api/v1/auth/admin/reset-password', async (req, res) => {
-  const { email, newPassword, secret } = req.body;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+app.post('/api/v1/auth/admin/reset-password', requireAdmin, async (req, res) => {
+  const { email, newPassword } = req.body;
   try {
     const hash = await bcrypt.hash(newPassword, 12);
     const r = await pool.query("UPDATE auth.users SET password_hash=$1, status='active' WHERE LOWER(email)=LOWER($2) RETURNING id,email,status", [hash, email]);
@@ -296,9 +363,8 @@ app.post('/api/v1/auth/admin/reset-password', async (req, res) => {
 });
 
 // ─── TEMP: activate user by email ────────────────────────────────────────────
-app.post('/api/v1/auth/admin/activate-user', async (req, res) => {
-  const { email, secret } = req.body;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+app.post('/api/v1/auth/admin/activate-user', requireAdmin, async (req, res) => {
+  const { email } = req.body;
   try {
     const r = await pool.query("UPDATE auth.users SET status='active' WHERE LOWER(email)=LOWER($1) RETURNING id,email,status", [email]);
     if (!r.rows.length) return res.status(404).json({ error: 'not found' });
@@ -307,9 +373,8 @@ app.post('/api/v1/auth/admin/activate-user', async (req, res) => {
 });
 
 // ─── TEMP: delete user by email ──────────────────────────────────────────────
-app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
-  const { email, secret } = req.body;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+app.delete('/api/v1/auth/admin/delete-user', requireAdmin, async (req, res) => {
+  const { email } = req.body;
   try {
     const u = await pool.query('SELECT id FROM auth.users WHERE LOWER(email)=LOWER($1)', [email]);
     if (!u.rows.length) return res.status(404).json({ error: 'not found' });
@@ -320,10 +385,26 @@ app.delete('/api/v1/auth/admin/delete-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── PUBLIC: list active doctors (for patient portal) ────────────────────────
+app.get('/api/v1/auth/users/doctors', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at,
+             p.first_name, p.last_name
+      FROM auth.users u
+      LEFT JOIN users.profiles p ON p.id = u.id
+      WHERE u.role = 'doctor' AND u.status = 'active' AND u.deleted_at IS NULL
+      ORDER BY p.first_name, p.last_name
+    `);
+    res.json({ success: true, data: r.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Internal server error', status: 500 } });
+  }
+});
+
 // ─── ADMIN: list all users ────────────────────────────────────────────────────
-app.get('/api/v1/auth/admin/users', async (req, res) => {
-  const { secret, role } = req.query;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+app.get('/api/v1/auth/admin/users', requireAdmin, async (req, res) => {
+  const { role } = req.query;
   try {
     let q = `
       SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at,
@@ -342,9 +423,8 @@ app.get('/api/v1/auth/admin/users', async (req, res) => {
 
 
 // ─── ADMIN: force sign out (deactivate then reactivate — invalidates JWT by changing status) ──
-app.post('/api/v1/auth/admin/force-signout', async (req, res) => {
-  const { email, secret } = req.body;
-  if (secret !== 'mediflow-delete-2026') return res.status(403).json({ error: 'forbidden' });
+app.post('/api/v1/auth/admin/force-signout', requireAdmin, async (req, res) => {
+  const { email } = req.body;
   try {
     // Toggle status to force_logout then back to active — any in-flight token will fail login check
     await pool.query("UPDATE auth.users SET status='force_logout' WHERE LOWER(email)=LOWER($1)", [email]);
