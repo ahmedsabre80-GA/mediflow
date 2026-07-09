@@ -2,9 +2,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send, Receipt } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
-import DraggableModal from '@/components/DraggableModal';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
@@ -13,7 +12,6 @@ const NAV_ITEMS = [
   { href: '/dashboard',            icon: LayoutDashboard, label: 'الرئيسية',  perm: null },
   { href: '/dashboard/orders',     icon: ShoppingBag,     label: 'الطلبات',   perm: 'orders:read' },
   { href: '/dashboard/inventory',  icon: Package,         label: 'المخزون',   perm: 'inventory:read' },
-  { href: '/dashboard/sales',     icon: Receipt,         label: 'المبيعات',  perm: 'inventory:read' },
   { href: '/dashboard/analytics',  icon: BarChart2,       label: 'التحليلات', perm: 'reports:read' },
   { href: '/dashboard/employees',  icon: Users,           label: 'الموظفون',  perm: 'employees:read' },
   { href: '/dashboard/messages',   icon: MessageSquare,   label: 'الرسائل',   perm: 'employees:read' },
@@ -66,37 +64,6 @@ function parseReservation(msg: string) {
   return { drug, patient, phone, qty: Number(qtyStr), patientId: pid, pharmacyPhone: pharmPhone, price, currency, drugId };
 }
 
-async function syncExpiredStock(pharmacyId: string, token: string) {
-  try {
-    const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
-    if (!batches.length) return;
-    const now = Date.now();
-
-    const r = await fetch(`${PHARMACY_API}/${pharmacyId}/inventory?limit=200`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const d = await r.json();
-    const apiItems: any[] = d.data || [];
-
-    for (const item of apiItems) {
-      const name = (item.drug_name || item.name || '').toLowerCase().trim();
-      const itemBatches = batches.filter(b =>
-        (b.drugName || '').toLowerCase().trim() === name && (b.qtyRemaining || 0) > 0
-      );
-      if (!itemBatches.length) continue;
-
-      const allExpired = itemBatches.every(b => b.expiry && new Date(b.expiry).getTime() <= now);
-      if (allExpired && (item.total_qty || item.quantity || 0) > 0) {
-        await fetch(`${PHARMACY_API}/${pharmacyId}/inventory/${item.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ totalQty: 0 }),
-        }).catch(() => {});
-      }
-    }
-  } catch {}
-}
-
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -117,9 +84,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [pharmacyPhone, setPharmacyPhone] = useState('');
   const [timeoutMin,         setTimeoutMin]         = useState(10);
   const [acceptingRx,        setAcceptingRx]        = useState(false);
-  const [acceptedRxIds,      setAcceptedRxIds]      = useState<Set<string>>(() => {
-    try { return new Set<string>(JSON.parse(localStorage.getItem('mediflow-my-accepted-rx-ids') || '[]')); } catch { return new Set<string>(); }
-  });
+  const [acceptedRxIds,      setAcceptedRxIds]      = useState<Set<string>>(new Set());
   const [rxClaimedBy,        setRxClaimedBy]        = useState<string | null>(null);
   const [checkingRxClaim,    setCheckingRxClaim]    = useState(false);
   const [rxImage,            setRxImage]            = useState<string | null>(null);
@@ -130,8 +95,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [rxModalDrugSlots,   setRxModalDrugSlots]   = useState<Record<number, boolean>>({});
   const [rxModalDrugCount,   setRxModalDrugCount]   = useState(5);
   const [rxModalRejectMsg,   setRxModalRejectMsg]   = useState('');
-  const [rxDeliveredIds,     setRxDeliveredIds]     = useState<Set<string>>(() => loadSet('pharmacy-rx-delivered'));
-  const [rxDeliveringId,     setRxDeliveringId]     = useState<string | null>(null);
   const [rxModalResponding,  setRxModalResponding]  = useState(false);
   const [preparingPartialIds, setPreparingPartialIds] = useState<Set<string>>(new Set());
   const [partialDeliveredIds, setPartialDeliveredIds] = useState<Set<string>>(new Set());
@@ -196,23 +159,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     refresh();
     const iv = setInterval(refresh, 30000);
-
-    // Re-fetch when orders page fires an rx update (e.g. after claim/deliver from that tab)
-    const onRxUpdate = () => {
-      refresh();
-      // Re-sync localStorage state so notification panel reflects actions from الطلبات tab
-      setRxDeliveredIds(loadSet('pharmacy-rx-delivered'));
-      try {
-        const myAccepted: string[] = JSON.parse(localStorage.getItem('mediflow-my-accepted-rx-ids') || '[]');
-        if (myAccepted.length) setAcceptedRxIds(prev => new Set([...Array.from(prev), ...myAccepted]));
-      } catch {}
-    };
-    window.addEventListener('mediflow-rx-update', onRxUpdate);
-
-    // Sync expired batches to API so patients don't see expired stock
-    syncExpiredStock(pharmacyId, token);
-
-    return () => { clearInterval(iv); window.removeEventListener('mediflow-rx-update', onRxUpdate); };
+    return () => clearInterval(iv);
   }, [router, refresh]);
 
   // When a prescription notification is opened: fetch image + check claim status
@@ -235,38 +182,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .finally(() => setRxImageLoading(false));
     // Check claim status
     if (acceptedRxIds.has(rx.id)) return;
-    // First check localStorage — orders tab writes prescriptionId here when it claims
-    try {
-      const myAcceptedIds: string[] = JSON.parse(localStorage.getItem('mediflow-my-accepted-rx-ids') || '[]');
-      if (myAcceptedIds.includes(rx.id)) {
-        setAcceptedRxIds(prev => new Set(Array.from(prev).concat(rx.id)));
-        return;
-      }
-    } catch {}
     setRxClaimedBy(null);
     setCheckingRxClaim(true);
     fetch(`${PHARMACY_API}/prescriptions/${rx.id}`)
       .then(r => r.json())
-      .then(d => {
-        if (d?.data?.status === 'claimed') {
-          const myPharmacyId = String(localStorage.getItem('pharmacy-id') || '');
-          const claimedBy = String(d.data.claimed_by || '');
-          if (claimedBy && claimedBy === myPharmacyId) {
-            // This pharmacy claimed it — mark as accepted locally
-            setAcceptedRxIds(prev => new Set(Array.from(prev).concat(rx.id)));
-            // Persist so future checks are instant
-            try {
-              const myAccepted: string[] = JSON.parse(localStorage.getItem('mediflow-my-accepted-rx-ids') || '[]');
-              if (!myAccepted.includes(rx.id)) {
-                myAccepted.push(rx.id);
-                localStorage.setItem('mediflow-my-accepted-rx-ids', JSON.stringify(myAccepted));
-              }
-            } catch {}
-          } else {
-            setRxClaimedBy(claimedBy || 'صيدلية أخرى');
-          }
-        }
-      })
+      .then(d => { if (d?.data?.status === 'claimed') setRxClaimedBy(d.data.claimed_by || 'صيدلية أخرى'); })
       .catch(() => {})
       .finally(() => setCheckingRxClaim(false));
   }, [selectedNotif]);
@@ -609,10 +529,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             }
             const next = new Set(Array.from(acceptedRxIds).concat(prescription.id));
             setAcceptedRxIds(next);
-            const claimed = new Set<string>(JSON.parse(localStorage.getItem('pharmacy-claimed-prescriptions') || '[]'));
-            claimed.add(selectedNotif.id);
-            localStorage.setItem('pharmacy-claimed-prescriptions', JSON.stringify(Array.from(claimed)));
-            window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
           } catch {}
           setAcceptingRx(false);
         };
@@ -645,10 +561,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             }
             const next = new Set(Array.from(acceptedRxIds).concat(prescription.id));
             setAcceptedRxIds(next);
-            const claimed = new Set<string>(JSON.parse(localStorage.getItem('pharmacy-claimed-prescriptions') || '[]'));
-            claimed.add(selectedNotif.id);
-            localStorage.setItem('pharmacy-claimed-prescriptions', JSON.stringify(Array.from(claimed)));
-            window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
             setRxModalMode(null);
             setSelectedNotif(null);
           } catch {}
@@ -679,13 +591,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         };
 
         return (
-          <DraggableModal
-            open={!!selectedNotif}
-            onClose={() => { setSelectedNotif(null); setShowRejectForm(false); setRejectReason(''); setRxClaimedBy(null); }}
-            title="تفاصيل الإشعار"
-            initialWidth={448}
-          >
-            <div className="p-6" dir="rtl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => { setSelectedNotif(null); setShowRejectForm(false); setRejectReason(''); setRxClaimedBy(null); }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+                <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
+              </div>
 
               {/* Message */}
               <div className={`rounded-xl p-4 mb-4 ${isExpired ? 'bg-red-50 border border-red-200' : prescription ? 'bg-purple-50 border border-purple-200' : reservation ? 'bg-amber-50 border border-amber-200' : 'bg-sky-50'}`}>
@@ -776,48 +689,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 ) : isRxAccepted ? (
                   /* ── Prescription: accepted by this pharmacy ── */
                   <div className="space-y-2">
-                    {rxDeliveredIds.has(selectedNotif.id) ? (
-                      <div className="w-full bg-green-50 border border-green-200 text-green-700 font-semibold py-2.5 rounded-xl text-sm text-center">
-                        ✅ تم التسليم وأُشعر المريض
-                      </div>
-                    ) : (
-                      <>
-                        <div className="w-full bg-blue-50 border border-blue-200 text-blue-700 font-semibold py-2.5 rounded-xl text-sm text-center">
-                          ✅ قبلت تحضير هذه الوصفة — بانتظار الاستلام
-                        </div>
-                        <button
-                          disabled={rxDeliveringId === selectedNotif.id}
-                          onClick={async () => {
-                            const rx = prescription;
-                            if (!rx) return;
-                            setRxDeliveringId(selectedNotif.id);
-                            const isDelivery = rx.delivery === 'delivery';
-                            const now = new Date().toLocaleString('ar-IQ');
-                            if (rx.patientId) {
-                              await fetch(`${PHARMACY_API}/portal-notifications`, {
-                                method: 'POST', headers: pharmAuthHeaders(),
-                                body: JSON.stringify({
-                                  portalType: 'patient', recipientId: rx.patientId,
-                                  senderName: pharmacyName || 'الصيدلية',
-                                  message: `🧾 ${isDelivery ? 'تم توصيل وصفتك الطبية' : 'وصفتك الطبية جاهزة — تم الاستلام'}\n━━━━━━━━━━━━━━━\nالصيدلية: ${pharmacyName || 'الصيدلية'}\nالتاريخ: ${now}\n━━━━━━━━━━━━━━━\nشكراً لاستخدامك ميديفلو 💙[prescription_id:${rx.id}]`,
-                                }),
-                              }).catch(() => {});
-                            }
-                            setRxDeliveredIds(prev => new Set(Array.from(prev).concat(selectedNotif.id)));
-                            const rxDel = new Set<string>(JSON.parse(localStorage.getItem('pharmacy-rx-delivered') || '[]'));
-                            rxDel.add(selectedNotif.id);
-                            localStorage.setItem('pharmacy-rx-delivered', JSON.stringify(Array.from(rxDel)));
-                            window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
-                            setRxDeliveringId(null);
-                          }}
-                          className="w-full flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white rounded-xl text-sm font-bold transition-colors">
-                          {rxDeliveringId === selectedNotif.id
-                            ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            : '✓'}
-                          {prescription?.delivery === 'delivery' ? 'تم التوصيل للمريض' : 'استلم المريض الأدوية'}
-                        </button>
-                      </>
-                    )}
+                    <div className="w-full bg-green-50 border border-green-200 text-green-700 font-semibold py-2.5 rounded-xl text-sm text-center">
+                      ✅ قبلت تحضير هذه الوصفة وأُشعر المريض
+                    </div>
                     <button onClick={() => { setSelectedNotif(null); setRxClaimedBy(null); }}
                       className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
                       إغلاق
@@ -1037,7 +911,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
               )}
             </div>
-          </DraggableModal>
+          </div>
         );
       })()}
     </div>

@@ -210,14 +210,15 @@ export default function ApprovalsPage() {
 
   const isResetTab = portalTab === '__reset';
   const activePool = isResetTab ? resetRequests : regularRequests;
-  const byPortal = portalTab === 'all' || isResetTab ? activePool : activePool.filter(r => r.portalType === portalTab);
+  const byPortal = isResetTab || portalTab === 'all' ? activePool : activePool.filter(r => r.portalType === portalTab);
   const filtered = statusFilter === 'all' ? byPortal : byPortal.filter(r => r.status === statusFilter);
-  const decided = activePool.filter(r => r.status !== 'pending').length;
+  const decided = regularRequests.filter(r => r.status !== 'pending').length;
 
   const countFor = (portal: string, status: string) => {
-    const pool = portal === 'all' || portal === '__reset'
-      ? (portal === '__reset' ? resetRequests : regularRequests)
-      : regularRequests.filter(r => r.portalType === portal);
+    if (portal === '__reset') {
+      return status === 'all' ? resetRequests.length : resetRequests.filter(r => r.status === status).length;
+    }
+    const pool = portal === 'all' ? regularRequests : regularRequests.filter(r => r.portalType === portal);
     return status === 'all' ? pool.length : pool.filter(r => r.status === status).length;
   };
 
@@ -309,9 +310,7 @@ export default function ApprovalsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">طلبات الموافقة</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {isResetTab
-              ? 'طلبات إعادة تعيين كلمة المرور من مستخدمي المنصة'
-              : 'طلبات إضافة وحذف موظفين من الصيدليات والمستودعات والأطباء'}
+            {isResetTab ? 'طلبات إعادة تعيين كلمة المرور' : 'طلبات إضافة وحذف موظفين من الصيدليات والمستودعات والأطباء'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -336,6 +335,21 @@ export default function ApprovalsPage() {
         </div>
       </div>
 
+      {/* Portal Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
+        {PORTAL_TABS.map(t => (
+          <button key={t.key} onClick={() => setPortalTab(t.key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${portalTab === t.key ? `bg-white shadow-sm ${t.color}` : 'text-gray-500 hover:text-gray-700'}`}>
+            {t.label}
+            {t.key !== 'all' && countFor(t.key, 'pending') > 0 && (
+              <span className="mr-1.5 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
+                {countFor(t.key, 'pending')}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
@@ -347,27 +361,6 @@ export default function ApprovalsPage() {
             <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
             <p className="text-sm text-gray-600 mt-1">{s.label}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Portal Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
-        {PORTAL_TABS.map(t => (
-          <button key={t.key} onClick={() => setPortalTab(t.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${portalTab === t.key ? `bg-white shadow-sm ${t.color}` : 'text-gray-500 hover:text-gray-700'}`}>
-            {t.key === '__reset' && <KeyRound className="w-3.5 h-3.5 inline ml-1" />}
-            {t.label}
-            {t.key === '__reset' && resetRequests.filter(r => r.status === 'pending').length > 0 && (
-              <span className="mr-1.5 bg-purple-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                {resetRequests.filter(r => r.status === 'pending').length}
-              </span>
-            )}
-            {t.key !== 'all' && t.key !== '__reset' && countFor(t.key, 'pending') > 0 && (
-              <span className="mr-1.5 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                {countFor(t.key, 'pending')}
-              </span>
-            )}
-          </button>
         ))}
       </div>
 
@@ -444,7 +437,13 @@ export default function ApprovalsPage() {
                   </div>
                   <div className="bg-sky-50 rounded-xl p-3">
                     <p className="text-xs text-gray-500 mb-1">
-                      {req.actionType === 'add_employee' ? 'الموظف المطلوب إضافته' : 'الموظف المطلوب حذفه'}
+                      {req.actionType === 'add_employee'    ? 'الموظف المطلوب إضافته'  :
+                       req.actionType === 'remove_employee' ? 'الموظف المطلوب حذفه'    :
+                       req.actionType === 'register_patient'? 'المريض المطلوب تسجيله'  :
+                       req.actionType === 'delete_patient'  ? 'المريض المطلوب حذفه'    :
+                       req.actionType === 'register'        ? 'المطلوب تسجيله'         :
+                       req.actionType === 'delete'          ? 'المطلوب حذفه'           :
+                       'التفاصيل'}
                     </p>
                     <p className="font-bold text-gray-900 text-sm">{req.employeeName}</p>
                     <p className="text-xs text-sky-600">{req.employeeRole}</p>

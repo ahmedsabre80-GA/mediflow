@@ -13,6 +13,9 @@ export default function SettingsPage() {
   const [rxRejectMin,    setRxRejectMin]    = useState(30);
   const [rxRejectSaved,  setRxRejectSaved]  = useState(false);
   const [rxRejectSaving, setRxRejectSaving] = useState(false);
+  const [deliveryTimeoutH,      setDeliveryTimeoutH]      = useState(24);
+  const [deliveryTimeoutSaved,  setDeliveryTimeoutSaved]  = useState(false);
+  const [deliveryTimeoutSaving, setDeliveryTimeoutSaving] = useState(false);
   const [settings, setSettings] = useState({
     platformName: 'ميديفلو',
     supportEmail: 'support@mediflow.io',
@@ -38,7 +41,18 @@ export default function SettingsPage() {
         setSettings(s => ({ ...s, ...parsed }));
       } catch {}
     }
-    // Load auto-reject timeout from backend
+    // Load timeout settings from localStorage first (set on last save)
+    const savedOrderTimeout = localStorage.getItem('mediflow-order-timeout-min');
+    if (savedOrderTimeout) setAutoRejectMin(Number(savedOrderTimeout));
+    const savedRxTimeout = localStorage.getItem('mediflow-rx-timeout-min');
+    if (savedRxTimeout) setRxRejectMin(Number(savedRxTimeout));
+    const savedDeliveryTimeout = localStorage.getItem('mediflow-delivery-timeout-h');
+    if (savedDeliveryTimeout) setDeliveryTimeoutH(Number(savedDeliveryTimeout));
+    fetch(`${PHARMACY_API}/platform/config/delivery_timeout_hours`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setDeliveryTimeoutH(Number(d.data.value)); })
+      .catch(() => {});
+    // Try to load from backend (API endpoint may not exist, silent fail is OK)
     fetch(`${PHARMACY_API}/platform/config/auto_reject_minutes`)
       .then(r => r.json())
       .then(d => { if (d.success) setAutoRejectMin(Number(d.data.value)); })
@@ -75,16 +89,36 @@ export default function SettingsPage() {
     });
   };
 
+  const broadcastToPharmacies = async (message: string) => {
+    try {
+      const token = localStorage.getItem('admin-token') || '';
+      const r = await fetch(`${PHARMACY_API}/pharmacies?limit=500`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      const pharmacies: any[] = d.data || [];
+      await Promise.all(pharmacies.map((p: any) =>
+        fetch(`${PHARMACY_API}/pharmacies/portal-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ portalType: 'pharmacy', recipientId: p.id, senderName: 'إدارة ميديفلو', message }),
+        }).catch(() => {})
+      ));
+    } catch {}
+  };
+
   const handleAutoRejectSave = async () => {
     const val = Math.min(60, Math.max(1, autoRejectMin));
     setAutoRejectMin(val);
     setAutoRejectSaving(true);
+    localStorage.setItem('mediflow-order-timeout-min', String(val));
     try {
       await fetch(`${PHARMACY_API}/platform/config/auto_reject_minutes`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
         body: JSON.stringify({ value: val }),
       });
+      await broadcastToPharmacies(`⏱ تحديث قاعدة الطلبات\n━━━━━━━━━━━━━━━\nتم تحديث مدة الرفض التلقائي لطلبات الحجز إلى ${val} دقيقة.\nيسري هذا الإعداد فوراً على جميع الطلبات الجديدة.`);
       setAutoRejectSaved(true);
       setTimeout(() => setAutoRejectSaved(false), 3000);
     } catch {}
@@ -95,16 +129,36 @@ export default function SettingsPage() {
     const val = Math.min(120, Math.max(5, rxRejectMin));
     setRxRejectMin(val);
     setRxRejectSaving(true);
+    localStorage.setItem('mediflow-rx-timeout-min', String(val));
     try {
       await fetch(`${PHARMACY_API}/platform/config/prescription_reject_minutes`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
         body: JSON.stringify({ value: val }),
       });
+      await broadcastToPharmacies(`📋 تحديث قاعدة الوصفات الطبية\n━━━━━━━━━━━━━━━\nتم تحديث مدة انتهاء صلاحية الوصفة الطبية إلى ${val} دقيقة.\nالوصفات غير المقبولة خلال هذه المدة ستُلغى تلقائياً.`);
       setRxRejectSaved(true);
       setTimeout(() => setRxRejectSaved(false), 3000);
     } catch {}
     setRxRejectSaving(false);
+  };
+
+  const handleDeliveryTimeoutSave = async () => {
+    const val = Math.min(72, Math.max(1, deliveryTimeoutH));
+    setDeliveryTimeoutH(val);
+    setDeliveryTimeoutSaving(true);
+    localStorage.setItem('mediflow-delivery-timeout-h', String(val));
+    try {
+      await fetch(`${PHARMACY_API}/platform/config/delivery_timeout_hours`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        body: JSON.stringify({ value: val }),
+      });
+      await broadcastToPharmacies(`🚚 تحديث قاعدة التسليم\n━━━━━━━━━━━━━━━\nتم تحديث مهلة التسليم/الاستلام إلى ${val} ساعة.\nالطلبات المؤكدة غير المسلَّمة خلال هذه المدة ستُرفض تلقائياً.`);
+      setDeliveryTimeoutSaved(true);
+      setTimeout(() => setDeliveryTimeoutSaved(false), 3000);
+    } catch {}
+    setDeliveryTimeoutSaving(false);
   };
 
   const handleSave = async () => {
@@ -398,6 +452,55 @@ export default function SettingsPage() {
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${rxRejectSaved ? 'bg-green-500 text-white' : 'bg-purple-500 hover:bg-purple-600 text-white'}`}>
               <Save className="w-4 h-4" />
               {rxRejectSaved ? 'تم الحفظ ✓' : rxRejectSaving ? 'جاري...' : 'حفظ القاعدة'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Delivery timeout rule */}
+      <div className="bg-white rounded-2xl shadow-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 bg-green-100 rounded-xl flex items-center justify-center">
+            <Clock className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900">مهلة التسليم والاستلام</h2>
+            <p className="text-xs text-gray-500 mt-0.5">للطلبات المؤكدة التي لم يتم تسليمها أو استلامها</p>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">مدة الانتظار قبل الإلغاء التلقائي (ساعة)</label>
+            <div className="flex items-center gap-4">
+              <input type="range" min={1} max={72} step={1} value={deliveryTimeoutH}
+                onChange={e => setDeliveryTimeoutH(Number(e.target.value))}
+                className="flex-1 accent-green-500" />
+              <div className="w-20 text-center">
+                <span className="text-3xl font-bold text-green-600">{deliveryTimeoutH}</span>
+                <p className="text-xs text-gray-500">ساعة</p>
+              </div>
+            </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>1 ساعة</span>
+              <span>72 ساعة</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[6, 12, 24, 48].map(v => (
+              <button key={v} onClick={() => setDeliveryTimeoutH(v)}
+                className={`py-2 rounded-xl text-sm font-medium border transition-colors ${deliveryTimeoutH === v ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-600 hover:bg-green-50'}`}>
+                {v} ساعة
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-gray-500">
+              الإعداد الحالي: طلبات مؤكدة غير مسلَّمة بعد <strong>{deliveryTimeoutH} ساعة</strong> تُلغى تلقائياً
+            </p>
+            <button onClick={handleDeliveryTimeoutSave} disabled={deliveryTimeoutSaving}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${deliveryTimeoutSaved ? 'bg-green-500 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>
+              <Save className="w-4 h-4" />
+              {deliveryTimeoutSaved ? 'تم الحفظ ✓' : deliveryTimeoutSaving ? 'جاري...' : 'حفظ القاعدة'}
             </button>
           </div>
         </div>

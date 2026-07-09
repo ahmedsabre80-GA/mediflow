@@ -1,16 +1,12 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
-import { useRouter, useSearchParams } from 'next/navigation';
-import DraggableModal from '@/components/DraggableModal';
+import { useRouter } from 'next/navigation';
 import {
   Search, Plus, AlertTriangle, Package, Settings2, Camera, X,
   Sun, Snowflake, ChevronDown, ShoppingCart, RefreshCw, Edit3, QrCode, PenLine, Trash2,
 } from 'lucide-react';
 import WarehouseTab from './WarehouseTab';
-
-const BAT_KEY = 'pharmacy-stock-batches';
-const EXPIRY_WARN_KEY = 'pharmacy-expiry-warn-days';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const LIMITS_KEY = 'pharmacy-stock-limits';
@@ -36,7 +32,7 @@ function saveItemLimits(l: Record<string, { summer: number; winter: number }>) {
   localStorage.setItem(LIMITS_KEY, JSON.stringify(l));
 }
 
-function InventoryPage() {
+export default function InventoryPage() {
   const router = useRouter();
   const [inventory, setInventory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,24 +44,17 @@ function InventoryPage() {
   const [saveError, setSaveError] = useState('');
 
   // ── ADD form (manual + scan result)
-  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', pkgQty: '', sheetsPerPkg: '', quantity: '', sellingPrice: '', buyingPrice: '', reorderLevel: '10', expiryDate: '', originCountry: '', category: '', warehouseId: '' });
-  const [formWarehouses, setFormWarehouses] = useState<{ id: string; name: string }[]>([]);
-  useEffect(() => {
-    try { setFormWarehouses(JSON.parse(localStorage.getItem('pharmacy-warehouses') || '[]')); } catch {}
-  }, []);
+  const [form, setForm] = useState({ genericName: '', brandName: '', barcode: '', quantity: '', sellingPrice: '', buyingPrice: '', reorderLevel: '10', expiryDate: '', originCountry: '', category: '' });
   const [userRole, setUserRole] = useState<string>('owner');
   const canSeeBuyingPrice = ['owner', 'assistant_manager', 'pharmacist'].includes(userRole);
   const [drugSuggestions, setDrugSuggestions] = useState<any[]>([]);
   const [drugSearching, setDrugSearching] = useState(false);
-
 
   // ── UPDATE form
   const [updateSearch, setUpdateSearch] = useState('');
   const [updateItem, setUpdateItem] = useState<any>(null);
   const [updateQty, setUpdateQty] = useState('');
   const [updatePrice, setUpdatePrice] = useState('');
-  const [updatePkgQty, setUpdatePkgQty] = useState('');
-  const [updateSheetsPerPkg, setUpdateSheetsPerPkg] = useState('');
 
   // ── SCAN
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -97,88 +86,10 @@ function InventoryPage() {
     setUserRole(localStorage.getItem('pharmacy-role') || 'owner');
   }, []);
 
-  const [localItems, setLocalItems] = useState<any[]>([]);
-
-  const buildLocalItems = (apiItems: any[]) => {
-    try {
-      let batches: any[] = JSON.parse(localStorage.getItem(BAT_KEY) || '[]');
-
-      // Backfill category/originCountry from purchase records for batches that are missing them
-      const needsBackfill = batches.some(b => !b.category && !b.originCountry);
-      if (needsBackfill) {
-        try {
-          const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-          const purchaseMap = new Map<string, any[]>();
-          purchases.forEach(p => {
-            (p.invoices || []).forEach((inv: any) => {
-              (inv.items || []).forEach((it: any) => {
-                if (it.category || it.originCountry) {
-                  const key = `${p.id}__${(it.drugName || '').toLowerCase().trim()}`;
-                  purchaseMap.set(key, it);
-                }
-              });
-            });
-          });
-          let changed = false;
-          batches = batches.map(b => {
-            if (b.category || b.originCountry) return b;
-            const key = `${b.purchaseId}__${(b.drugName || '').toLowerCase().trim()}`;
-            const src = purchaseMap.get(key);
-            if (!src) return b;
-            changed = true;
-            return { ...b, category: src.category || '', originCountry: src.originCountry || '' };
-          });
-          if (changed) localStorage.setItem(BAT_KEY, JSON.stringify(batches));
-        } catch {}
-      }
-      const apiNames = new Set(apiItems.map((i: any) => (i.generic_name || i.drug_name || '').toLowerCase().trim()));
-
-      // Group batches by drugName; skip drugs already in API
-      const map = new Map<string, any>();
-      batches.forEach(b => {
-        if (!b.drugName) return;
-        const key = b.drugName.toLowerCase().trim();
-        if (apiNames.has(key)) return; // API already has it
-        if (!map.has(key)) {
-          map.set(key, {
-            id: `_local_${key}`,
-            generic_name: b.drugName,
-            brand_name: b.brandName || '',
-            barcode: b.barcode || '',
-            quantity: 0,
-            reserved_qty: 0,
-            selling_price: b.sellingPrice || 0,
-            buying_price: b.unitCost || 0,
-            category: b.category || '',
-            expiry_date: b.expiry || '',
-            origin_country: b.originCountry || '',
-            _local: true,
-          });
-        }
-        const entry = map.get(key)!;
-        entry.quantity += b.qtyRemaining || 0;
-        // Keep the nearest expiry
-        if (b.expiry && (!entry.expiry_date || new Date(b.expiry) < new Date(entry.expiry_date))) {
-          entry.expiry_date = b.expiry;
-        }
-        if (!entry.selling_price && b.sellingPrice) entry.selling_price = b.sellingPrice;
-        if (!entry.buying_price && b.unitCost) entry.buying_price = b.unitCost;
-        if (!entry.barcode && b.barcode) entry.barcode = b.barcode;
-      });
-
-      // Apply search filter
-      const q = search.toLowerCase().trim();
-      const items = Array.from(map.values()).filter(item =>
-        !q || item.generic_name.toLowerCase().includes(q) || item.brand_name.toLowerCase().includes(q) || (item.barcode || '').includes(q)
-      );
-      setLocalItems(items);
-    } catch { setLocalItems([]); }
-  };
-
   const fetchInventory = useCallback(() => {
     const token = localStorage.getItem('pharmacy-token');
     const pharmacyId = localStorage.getItem('pharmacy-id');
-    if (!pharmacyId) { setLoading(false); buildLocalItems([]); return; }
+    if (!pharmacyId) { setLoading(false); return; }
     setLoading(true);
     fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory?search=${encodeURIComponent(search)}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -196,7 +107,6 @@ function InventoryPage() {
         if (!d) return;
         const items = d.data || [];
         setInventory(items);
-        buildLocalItems(items);
         const limits = getItemLimits();
         const cur = getCurrentSeason();
         setAlertItems(items.filter((item: any) => {
@@ -206,9 +116,8 @@ function InventoryPage() {
           return thr > 0 && (item.quantity - (item.reserved_qty || 0)) <= thr;
         }));
       })
-      .catch(() => { setInventory([]); buildLocalItems([]); })
+      .catch(() => setInventory([]))
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   useEffect(() => { fetchInventory(); }, [fetchInventory]);
@@ -305,19 +214,12 @@ function InventoryPage() {
     e.preventDefault();
     setSaveError('');
     if (!form.genericName.trim()) { setSaveError('أدخل اسم الدواء'); return; }
-    // Resolve quantity: if pkgQty entered, derive from packages × sheets; else use quantity directly
-    const sheetsPerPkg = Number(form.sheetsPerPkg) || 1;
-    const pkgQty = Number(form.pkgQty) || 0;
-    const resolvedQty = pkgQty > 0 ? pkgQty * sheetsPerPkg : Number(form.quantity);
-    const resolvedBuyingPrice = pkgQty > 0 && form.buyingPrice
-      ? (Number(form.buyingPrice) / sheetsPerPkg)
-      : Number(form.buyingPrice);
-    if (resolvedQty <= 0) { setSaveError('أدخل عدد العبوات أو الكمية'); return; }
+    if (!form.quantity || Number(form.quantity) <= 0) { setSaveError('أدخل كمية صحيحة'); return; }
     if (!form.sellingPrice || Number(form.sellingPrice) < 0) { setSaveError('أدخل سعر البيع'); return; }
     if (!form.expiryDate) { setSaveError('أدخل تاريخ انتهاء الصلاحية'); return; }
     if (!form.originCountry.trim()) { setSaveError('اختر بلد المنشأ'); return; }
     if (!form.category.trim()) { setSaveError('اختر تصنيف الدواء'); return; }
-    if (canSeeBuyingPrice && (!form.buyingPrice || Number(form.buyingPrice) < 0)) { setSaveError('أدخل سعر الشراء للعبوة'); return; }
+    if (canSeeBuyingPrice && (!form.buyingPrice || Number(form.buyingPrice) < 0)) { setSaveError('أدخل سعر الشراء للقطعة'); return; }
     setSaving(true);
     const token = localStorage.getItem('pharmacy-token');
     const pharmacyId = localStorage.getItem('pharmacy-id');
@@ -328,13 +230,13 @@ function InventoryPage() {
         genericName: form.genericName.trim(),
         brandName: form.brandName.trim(),
         barcode: form.barcode.trim() || null,
-        quantity: resolvedQty,
+        quantity: Number(form.quantity),
         sellingPrice: Number(form.sellingPrice),
         reorderLevel: Number(form.reorderLevel) || 10,
         expiryDate: form.expiryDate,
         originCountry: form.originCountry.trim(),
         category: form.category.trim(),
-        buyingPrice: form.buyingPrice ? resolvedBuyingPrice : undefined,
+        buyingPrice: form.buyingPrice ? Number(form.buyingPrice) : undefined,
       }),
     });
     const data = await res.json();
@@ -346,31 +248,6 @@ function InventoryPage() {
       return;
     }
     if (!res.ok) { setSaveError(data?.error?.title || data?.error || 'فشلت العملية'); return; }
-
-    // Link to warehouse via local stock batch if a warehouse was selected
-    if (form.warehouseId && form.buyingPrice) {
-      try {
-        const wh = formWarehouses.find(w => w.id === form.warehouseId);
-        const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-        const batchId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        const purchaseId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        const newPurchase = {
-          id: purchaseId, warehouseId: form.warehouseId, warehouseName: wh?.name || '',
-          invoices: [{ id: batchId, discountType: 'none', totalDiscount: 0, subtotal: resolvedBuyingPrice * resolvedQty,
-            items: [{ drugName: form.genericName.trim(), pkgQty, sheetsPerPkg, qty: resolvedQty, unitCost: resolvedBuyingPrice, itemDiscount: 0, finalUnitCost: resolvedBuyingPrice, totalCost: resolvedBuyingPrice * resolvedQty, expiry: form.expiryDate }],
-            image: '' }],
-          grandTotal: resolvedBuyingPrice * resolvedQty,
-          date: new Date().toISOString(), notes: 'أضيف يدوياً من المخزون',
-        };
-        purchases.push(newPurchase);
-        localStorage.setItem('pharmacy-wh-purchases', JSON.stringify(purchases));
-
-        const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
-        batches.push({ id: batchId, drugName: form.genericName.trim(), qtyRemaining: resolvedQty, unitCost: resolvedBuyingPrice, purchaseId, purchaseDate: new Date().toISOString(), expiry: form.expiryDate });
-        localStorage.setItem('pharmacy-stock-batches', JSON.stringify(batches));
-      } catch {}
-    }
-
     closeModal();
     fetchInventory();
   };
@@ -380,15 +257,12 @@ function InventoryPage() {
     e.preventDefault();
     if (!updateItem) return;
     setSaveError('');
-    const updSheetsPerPkg = Number(updateSheetsPerPkg) || 1;
-    const updPkgQty = Number(updatePkgQty) || 0;
-    const resolvedUpdateQty = updPkgQty > 0 ? updPkgQty * updSheetsPerPkg : Number(updateQty) || 0;
-    if (!resolvedUpdateQty && !updatePrice) { setSaveError('أدخل الكمية أو السعر'); return; }
+    if (!updateQty && !updatePrice) { setSaveError('أدخل الكمية أو السعر'); return; }
     setSaving(true);
     const token = localStorage.getItem('pharmacy-token');
     const pharmacyId = localStorage.getItem('pharmacy-id');
     const body: any = {};
-    if (resolvedUpdateQty) body.quantity = resolvedUpdateQty;
+    if (updateQty) body.quantity = Number(updateQty);
     if (updatePrice) body.sellingPrice = Number(updatePrice);
     const res = await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/${updateItem.id}`, {
       method: 'PATCH',
@@ -406,7 +280,7 @@ function InventoryPage() {
     setMode(null);
     setSaveError('');
     setSaving(false);
-    setForm({ genericName:'', brandName:'', barcode:'', pkgQty:'', sheetsPerPkg:'', quantity:'', sellingPrice:'', buyingPrice:'', reorderLevel:'10', expiryDate:'', originCountry:'', category:'', warehouseId:'' });
+    setForm({ genericName:'', brandName:'', barcode:'', quantity:'', sellingPrice:'', buyingPrice:'', reorderLevel:'10', expiryDate:'', originCountry:'', category:'' });
     setDrugSuggestions([]);
     setUpdateSearch('');
     setUpdateItem(null);
@@ -463,147 +337,10 @@ function InventoryPage() {
   );
 
   const [mainTab, setMainTab] = useState<'inventory' | 'warehouses'>('inventory');
-  const [drugWarehouseMap, setDrugWarehouseMap] = useState<Record<string, string>>({});
-
-  // Expiry filter (from dashboard banner links)
-  const searchParams = useSearchParams();
-  const [expiryFilter, setExpiryFilter] = useState<'expiring' | 'expired' | null>(null);
-  const [expiryBatches, setExpiryBatches] = useState<any[]>([]);
-
-  useEffect(() => {
-    const f = searchParams.get('filter');
-    if (f !== 'expiring' && f !== 'expired') return;
-    setExpiryFilter(f);
-
-    const now = Date.now();
-    const warnDays = Number(localStorage.getItem(EXPIRY_WARN_KEY)) || 30;
-    const rows: any[] = [];
-
-    // From localStorage batches
-    try {
-      const batches: any[] = JSON.parse(localStorage.getItem(BAT_KEY) || '[]');
-      batches.forEach(b => {
-        if (!b.expiry || (b.qtyRemaining ?? 0) <= 0) return;
-        const days = Math.ceil((new Date(b.expiry).getTime() - now) / 86400000);
-        const match = f === 'expired' ? days <= 0 : (days > 0 && days <= warnDays);
-        if (match) rows.push({ drugName: b.drugName, brandName: b.brandName || '', barcode: b.barcode || '', qtyRemaining: b.qtyRemaining, expiry: b.expiry, source: 'local' });
-      });
-    } catch {}
-
-    rows.sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
-    setExpiryBatches(rows);
-
-    // Also fetch from API inventory
-    const token      = localStorage.getItem('pharmacy-token');
-    const pharmacyId = localStorage.getItem('pharmacy-id') || '';
-    if (!pharmacyId || !token) return;
-    fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory?limit=200`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.json())
-      .then(d => {
-        const apiRows: any[] = [];
-        (d.data || []).forEach((item: any) => {
-          const expiry = item.expiry_date || item.expiryDate || '';
-          if (!expiry || (item.quantity ?? item.total_qty ?? 0) <= 0) return;
-          const days = Math.ceil((new Date(expiry).getTime() - now) / 86400000);
-          const match = f === 'expired' ? days <= 0 : (days > 0 && days <= warnDays);
-          if (match) apiRows.push({ drugName: item.generic_name || item.drug_name || '', brandName: item.brand_name || '', barcode: item.barcode || '', qtyRemaining: item.quantity ?? item.total_qty ?? 0, expiry, source: 'api' });
-        });
-        setExpiryBatches(prev => {
-          const existingNames = new Set(prev.map((r: any) => (r.drugName || '').toLowerCase().trim()));
-          const newRows = apiRows.filter(r => !existingNames.has((r.drugName || '').toLowerCase().trim()));
-          const combined = [...prev, ...newRows];
-          combined.sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
-          return combined;
-        });
-      })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    try {
-      const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
-      const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-      const purMap: Record<string, string> = {};
-      purchases.forEach((p: any) => { purMap[p.id] = p.warehouseName; });
-      // For each drug, pick the most recent batch's warehouse
-      const map: Record<string, string> = {};
-      [...batches].reverse().forEach((b: any) => {
-        if (b.drugName && b.purchaseId && purMap[b.purchaseId] && !map[b.drugName.toLowerCase()]) {
-          map[b.drugName.toLowerCase()] = purMap[b.purchaseId];
-        }
-      });
-      setDrugWarehouseMap(map);
-    } catch {}
-  }, [mainTab]);
 
   // ────────────────────────────────────────────────────────────────────────────
-  // ── Expiry filter view (from dashboard banner) ───────────────────────────
-  if (expiryFilter) {
-    const isExpired = expiryFilter === 'expired';
-    const now = Date.now();
-    return (
-      <div className="space-y-4" dir="rtl">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <button onClick={() => setExpiryFilter(null)}
-            className="p-2 rounded-xl hover:bg-gray-100 text-gray-500">
-            <X className="w-4 h-4" />
-          </button>
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm ${isExpired ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-            <AlertTriangle className="w-4 h-4" />
-            {isExpired ? `الأدوية المنتهية الصلاحية (${expiryBatches.length})` : `الأدوية القريبة من الانتهاء (${expiryBatches.length})`}
-          </div>
-        </div>
-
-        {expiryBatches.length === 0 ? (
-          <div className="bg-white rounded-2xl p-10 text-center text-gray-400 shadow-sm">
-            <Package className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">{isExpired ? 'لا توجد أدوية منتهية الصلاحية' : 'لا توجد أدوية قريبة من الانتهاء'}</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" style={{ minWidth: '600px' }}>
-                <thead>
-                  <tr className="bg-gray-50 border-b">
-                    {['اسم الدواء', 'الاسم التجاري', 'الباركود', 'الكمية المتبقية', 'تاريخ الانتهاء', 'الحالة'].map(h => (
-                      <th key={h} className="text-right text-xs font-medium text-gray-500 px-4 py-3 whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {expiryBatches.map((b, i) => {
-                    const days = Math.ceil((new Date(b.expiry).getTime() - now) / 86400000);
-                    return (
-                      <tr key={i} className={isExpired ? 'bg-red-50/40' : 'bg-amber-50/30'}>
-                        <td className="px-4 py-3 font-medium text-gray-900">{b.drugName}</td>
-                        <td className="px-4 py-3 text-gray-500">{b.brandName || '—'}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-400">{b.barcode || '—'}</td>
-                        <td className="px-4 py-3 font-bold text-center">{b.qtyRemaining}</td>
-                        <td className="px-4 py-3 text-center text-gray-700">{b.expiry}</td>
-                        <td className="px-4 py-3 text-center">
-                          {isExpired
-                            ? <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">منتهي منذ {Math.abs(days)} يوم</span>
-                            : <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">ينتهي خلال {days} يوم</span>
-                          }
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-4" dir="rtl">
+    <div className="space-y-6" dir="rtl">
       {/* Tab bar */}
       <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 w-fit">
         {([['inventory','📦 المخزون'],['warehouses','🏭 المستودعات']] as const).map(([tab, label]) => (
@@ -654,23 +391,22 @@ function InventoryPage() {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 310px)' }}>
-        <table className="w-full" style={{ minWidth: '950px' }}>
-          <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['الباركود','الدواء','الكمية',`حد ${seasonLabel}`,...(canSeeBuyingPrice ? ['سعر الشراء/قطعة'] : []),'سعر البيع/قطعة','المستودع','التصنيف','الصلاحية','المنشأ','الحالة','إجراءات'].map(h => (
-                <th key={h} className="text-right text-xs font-medium text-gray-500 px-4 py-3 whitespace-nowrap">{h}</th>
+              {['الدواء','الكمية',`حد ${seasonLabel}`,'سعر البيع/قطعة',...(canSeeBuyingPrice ? ['سعر الشراء/قطعة'] : []),'التصنيف','الصلاحية','المنشأ','الحالة','إجراءات'].map(h => (
+                <th key={h} className="text-right text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={6} className="text-center py-12 text-gray-400">جاري التحميل...</td></tr>
-            ) : inventory.length === 0 && localItems.length === 0 ? (
+            ) : inventory.length === 0 ? (
               <tr><td colSpan={9} className="text-center py-12 text-gray-400">
                 <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد منتجات في المخزون
               </td></tr>
-            ) : [...inventory, ...localItems].map(item => {
+            ) : inventory.map(item => {
               const available = item.quantity - (item.reserved_qty || 0);
               const limits = itemLimits[item.id] || { summer:0, winter:0 };
               const activeLimit = season === 'summer' ? limits.summer : limits.winter;
@@ -679,15 +415,7 @@ function InventoryPage() {
               return (
                 <tr key={item.id} className={`hover:bg-gray-50 ${isAlert ? 'bg-red-50/40' : ''}`}>
                   <td className="px-4 py-3">
-                    {item.barcode
-                      ? <span className="text-xs font-mono text-gray-500 tracking-wider" dir="ltr">{item.barcode}</span>
-                      : <span className="text-gray-300 text-xs">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-medium text-gray-900">{item.generic_name || '—'}</p>
-                      {item._local && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium">مستودع</span>}
-                    </div>
+                    <p className="text-sm font-medium text-gray-900">{item.generic_name || '—'}</p>
                     <p className="text-xs text-gray-500">{item.brand_name}</p>
                   </td>
                   <td className="px-4 py-3">
@@ -697,18 +425,12 @@ function InventoryPage() {
                   <td className="px-4 py-3">
                     {activeLimit > 0 ? <span className={`text-sm font-medium ${isLow ? 'text-red-600' : 'text-gray-600'}`}>{activeLimit}</span> : <span className="text-xs text-gray-300">—</span>}
                   </td>
+                  <td className="px-4 py-3 text-sm font-medium text-sky-700">{Number(item.selling_price).toLocaleString()} د.ع</td>
                   {canSeeBuyingPrice && (
                     <td className="px-4 py-3 text-sm font-medium text-orange-600">
                       {item.buying_price ? `${Number(item.buying_price).toLocaleString()} د.ع` : <span className="text-gray-300">—</span>}
                     </td>
                   )}
-                  <td className="px-4 py-3 text-sm font-medium text-sky-700">{Number(item.selling_price).toLocaleString()} د.ع</td>
-                  <td className="px-4 py-3">
-                    {(() => {
-                      const wh = drugWarehouseMap[(item.generic_name || '').toLowerCase()] || drugWarehouseMap[(item.brand_name || '').toLowerCase()];
-                      return wh ? <span className="text-xs font-medium text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">{wh}</span> : <span className="text-gray-300 text-xs">—</span>;
-                    })()}
-                  </td>
                   <td className="px-4 py-3">
                     {item.category
                       ? <span className="text-xs font-medium bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{item.category}</span>
@@ -731,65 +453,49 @@ function InventoryPage() {
                     ) : <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">متوفر</span>}
                   </td>
                   <td className="px-4 py-3">
-                    {item._local ? (
-                      <div className="flex gap-1">
-                        <button onClick={() => openUpdate(item)} title="تعديل" className="p-1.5 hover:bg-sky-50 rounded-lg text-sky-600">
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => openEditLimit(item)} title="حدود الموسم" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
-                          <Settings2 className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => {
-                          if (!confirm(`حذف "${item.generic_name}" من المخزون المحلي؟`)) return;
-                          const key = (item.generic_name || '').toLowerCase().trim();
-                          try {
-                            const batches: any[] = JSON.parse(localStorage.getItem(BAT_KEY) || '[]');
-                            localStorage.setItem(BAT_KEY, JSON.stringify(batches.filter((b: any) => (b.drugName || '').toLowerCase().trim() !== key)));
-                          } catch {}
-                          fetchInventory();
-                        }} title="حذف" className="p-1.5 hover:bg-red-50 rounded-lg text-red-400">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex gap-1">
-                        <button onClick={() => openUpdate(item)} title="تحديث" className="p-1.5 hover:bg-sky-50 rounded-lg text-sky-600">
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => openEditLimit(item)} title="حدود الموسم" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
-                          <Settings2 className="w-4 h-4" />
-                        </button>
-                        <button onClick={async () => {
-                          if (!confirm('حذف هذا الدواء من المخزون؟')) return;
-                          const token = localStorage.getItem('pharmacy-token');
-                          const pharmacyId = localStorage.getItem('pharmacy-id');
-                          await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/${item.id}`, {
-                            method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
-                          });
-                          fetchInventory();
-                        }} title="حذف" className="p-1.5 hover:bg-red-50 rounded-lg text-red-400">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex gap-1">
+                      <button onClick={() => openUpdate(item)} title="تحديث" className="p-1.5 hover:bg-sky-50 rounded-lg text-sky-600">
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => openEditLimit(item)} title="حدود الموسم" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
+                        <Settings2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={async () => {
+                        if (!confirm('حذف هذا الدواء من المخزون؟')) return;
+                        const token = localStorage.getItem('pharmacy-token');
+                        const pharmacyId = localStorage.getItem('pharmacy-id');
+                        await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory/${item.id}`, {
+                          method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+                        });
+                        fetchInventory();
+                      }} title="حذف" className="p-1.5 hover:bg-red-50 rounded-lg text-red-400">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           MODAL OVERLAY
       ═══════════════════════════════════════════════════════════════════════ */}
-      <DraggableModal open={!!mode} onClose={closeModal} title={mode === 'update' ? 'تحديث المخزون' : mode === 'add' ? 'إضافة دواء جديد' : mode === 'scan' ? 'مسح باركود' : 'اختر نوع العملية'} initialWidth={480}>
-        <div dir="rtl">
+      {mode && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col" dir="rtl">
 
             {/* ── CHOOSE ── */}
             {mode === 'choose' && (
-              <div className="p-6 space-y-3">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between p-6 pb-4 shrink-0">
+                  <h3 className="font-bold text-gray-900 text-lg">ماذا تريد أن تفعل؟</h3>
+                  <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="overflow-y-auto px-6 pb-6">
+                <div className="space-y-3">
                   <button onClick={() => { setMode('update'); setSaveError(''); }}
                     className="w-full flex items-center gap-4 p-4 border-2 border-gray-200 hover:border-sky-400 hover:bg-sky-50 rounded-2xl text-right transition-all group">
                     <div className="w-12 h-12 bg-sky-100 group-hover:bg-sky-200 rounded-xl flex items-center justify-center shrink-0">
@@ -823,11 +529,21 @@ function InventoryPage() {
                     </div>
                   </button>
                 </div>
+              </div>
+              </div>
             )}
 
             {/* ── UPDATE EXISTING ── */}
             {mode === 'update' && (
-              <div className="px-6 pt-4 pb-6">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg">تحديث دواء موجود</h3>
+                    {!updateItem && <p className="text-sm text-gray-400 mt-0.5">ابحث واختر الدواء أولاً</p>}
+                  </div>
+                  <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="overflow-y-auto px-6 pb-6">
                 {saveError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{saveError}</div>}
 
                 {/* Search inventory */}
@@ -871,42 +587,19 @@ function InventoryPage() {
                       </button>
                     </div>
 
-                    {/* Package quantity entry */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">عدد العبوات</label>
-                        <input type="number" min="1" value={updatePkgQty} onChange={e => { setUpdatePkgQty(e.target.value); setUpdateQty(''); }}
-                          placeholder="10"
-                          className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">قطعة/علبة</label>
-                        <input type="number" min="1" value={updateSheetsPerPkg} onChange={e => setUpdateSheetsPerPkg(e.target.value)}
-                          placeholder="4"
-                          className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">أو الكمية مباشرة</label>
-                        <input type="number" min="0" value={updateQty} onChange={e => { setUpdateQty(e.target.value); setUpdatePkgQty(''); }}
+                        <label className="block text-sm font-medium text-gray-700 mb-1">الكمية الجديدة</label>
+                        <input type="number" min="0" value={updateQty} onChange={e => setUpdateQty(e.target.value)}
                           placeholder={String(updateItem.quantity)}
                           className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                       </div>
-                    </div>
-
-                    {updatePkgQty && (
-                      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-center text-xs">
-                        <p className="text-gray-500 mb-0.5">إجمالي القطع</p>
-                        <p className="font-bold text-blue-700 text-base">
-                          {(Number(updatePkgQty) * (Number(updateSheetsPerPkg) || 1)).toLocaleString('ar-IQ')} قطعة
-                        </p>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">سعر البيع (د.ع)</label>
+                        <input type="number" min="0" value={updatePrice} onChange={e => setUpdatePrice(e.target.value)}
+                          placeholder={String(updateItem.selling_price||0)}
+                          className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                       </div>
-                    )}
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">سعر البيع/قطعة (د.ع)</label>
-                      <input type="number" min="0" value={updatePrice} onChange={e => setUpdatePrice(e.target.value)}
-                        placeholder={String(updateItem.selling_price||0)}
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                     </div>
 
                     <div className="flex gap-3">
@@ -919,12 +612,18 @@ function InventoryPage() {
                     </div>
                   </form>
                 )}
-            </div>
+                </div>
+              </div>
             )}
 
             {/* ── SCAN ── */}
             {mode === 'scan' && (
-              <div className="px-6 pt-4 pb-6">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+                  <h3 className="font-bold text-gray-900 text-lg">مسح الباركود</h3>
+                  <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="overflow-y-auto px-6 pb-6">
 
                 {/* Camera view */}
                 <div className="relative rounded-2xl overflow-hidden bg-black mb-4" style={{ aspectRatio:'4/3' }}>
@@ -972,12 +671,20 @@ function InventoryPage() {
                     </button>
                   </div>
                 </div>
+                </div>
               </div>
             )}
 
             {/* ── MANUAL FORM (also used after scan) ── */}
             {mode === 'manual' && (
-              <div className="px-6 pt-4 pb-6">
+              <div className="flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+                  <h3 className="font-bold text-gray-900 text-lg">
+                    {form.barcode ? 'إضافة دواء — باركود مُسح' : 'إضافة دواء — يدوياً'}
+                  </h3>
+                  <button onClick={closeModal}><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="overflow-y-auto px-6 pb-6">
 
                 {saveError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{saveError}</div>}
 
@@ -1034,65 +741,32 @@ function InventoryPage() {
                     </div>
                   )}
 
-                  {/* Package entry */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">عدد العبوات</label>
-                      <input type="number" min="1" value={form.pkgQty} onChange={e => setForm(f => ({ ...f, pkgQty: e.target.value }))}
-                        placeholder="10"
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">قطعة/علبة</label>
-                      <input type="number" min="1" value={form.sheetsPerPkg} onChange={e => setForm(f => ({ ...f, sheetsPerPkg: e.target.value }))}
-                        placeholder="4"
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">أو أدخل الكمية مباشرة</label>
-                      <input type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value, pkgQty: '' }))}
-                        placeholder="40"
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                    </div>
-                  </div>
-
-                  {/* Live calc preview */}
-                  {form.pkgQty && (
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 grid grid-cols-2 gap-3 text-center text-xs">
-                      <div>
-                        <p className="text-gray-500 mb-0.5">إجمالي القطع المتاحة</p>
-                        <p className="font-bold text-blue-700 text-base">
-                          {(Number(form.pkgQty) * (Number(form.sheetsPerPkg) || 1)).toLocaleString('ar-IQ')} قطعة
-                        </p>
-                      </div>
-                      {form.buyingPrice && (
-                        <div>
-                          <p className="text-gray-500 mb-0.5">سعر الشراء/قطعة</p>
-                          <p className="font-bold text-orange-600 text-base">
-                            {(Number(form.buyingPrice) / (Number(form.sheetsPerPkg) || 1)).toLocaleString('ar-IQ', { maximumFractionDigits: 0 })} د.ع
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   <div className="grid grid-cols-2 gap-3">
-                    {canSeeBuyingPrice && (
-                      <div>
-                        <label className="block text-sm font-medium text-orange-600 mb-1">🔒 سعر الشراء/علبة (د.ع)</label>
-                        <input type="number" min="0" value={form.buyingPrice} onChange={e => setForm(f => ({ ...f, buyingPrice: e.target.value }))}
-                          placeholder="8000"
-                          className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50" />
-                        <p className="text-xs text-orange-500 mt-1">سعر العبوة الكاملة — يُحسب سعر القطعة تلقائياً</p>
-                      </div>
-                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">الكمية *</label>
+                      <input type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                        placeholder="100" required
+                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-sky-700 mb-1">سعر البيع/قطعة (د.ع) *</label>
                       <input type="number" min="0" value={form.sellingPrice} onChange={e => setForm(f => ({ ...f, sellingPrice: e.target.value }))}
-                        placeholder="3000" required
+                        placeholder="5000" required
                         className="w-full px-3 py-2.5 border border-sky-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
                     </div>
                   </div>
+
+                  {canSeeBuyingPrice && (
+                    <div>
+                      <label className="block text-sm font-medium text-orange-600 mb-1 flex items-center gap-1.5">
+                        🔒 سعر الشراء/قطعة (د.ع) — سري
+                      </label>
+                      <input type="number" min="0" value={form.buyingPrice} onChange={e => setForm(f => ({ ...f, buyingPrice: e.target.value }))}
+                        placeholder="3000"
+                        className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50" />
+                      <p className="text-xs text-orange-500 mt-1">يظهر فقط لأصحاب الصلاحية — لا يراه المرضى</p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ انتهاء الصلاحية *</label>
@@ -1154,18 +828,6 @@ function InventoryPage() {
                     </select>
                   </div>
 
-                  {formWarehouses.length > 0 && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">المستودع (اختياري)</label>
-                      <select value={form.warehouseId} onChange={e => setForm(f => ({ ...f, warehouseId: e.target.value }))}
-                        className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white">
-                        <option value="">— بدون مستودع —</option>
-                        {formWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                      </select>
-                      <p className="text-xs text-gray-400 mt-1">اختياري — لربط الدواء بمستودع وإظهاره في عمود المستودع</p>
-                    </div>
-                  )}
-
                   <div className="flex gap-3">
                     <button type="button" onClick={() => setMode('choose')}
                       className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">رجوع</button>
@@ -1175,98 +837,119 @@ function InventoryPage() {
                     </button>
                   </div>
                 </form>
-            </div>
+                </div>
+              </div>
             )}
+          </div>
         </div>
-      </DraggableModal>
+      )}
 
       {/* Season modal */}
-      <DraggableModal open={showSeasonModal} onClose={() => setShowSeasonModal(false)} title="إعداد الموسم" initialWidth={420}>
-        <div className="p-6" dir="rtl">
-          <p className="text-sm text-gray-500 mb-4">اختر الأشهر التي تعدّها <span className="font-bold text-orange-500">صيفاً</span></p>
-          <div className="grid grid-cols-3 gap-2 mb-6">
-            {MONTH_NAMES.map((name, i) => {
-              const month = i+1;
-              const isSummer = tempSummer.includes(month);
-              return (
-                <button key={month} type="button"
-                  onClick={() => setTempSummer(prev => isSummer ? prev.filter(m => m!==month) : [...prev, month].sort((a,b)=>a-b))}
-                  className={`py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${isSummer ? 'bg-orange-50 border-orange-400 text-orange-700' : 'bg-sky-50 border-sky-300 text-sky-700'}`}>
-                  {isSummer ? <Sun className="w-3 h-3 inline ml-1" /> : <Snowflake className="w-3 h-3 inline ml-1" />}{name}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex gap-3">
-            <button onClick={() => setShowSeasonModal(false)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-            <button onClick={saveSeasonConfig} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold">حفظ</button>
-          </div>
-        </div>
-      </DraggableModal>
-
-      <DraggableModal open={!!editLimitItem} onClose={() => setEditLimitItem(null)} title={<><span>حدود المخزون الموسمية</span>{editLimitItem && <span className="text-xs font-normal text-gray-500 mr-2">{editLimitItem.generic_name||editLimitItem.brand_name}</span>}</>} initialWidth={380}>
-        <div className="p-6 space-y-4" dir="rtl">
-          <div className="bg-orange-50 rounded-xl p-4">
-            <label className="flex items-center gap-2 text-sm font-semibold text-orange-700 mb-2"><Sun className="w-4 h-4" /> حد الصيف</label>
-            <input type="number" min="0" value={editSummer} onChange={e => setEditSummer(e.target.value)} placeholder="0"
-              className="w-full px-4 py-2.5 border border-orange-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white" />
-          </div>
-          <div className="bg-sky-50 rounded-xl p-4">
-            <label className="flex items-center gap-2 text-sm font-semibold text-sky-700 mb-2"><Snowflake className="w-4 h-4" /> حد الشتاء</label>
-            <input type="number" min="0" value={editWinter} onChange={e => setEditWinter(e.target.value)} placeholder="0"
-              className="w-full px-4 py-2.5 border border-sky-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white" />
-          </div>
-          <div className="flex gap-3">
-            <button onClick={() => setEditLimitItem(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-            <button onClick={saveItemLimit} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold">حفظ الحدود</button>
-          </div>
-        </div>
-      </DraggableModal>
-
-      <DraggableModal open={!!orderItem} onClose={() => setOrderItem(null)} title="طلب شراء من مستودع" initialWidth={420}>
-        <div className="p-6" dir="rtl">
-          {orderSent ? (
-            <div className="text-center py-6">
-              <ShoppingCart className="w-10 h-10 text-green-500 mx-auto mb-3" />
-              <p className="text-lg font-bold text-gray-900">تم إرسال طلب الشراء</p>
+      {showSeasonModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-gray-900">إعداد الموسم</h2>
+              <button onClick={() => setShowSeasonModal(false)}><X className="w-5 h-5 text-gray-400" /></button>
             </div>
-          ) : (
+            <p className="text-sm text-gray-500 mb-4">اختر الأشهر التي تعدّها <span className="font-bold text-orange-500">صيفاً</span></p>
+            <div className="grid grid-cols-3 gap-2 mb-6">
+              {MONTH_NAMES.map((name, i) => {
+                const month = i+1;
+                const isSummer = tempSummer.includes(month);
+                return (
+                  <button key={month} type="button"
+                    onClick={() => setTempSummer(prev => isSummer ? prev.filter(m => m!==month) : [...prev, month].sort((a,b)=>a-b))}
+                    className={`py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${isSummer ? 'bg-orange-50 border-orange-400 text-orange-700' : 'bg-sky-50 border-sky-300 text-sky-700'}`}>
+                    {isSummer ? <Sun className="w-3 h-3 inline ml-1" /> : <Snowflake className="w-3 h-3 inline ml-1" />}{name}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowSeasonModal(false)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={saveSeasonConfig} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold">حفظ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Limit editor */}
+      {editLimitItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6" dir="rtl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">حدود المخزون الموسمية</h2>
+                <p className="text-sm text-gray-500 mt-0.5">{editLimitItem.generic_name||editLimitItem.brand_name}</p>
+              </div>
+              <button onClick={() => setEditLimitItem(null)}><X className="w-5 h-5 text-gray-400" /></button>
+            </div>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">اسم المستودع *</label>
-                <input value={orderWarehouse} onChange={e => setOrderWarehouse(e.target.value)} placeholder="مثال: مستودع الأمانة الطبية"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+              <div className="bg-orange-50 rounded-xl p-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-orange-700 mb-2"><Sun className="w-4 h-4" /> حد الصيف</label>
+                <input type="number" min="0" value={editSummer} onChange={e => setEditSummer(e.target.value)} placeholder="0"
+                  className="w-full px-4 py-2.5 border border-orange-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white" />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">الكمية المطلوبة *</label>
-                <input type="number" min="1" value={orderQty} onChange={e => setOrderQty(e.target.value)} placeholder="50"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">ملاحظات</label>
-                <textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
-              </div>
-              <div className="flex gap-3 mt-5">
-                <button onClick={() => setOrderItem(null)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm">إلغاء</button>
-                <button onClick={sendOrder} disabled={!orderWarehouse||!orderQty}
-                  className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-3 rounded-xl text-sm font-semibold disabled:opacity-50">
-                  إرسال الطلب
-                </button>
+              <div className="bg-sky-50 rounded-xl p-4">
+                <label className="flex items-center gap-2 text-sm font-semibold text-sky-700 mb-2"><Snowflake className="w-4 h-4" /> حد الشتاء</label>
+                <input type="number" min="0" value={editWinter} onChange={e => setEditWinter(e.target.value)} placeholder="0"
+                  className="w-full px-4 py-2.5 border border-sky-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white" />
               </div>
             </div>
-          )}
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setEditLimitItem(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={saveItemLimit} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold">حفظ الحدود</button>
+            </div>
+          </div>
         </div>
-      </DraggableModal>
+      )}
+
+      {/* Order modal */}
+      {orderItem && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
+            {orderSent ? (
+              <div className="text-center py-6">
+                <ShoppingCart className="w-10 h-10 text-green-500 mx-auto mb-3" />
+                <p className="text-lg font-bold text-gray-900">تم إرسال طلب الشراء</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between mb-5">
+                  <h2 className="text-lg font-bold text-gray-900">طلب شراء من مستودع</h2>
+                  <button onClick={() => setOrderItem(null)}><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">اسم المستودع *</label>
+                    <input value={orderWarehouse} onChange={e => setOrderWarehouse(e.target.value)} placeholder="مثال: مستودع الأمانة الطبية"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">الكمية المطلوبة *</label>
+                    <input type="number" min="1" value={orderQty} onChange={e => setOrderQty(e.target.value)} placeholder="50"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">ملاحظات</label>
+                    <textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} rows={2}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-5">
+                  <button onClick={() => setOrderItem(null)} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm">إلغاء</button>
+                  <button onClick={sendOrder} disabled={!orderWarehouse||!orderQty}
+                    className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-3 rounded-xl text-sm font-semibold disabled:opacity-50">
+                    إرسال الطلب
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       </>}
     </div>
-  );
-}
-
-export default function InventoryPageWrapper() {
-  return (
-    <Suspense>
-      <InventoryPage />
-    </Suspense>
   );
 }

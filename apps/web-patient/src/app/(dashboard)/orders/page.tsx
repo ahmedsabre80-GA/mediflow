@@ -13,25 +13,22 @@ function patientH(extra: Record<string, string> = {}): Record<string, string> {
     return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
   } catch { return { 'Content-Type': 'application/json', ...extra }; }
 }
-const PLATFORM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
-const AUTO_REJECTED_KEY  = 'mediflow-auto-rejected-orders';
-const CANCELLED_KEY      = 'mediflow-cancelled-orders';
-
-// Module-level guard — prevents StrictMode double-effect from firing rejections twice
-const inFlightRejections = new Set<string>();
+const CANCELLED_KEY = 'mediflow-cancelled-orders';
 
 interface Order {
   id: string;
-  type: 'reservation' | 'receipt' | 'confirmation' | 'rejected';
+  type: 'reservation' | 'receipt' | 'confirmation' | 'rejected' | 'prescription';
   drug: string;
   pharmacy: string;
   pharmacyOwnerId?: string;
   pharmacyId?: string;
+  prescriptionId?: string;
   qty: number;
   price: number;
   currency: string;
   total: number;
   date: string;
+  submittedAt?: string;
   status: 'pending' | 'confirmed' | 'delivered' | 'rejected';
   rawMessage: string;
 }
@@ -49,6 +46,37 @@ function parseNotif(n: any): Order | null {
     return { id: n.id, type: 'reservation', drug, pharmacy, pharmacyOwnerId, pharmacyId, qty: Number(qtyStr), price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'pending', rawMessage: msg };
   }
 
+  // Prescription submitted by patient
+  if (msg.includes('تم إرسال وصفتك الطبية')) {
+    const prescriptionId = msg.match(/\[prescription_id:([^\]]+)\]/)?.[1] || '';
+    const delivery = msg.includes('توصيل') ? 'توصيل للمنزل' : 'استلام من الصيدلية';
+    return { id: n.id, type: 'prescription' as any, drug: `وصفة طبية — ${delivery}`, pharmacy: '—', prescriptionId, qty: 1, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'pending', rawMessage: msg };
+  }
+
+  // Prescription accepted by pharmacy
+  if (msg.includes('قبلت صيدلية') && msg.includes('وصفتك الطبية')) {
+    const pharmacy = msg.match(/قبلت صيدلية ([^\n!]+)/)?.[1]?.trim() || n.sender_name || '—';
+    return { id: n.id, type: 'prescription' as any, drug: 'وصفة طبية — تم القبول', pharmacy, qty: 1, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'confirmed', rawMessage: msg };
+  }
+
+  // Prescription delivered/ready
+  if (msg.includes('وصفتك الطبية جاهزة') || msg.includes('تم توصيل وصفتك')) {
+    const pharmacy = n.sender_name || '—';
+    return { id: n.id, type: 'prescription' as any, drug: 'وصفة طبية — تم التسليم', pharmacy, qty: 1, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'delivered', rawMessage: msg };
+  }
+
+  // Prescription rejected by pharmacy
+  if (msg.includes('ملاحظة من صيدلية') && msg.includes('وصفتك')) {
+    const pharmacy = msg.match(/ملاحظة من صيدلية ([^\n]+)/)?.[1]?.trim() || n.sender_name || '—';
+    return { id: n.id, type: 'prescription' as any, drug: 'وصفة طبية — مرفوضة', pharmacy, qty: 1, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'rejected', rawMessage: msg };
+  }
+
+  // Prescription expired (no pharmacy responded)
+  if (msg.includes('لم يتم قبول وصفتك الطبية') || msg.includes('لم تستجب أي صيدلية لوصفتك')) {
+    const prescriptionId = msg.match(/\[prescription_id:([^\]]+)\]/)?.[1] || '';
+    return { id: n.id, type: 'prescription' as any, drug: 'وصفة طبية — لم يتم القبول', pharmacy: '—', prescriptionId, qty: 1, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'rejected', rawMessage: msg };
+  }
+
   // Auto-rejected notification
   if (msg.includes('رُفض طلبك تلقائياً')) {
     const drug     = msg.match(/الدواء:\s*(.+)/)?.[1]?.trim()    || '—';
@@ -63,8 +91,8 @@ function parseNotif(n: any): Order | null {
     return { id: n.id, type: 'confirmation', drug, pharmacy, qty: 0, price: 0, currency: 'IQD', total: 0, date: n.created_at, status: 'confirmed', rawMessage: msg };
   }
 
-  // Receipt — delivered
-  if (msg.includes('إيصال استلام')) {
+  // Receipt — delivered (pickup or home delivery)
+  if (msg.includes('إيصال استلام') || msg.includes('تم توصيل طلبك')) {
     const drug     = msg.match(/الدواء:\s*(.+)/)?.[1]?.trim()    || '—';
     const pharmacy = msg.match(/الصيدلية:\s*(.+)/)?.[1]?.trim()  || n.sender_name || '—';
     const qtyStr   = msg.match(/الكمية:\s*(\d+)/)?.[1]           || '1';
@@ -97,67 +125,49 @@ export default function OrdersPage() {
       const patientId = state?.user?.id;
       if (!patientId) { setLoading(false); return; }
 
-      // Fetch timeout setting and notifications in parallel
-      const [configRes, notifsRes] = await Promise.all([
-        fetch(`${PLATFORM_API}/config/auto_reject_minutes`).then(r => r.json()).catch(() => ({ data: { value: '10' } })),
-        fetch(`${PHARMACY_API}/portal-notifications?portalType=patient&recipientId=${patientId}`).then(r => r.json()),
-      ]);
-
-      const timeoutMin = Number(configRes?.data?.value || 10);
+      const notifsRes = await fetch(`${PHARMACY_API}/portal-notifications?portalType=patient&recipientId=${patientId}`).then(r => r.json());
       const cancelled = new Set(JSON.parse(localStorage.getItem(CANCELLED_KEY) || '[]'));
       const parsed = (notifsRes.data || []).map(parseNotif).filter(Boolean).filter((o: any) => !cancelled.has(o.id)) as Order[];
 
-      // Deduplicate
-      const receiptDrugs  = new Set(parsed.filter(o => o.type === 'receipt').map(o => o.drug));
-      const confirmDrugs  = new Set(parsed.filter(o => o.type === 'confirmation').map(o => o.drug));
-      const rejectedDrugs = new Set(parsed.filter(o => o.type === 'rejected').map(o => o.drug));
-      const deduped = parsed.filter(o => {
-        if (o.type === 'reservation' && receiptDrugs.has(o.drug))  return false;
-        if (o.type === 'reservation' && rejectedDrugs.has(o.drug)) return false;
-        if (o.type === 'confirmation' && receiptDrugs.has(o.drug)) return false;
-        if (o.type === 'reservation' && confirmDrugs.has(o.drug))  return false;
-        return true;
-      });
+      // One card per order: group notifications into order cycles, show only the latest status
+      const sorted = [...parsed].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const shown = new Set<string>();
+      const result: Order[] = [];
 
-      // Auto-reject: pending orders older than timeout that haven't been confirmed
-      const alreadyRejected: Set<string> = new Set(JSON.parse(localStorage.getItem(AUTO_REJECTED_KEY) || '[]'));
-      const now = Date.now();
-      for (const order of deduped) {
-        if (order.status !== 'pending' || alreadyRejected.has(order.id) || inFlightRejections.has(order.id)) continue;
-        const ageMin = (now - new Date(order.date).getTime()) / 60000;
-        if (ageMin < timeoutMin) continue;
-
-        // Mark as auto-rejected locally (module-level guard blocks StrictMode double-fire)
-        inFlightRejections.add(order.id);
-        alreadyRejected.add(order.id);
-        order.status = 'rejected';
-        order.type   = 'rejected';
-
-        // Notify patient
-        fetch(`${PHARMACY_API}/portal-notifications`, {
-          method: 'POST',
-          headers: patientH(),
-          body: JSON.stringify({
-            portalType: 'patient',
-            recipientId: patientId,
-            senderName: 'ميديفلو',
-            message: `❌ رُفض طلبك تلقائياً\nالدواء: ${order.drug}\nلم تستجب الصيدلية خلال ${timeoutMin} دقيقة.\nنقترح البحث عن صيدلية أخرى.`,
-          }),
-        }).catch(() => {});
-
-        // Drop pharmacy rating (pharmacyId embedded in rawMessage if available)
-        const pharmId = order.rawMessage?.match(/\[pharmacy_id:([^\]]+)\]/)?.[1];
-        if (pharmId) {
-          fetch(`${PHARMACY_API.replace('/pharmacies', '')}/${pharmId}/rating-decrement`, {
-            method: 'PATCH',
-            headers: patientH(),
-            body: JSON.stringify({ amount: 0.2 }),
-          }).catch(() => {});
-        }
+      // Drug orders: each reservation starts a cycle; find the latest update within 24h
+      for (const res of sorted.filter(o => o.type === 'reservation')) {
+        if (shown.has(res.id)) continue;
+        const resTime = new Date(res.date).getTime();
+        const cycle = sorted.filter(o =>
+          o.drug === res.drug &&
+          new Date(o.date).getTime() >= resTime &&
+          new Date(o.date).getTime() <= resTime + 24 * 3600 * 1000
+        );
+        const latest = { ...cycle[cycle.length - 1], submittedAt: res.date };
+        cycle.forEach(o => shown.add(o.id));
+        result.push(latest);
       }
-      localStorage.setItem(AUTO_REJECTED_KEY, JSON.stringify(Array.from(alreadyRejected)));
 
-      setOrders(deduped.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      // Prescriptions: group by prescriptionId when available, else by submission date (same day = same order)
+      const rxGroups = new Map<string, Order[]>();
+      for (const o of sorted.filter(o => o.type === 'prescription')) {
+        const key = o.prescriptionId || new Date(o.date).toISOString().slice(0, 10);
+        if (!rxGroups.has(key)) rxGroups.set(key, []);
+        rxGroups.get(key)!.push(o);
+      }
+      for (const group of rxGroups.values()) {
+        const first  = group[0];
+        const latest = { ...group[group.length - 1], submittedAt: first.date };
+        group.forEach(o => shown.add(o.id));
+        result.push(latest);
+      }
+
+      // Any orphan updates not linked to a reservation (e.g. delivery receipt without a known reservation)
+      for (const o of sorted) {
+        if (!shown.has(o.id)) result.push(o);
+      }
+
+      setOrders(result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
     } catch {
       setOrders([]);
     } finally {
@@ -165,7 +175,13 @@ export default function OrdersPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
+  }, []);
 
   const handleCancel = async (order: Order) => {
     setCancelling(order.id);
@@ -230,11 +246,28 @@ export default function OrdersPage() {
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1 ${st.color}`}>
                     <Icon className="w-3.5 h-3.5" /> {st.label}
                   </span>
-                  <p className="text-xs text-gray-400">{new Date(order.date).toLocaleDateString('ar-IQ')}</p>
+                  <div className="text-xs text-gray-400 text-left space-y-0.5">
+                    {order.submittedAt && order.submittedAt !== order.date && (
+                      <div className="flex items-center gap-1 justify-end">
+                        <span>{new Date(order.submittedAt).toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-green-500">✓</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1 justify-end">
+                      <span>{new Date(order.date).toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className={
+                        order.status === 'pending'   ? 'text-amber-400' :
+                        order.status === 'rejected'  ? 'text-red-500'   : 'text-green-500'
+                      }>
+                        {order.status === 'pending' ? '◉' : order.status === 'rejected' ? '✕' : '✓'}
+                      </span>
+                    </div>
+                    <div>{new Date(order.submittedAt || order.date).toLocaleDateString('ar-IQ')}</div>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3 mt-2">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${order.status === 'rejected' ? 'bg-red-50' : 'bg-sky-50'}`}>💊</div>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${order.status === 'rejected' ? 'bg-red-50' : 'bg-sky-50'}`}>{order.type === 'prescription' ? '📋' : '💊'}</div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-gray-900 text-sm truncate">{order.drug}</p>
                     <p className="text-xs text-gray-500 mt-0.5">{order.pharmacy}</p>
@@ -244,7 +277,7 @@ export default function OrdersPage() {
                     {order.total > 0 && <p className="font-bold text-sky-600 text-sm">{order.total.toLocaleString('ar-IQ')} {order.currency}</p>}
                   </div>
                 </div>
-                {order.status === 'pending' && (
+                {order.status === 'pending' && order.type !== 'prescription' && (
                   <button onClick={() => handleCancel(order)} disabled={cancelling === order.id}
                     className="mt-3 w-full flex items-center justify-center gap-2 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-sm font-medium transition-colors border border-red-200 disabled:opacity-50">
                     <XCircle className="w-4 h-4" />

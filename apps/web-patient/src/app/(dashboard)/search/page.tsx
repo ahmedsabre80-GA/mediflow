@@ -87,9 +87,18 @@ function SearchContent() {
   const [expandedDrug, setExpandedDrug] = useState<string | null>(null);
   const [stockMap,     setStockMap]     = useState<Record<string, StockPharmacy[]>>({});
   const [stockLoading, setStockLoading] = useState<string | null>(null);
-  const [coords,       setCoords]       = useState({ lat: DEFAULT_LAT, lng: DEFAULT_LNG });
+  const [coords,       setCoords]       = useState(() => {
+    try {
+      const lat = localStorage.getItem('patient-saved-lat');
+      const lng = localStorage.getItem('patient-saved-lng');
+      if (lat && lng) return { lat: Number(lat), lng: Number(lng) };
+    } catch {}
+    return { lat: DEFAULT_LAT, lng: DEFAULT_LNG };
+  });
   const [gpsLoading,   setGpsLoading]   = useState(false);
-  const [gpsReady,     setGpsReady]     = useState(false);
+  const [gpsReady,     setGpsReady]     = useState(() => {
+    try { return !!(localStorage.getItem('patient-saved-lat')); } catch { return false; }
+  });
   const [showMapPicker, setShowMapPicker] = useState(false);
   const mapPickerRef   = useRef<HTMLDivElement>(null);
   const mapPickerObj   = useRef<any>(null);
@@ -97,12 +106,44 @@ function SearchContent() {
 
   // Prescription state
   const [rxFile,       setRxFile]       = useState<File | null>(null);
+  const [rxBase64,     setRxBase64]     = useState('');    // pre-filled from pending rx
   const [rxNotes,      setRxNotes]      = useState('');
   const [rxRadius,     setRxRadius]     = useState(5);
+  const [rxDelivery,   setRxDelivery]   = useState<'pickup' | 'delivery'>('pickup');
+  const [rxAddress,    setRxAddress]    = useState('');
   const [rxSending,    setRxSending]    = useState(false);
   const [rxSent,       setRxSent]       = useState(false);
   const [rxError,      setRxError]      = useState('');
   const rxInputRef = useRef<HTMLInputElement>(null);
+
+  // Delivery location picker state
+  const [deliveryMapOpen,    setDeliveryMapOpen]    = useState(false);
+  const [deliveryLat,        setDeliveryLat]        = useState<number | null>(null);
+  const [deliveryLng,        setDeliveryLng]        = useState<number | null>(null);
+  const [deliveryGpsLoading, setDeliveryGpsLoading] = useState(false);
+  const delivMapRef  = useRef<HTMLDivElement>(null);
+  const delivMapObj  = useRef<any>(null);
+  const delivMapMark = useRef<any>(null);
+
+  // Pre-fill from pending prescription ONLY when user explicitly chose to re-search (sentAt === null)
+  useEffect(() => {
+    if (activeTab !== 'prescription') return;
+    try {
+      const pending = localStorage.getItem('mediflow-pending-rx');
+      if (!pending) return;
+      const p = JSON.parse(pending);
+      // sentAt is null only when set by the re-search button — skip pre-fill for normal tab opens
+      if (p.sentAt !== null) return;
+      if (p.imageBase64 && !rxFile && !rxBase64) {
+        setRxBase64(p.imageBase64);
+        setRxNotes(p.notes || '');
+        setRxRadius(p.radius || 5);
+        if (p.deliveryMethod) setRxDelivery(p.deliveryMethod);
+        if (p.deliveryAddress) setRxAddress(p.deliveryAddress);
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const searchRef  = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout>();
@@ -110,12 +151,18 @@ function SearchContent() {
   const requestGPS = () => {
     setGpsLoading(true);
     navigator.geolocation?.getCurrentPosition(
-      pos => { setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setGpsReady(true); setGpsLoading(false); },
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        setCoords({ lat: latitude, lng: longitude });
+        setGpsReady(true); setGpsLoading(false);
+        localStorage.setItem('patient-saved-lat', String(latitude));
+        localStorage.setItem('patient-saved-lng', String(longitude));
+      },
       () => { setGpsLoading(false); alert('تعذر الحصول على موقعك. تأكد من منح الإذن من إعدادات المتصفح.'); }
     );
   };
 
-  useEffect(() => { requestGPS(); }, []);
+  useEffect(() => { if (!gpsReady) requestGPS(); }, []);
 
   useEffect(() => {
     if (!showMapPicker || !mapPickerRef.current) return;
@@ -149,6 +196,48 @@ function SearchContent() {
       mapPickerMark.current = null;
     };
   }, [showMapPicker]);
+
+  // Delivery location map
+  useEffect(() => {
+    if (!deliveryMapOpen || !delivMapRef.current) return;
+    if (delivMapObj.current) return;
+    const initLat = deliveryLat ?? coords.lat;
+    const initLng = deliveryLng ?? coords.lng;
+    import('leaflet').then(L => {
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      });
+      const map = L.map(delivMapRef.current!).setView([initLat, initLng], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+      const marker = L.marker([initLat, initLng], { draggable: true }).addTo(map);
+      marker.on('dragend', () => {
+        const { lat, lng } = marker.getLatLng();
+        setDeliveryLat(lat); setDeliveryLng(lng);
+      });
+      map.on('click', (e: any) => {
+        marker.setLatLng(e.latlng);
+        setDeliveryLat(e.latlng.lat); setDeliveryLng(e.latlng.lng);
+      });
+      delivMapObj.current  = map;
+      delivMapMark.current = marker;
+    });
+    return () => {
+      delivMapObj.current?.remove();
+      delivMapObj.current  = null;
+      delivMapMark.current = null;
+    };
+  }, [deliveryMapOpen]);
+
+  const handleDeliveryGPS = () => {
+    setDeliveryGpsLoading(true);
+    navigator.geolocation?.getCurrentPosition(
+      pos => { setDeliveryLat(pos.coords.latitude); setDeliveryLng(pos.coords.longitude); setDeliveryGpsLoading(false); },
+      () => { setDeliveryGpsLoading(false); alert('تعذر الحصول على موقعك، تأكد من منح إذن الموقع.'); }
+    );
+  };
 
   useEffect(() => {
     // Clear cached drug-pharmacy results so they re-fetch with new coords
@@ -210,7 +299,8 @@ function SearchContent() {
     try {
       const r = await fetch(`${API}/nearby?lat=${coords.lat}&lng=${coords.lng}&radiusKm=30&drugId=${drug.id}&limit=10`);
       const d = await r.json();
-      setStockMap(prev => ({ ...prev, [drug.id]: d.data || [] }));
+      const available = (d.data || []).filter((p: StockPharmacy) => (p.quantity ?? 0) > 0);
+      setStockMap(prev => ({ ...prev, [drug.id]: available }));
     } catch {
       setStockMap(prev => ({ ...prev, [drug.id]: [] }));
     } finally {
@@ -230,22 +320,25 @@ function SearchContent() {
   };
 
   const handleSendPrescription = async () => {
-    if (!rxFile) { setRxError('يرجى اختيار صورة الوصفة الطبية'); return; }
+    if (!rxFile && !rxBase64) { setRxError('يرجى اختيار صورة الوصفة الطبية'); return; }
     setRxSending(true);
     setRxError('');
     try {
       const stored = localStorage.getItem('mediflow-auth');
       const state  = stored ? JSON.parse(stored).state : null;
-      const patientId   = state?.user?.id   || '';
-      const patientName = state?.user?.name || state?.user?.email?.split('@')[0] || 'مريض';
+      const patientId    = state?.user?.id   || '';
+      const patientName  = state?.user?.name || state?.user?.email?.split('@')[0] || 'مريض';
+      const patientPhone = state?.user?.phone || state?.user?.phoneNumber || state?.user?.phone_number || localStorage.getItem('patient-phone') || '';
 
-      // 1. Convert image to base64 and upload
-      const imageBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload  = () => resolve((reader.result as string).split(',')[1] || '');
-        reader.onerror = reject;
-        reader.readAsDataURL(rxFile!);
-      });
+      // 1. Convert image to base64 (use cached base64 if re-sending)
+      const imageBase64 = rxFile
+        ? await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload  = () => resolve((reader.result as string).split(',')[1] || '');
+            reader.onerror = reject;
+            reader.readAsDataURL(rxFile!);
+          })
+        : rxBase64;
 
       const uploadRes = await fetch(`${PHARMACY_API}/prescriptions`, {
         method: 'POST',
@@ -272,6 +365,8 @@ function SearchContent() {
         })
       );
 
+      const pharmacyOwnerIds = pharmsWithOwner.filter(p => p.owner_id).map(p => p.owner_id);
+
       await Promise.allSettled(
         pharmsWithOwner
           .filter(p => p.owner_id)
@@ -283,11 +378,43 @@ function SearchContent() {
                 portalType: 'pharmacy',
                 recipientId: p.owner_id,
                 senderName: patientName,
-                message: `📋 وصفة طبية جديدة!\nالمريض: ${patientName}\n${p.distance_km != null ? `المسافة: ${Number(p.distance_km).toFixed(1)} كم\n` : ''}${rxNotes ? `ملاحظات: ${rxNotes}\n` : ''}[prescription_id:${prescriptionId}][patient_id:${patientId}]`,
+                message: `📋 وصفة طبية جديدة!\nالمريض: ${patientName}\n${patientPhone ? `رقم الهاتف: ${patientPhone}\n` : ''}${p.distance_km != null ? `المسافة: ${Number(p.distance_km).toFixed(1)} كم\n` : ''}طريقة الاستلام: ${rxDelivery === 'delivery' ? '🚚 توصيل للمنزل' : '🏪 استلام من الصيدلية'}\n${rxDelivery === 'delivery' && rxAddress ? `العنوان: ${rxAddress}\n` : ''}${rxDelivery === 'delivery' && deliveryLat && deliveryLng ? `إحداثيات التوصيل: ${deliveryLat.toFixed(5)}, ${deliveryLng.toFixed(5)}\n` : ''}${rxNotes ? `ملاحظات: ${rxNotes}\n` : ''}[prescription_id:${prescriptionId}][patient_id:${patientId}][delivery:${rxDelivery}]${deliveryLat && deliveryLng ? `[dlat:${deliveryLat.toFixed(5)}][dlng:${deliveryLng.toFixed(5)}]` : ''}`,
               }),
             })
           )
       );
+
+      // Send self-notification so the prescription appears in طلباتي
+      if (patientId) {
+        fetch(`${PHARMACY_API}/portal-notifications`, {
+          method: 'POST',
+          headers: patientH(),
+          body: JSON.stringify({
+            portalType: 'patient',
+            recipientId: patientId,
+            senderName: patientName,
+            message: `📋 تم إرسال وصفتك الطبية\nالحالة: قيد المراجعة\nطريقة الاستلام: ${rxDelivery === 'delivery' ? 'توصيل للمنزل' : 'استلام من الصيدلية'}\n[prescription_id:${prescriptionId}]`,
+          }),
+        }).catch(() => {});
+      }
+
+      // Save pending prescription so layout can detect expiry and trigger re-search
+      if (prescriptionId) {
+        localStorage.setItem('mediflow-pending-rx', JSON.stringify({
+          id: prescriptionId,
+          imageBase64,
+          notes: rxNotes,
+          radius: rxRadius,
+          lat: coords.lat,
+          lng: coords.lng,
+          sentAt: new Date().toISOString(),
+          pharmacyOwnerIds,
+          deliveryMethod: rxDelivery,
+          deliveryAddress: rxAddress,
+          deliveryLat: deliveryLat ?? undefined,
+          deliveryLng: deliveryLng ?? undefined,
+        }));
+      }
 
       setRxSent(true);
     } catch {
@@ -467,10 +594,16 @@ function SearchContent() {
                 <CheckCircle className="w-8 h-8 text-green-600" />
               </div>
               <h3 className="font-bold text-gray-900 text-lg mb-2">تم إرسال الوصفة!</h3>
-              <p className="text-gray-500 text-sm mb-4">
+              <p className="text-gray-500 text-sm mb-2">
                 أُرسلت وصفتك إلى الصيدليات في نطاق {rxRadius} كم.<br />
                 <span className="font-medium text-gray-700">أول صيدلية تقبل ستصلك إشعار فوراً 🔔</span>
               </p>
+              <div className="flex items-center justify-center gap-2 mb-4">
+                <span className="text-lg">{rxDelivery === 'delivery' ? '🚚' : '🏪'}</span>
+                <span className="text-sm font-medium text-gray-700">
+                  {rxDelivery === 'delivery' ? 'طلبت توصيل للمنزل' : 'ستستلم من الصيدلية'}
+                </span>
+              </div>
 
               <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-right mb-5">
                 <p className="font-bold text-sky-700 text-sm mb-1">ماذا تفعل الآن؟</p>
@@ -486,7 +619,7 @@ function SearchContent() {
                   className="flex-1 bg-sky-500 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-sky-600 transition-colors text-sm text-center">
                   طلباتي
                 </Link>
-                <button onClick={() => { setRxSent(false); setRxFile(null); setRxNotes(''); setRxRadius(5); }}
+                <button onClick={() => { setRxSent(false); setRxFile(null); setRxBase64(''); setRxNotes(''); setRxRadius(5); setRxDelivery('pickup'); setRxAddress(''); localStorage.removeItem('mediflow-pending-rx'); }}
                   className="flex-1 border border-gray-300 text-gray-600 px-4 py-2.5 rounded-xl font-medium hover:bg-gray-50 transition-colors text-sm">
                   إرسال وصفة أخرى
                 </button>
@@ -498,13 +631,19 @@ function SearchContent() {
               <div>
                 <p className="text-sm font-medium text-gray-700 mb-2">صورة الوصفة الطبية *</p>
                 <input ref={rxInputRef} type="file" accept="image/*" className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setRxFile(f); }} />
+                  onChange={e => { const f = e.target.files?.[0]; if (f) { setRxFile(f); setRxBase64(''); } }} />
                 <button onClick={() => rxInputRef.current?.click()}
-                  className={`w-full border-2 border-dashed rounded-2xl py-8 flex flex-col items-center gap-2 transition-colors ${rxFile ? 'border-sky-400 bg-sky-50' : 'border-gray-300 hover:border-sky-300 bg-white'}`}>
+                  className={`w-full border-2 border-dashed rounded-2xl py-8 flex flex-col items-center gap-2 transition-colors ${(rxFile || rxBase64) ? 'border-sky-400 bg-sky-50' : 'border-gray-300 hover:border-sky-300 bg-white'}`}>
                   {rxFile ? (
                     <>
                       <img src={URL.createObjectURL(rxFile)} alt="" className="w-24 h-24 object-cover rounded-xl" />
                       <p className="text-sm text-sky-700 font-medium">{rxFile.name}</p>
+                      <p className="text-xs text-gray-400">اضغط لتغيير الصورة</p>
+                    </>
+                  ) : rxBase64 ? (
+                    <>
+                      <img src={`data:image/jpeg;base64,${rxBase64}`} alt="" className="w-24 h-24 object-cover rounded-xl" />
+                      <p className="text-sm text-sky-700 font-medium">وصفتك السابقة</p>
                       <p className="text-xs text-gray-400">اضغط لتغيير الصورة</p>
                     </>
                   ) : (
@@ -538,6 +677,51 @@ function SearchContent() {
                 </div>
               </div>
 
+              {/* Delivery method */}
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <label className="block text-sm font-medium text-gray-700 mb-3">طريقة الاستلام *</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button type="button" onClick={() => setRxDelivery('pickup')}
+                    className={`flex flex-col items-center gap-2 py-4 rounded-xl border-2 text-sm font-medium transition-all ${rxDelivery === 'pickup' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                    <span className="text-2xl">🏪</span>
+                    <span>استلام من الصيدلية</span>
+                    <span className="text-xs font-normal opacity-70">تذهب بنفسك للصيدلية</span>
+                  </button>
+                  <button type="button" onClick={() => setRxDelivery('delivery')}
+                    className={`flex flex-col items-center gap-2 py-4 rounded-xl border-2 text-sm font-medium transition-all ${rxDelivery === 'delivery' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                    <span className="text-2xl">🚚</span>
+                    <span>توصيل للمنزل</span>
+                    <span className="text-xs font-normal opacity-70">الصيدلية توصّل إليك</span>
+                  </button>
+                </div>
+                {rxDelivery === 'delivery' && (
+                  <div className="mt-3 space-y-2">
+                    {deliveryLat && deliveryLng ? (
+                      <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+                        <span className="text-xs text-green-700 font-medium">📍 تم تحديد موقع التوصيل</span>
+                        <button type="button" onClick={() => { setDeliveryLat(null); setDeliveryLng(null); }}
+                          className="text-xs text-red-400 hover:text-red-600">تغيير</button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">⚠️ لم يتم تحديد موقع التوصيل بعد</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" onClick={() => setDeliveryMapOpen(true)}
+                        className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-sky-400 text-sky-600 bg-sky-50 hover:bg-sky-100 text-sm font-medium transition-all">
+                        📍 اختر من الخريطة
+                      </button>
+                      <button type="button" onClick={handleDeliveryGPS} disabled={deliveryGpsLoading}
+                        className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-purple-400 text-purple-600 bg-purple-50 hover:bg-purple-100 disabled:opacity-50 text-sm font-medium transition-all">
+                        {deliveryGpsLoading ? '⏳ جاري...' : '📡 موقعي الحالي'}
+                      </button>
+                    </div>
+                    <input value={rxAddress} onChange={e => setRxAddress(e.target.value)}
+                      placeholder="وصف العنوان: شارع، بناية، طابق... (اختياري)"
+                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-400" />
+                  </div>
+                )}
+              </div>
+
               {/* Notes */}
               <div className="bg-white rounded-2xl p-4 shadow-sm">
                 <label className="block text-sm font-medium text-gray-700 mb-2">ملاحظات إضافية (اختياري)</label>
@@ -551,7 +735,7 @@ function SearchContent() {
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{rxError}</div>
               )}
 
-              <button onClick={handleSendPrescription} disabled={rxSending || !rxFile}
+              <button onClick={handleSendPrescription} disabled={rxSending || (!rxFile && !rxBase64)}
                 className="w-full bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow">
                 {rxSending
                   ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> جاري الإرسال...</>
@@ -763,6 +947,34 @@ function SearchContent() {
                 <span className="text-xs font-medium text-gray-700 text-center leading-tight">{c.label}</span>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Delivery location map modal */}
+      {deliveryMapOpen && (
+        <div className="fixed inset-0 z-[100] flex flex-col bg-black/80">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+          <div className="flex items-center justify-between px-4 py-3 bg-white shadow-md" dir="rtl">
+            <button onClick={() => setDeliveryMapOpen(false)}
+              className="p-1.5 rounded-lg hover:bg-gray-100">
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+            <h2 className="font-bold text-gray-900 text-sm">اختر موقع التوصيل</h2>
+            <button
+              onClick={() => setDeliveryMapOpen(false)}
+              className="bg-sky-500 hover:bg-sky-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">
+              {deliveryLat && deliveryLng ? '✓ تأكيد الموقع' : 'إغلاق'}
+            </button>
+          </div>
+          <div ref={delivMapRef} className="flex-1" />
+          <div className="bg-white px-4 py-2.5 text-center text-xs text-gray-500" dir="rtl">
+            انقر على الخريطة أو اسحب الدبوس لتحديد موقع التوصيل الدقيق
+            {deliveryLat && deliveryLng && (
+              <span className="block text-green-600 font-medium mt-0.5">
+                📍 {deliveryLat.toFixed(4)}, {deliveryLng.toFixed(4)}
+              </span>
+            )}
           </div>
         </div>
       )}

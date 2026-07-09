@@ -103,7 +103,6 @@ interface PrescriptionRequest {
   createdAt: string;
   claimed: boolean;
   rxDelivered: boolean;
-  externalClaim?: boolean;
 }
 
 function parsePrescription(n: any, claimedIds: Set<string>, rxDeliveredIds: Set<string>): PrescriptionRequest | null {
@@ -145,10 +144,9 @@ export default function OrdersPage() {
   const [rejectedIds,  setRejectedIds]      = useState<Set<string>>(new Set());
   const [claimedIds, setClaimedIds]         = useState<Set<string>>(new Set());
   const [rxDeliveredIds, setRxDeliveredIds] = useState<Set<string>>(new Set());
-  const [rxExpiredIds, setRxExpiredIds]     = useState<Set<string>>(() => loadSet('pharmacy-rx-auto-expired'));
   const pharmacyName = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-name') || '' : '';
 
-  const loadOrders = () => {
+  useEffect(() => {
     const dIds = loadSet(DELIVERED_KEY);
     const cIds = loadSet(CONFIRMED_KEY);
     const rIds = loadSet(REJECTED_KEY);
@@ -167,84 +165,28 @@ export default function OrdersPage() {
 
     const autoRejected: Set<string> = loadSet(AUTO_REJECTED_KEY);
 
-    const RX_AUTO_EXPIRED_KEY       = 'pharmacy-rx-auto-expired';
-    const DELIVERY_AUTO_REJECTED_KEY = 'pharmacy-delivery-auto-rejected';
-
-    // Only fetch config from server once per session; use cached values on subsequent loads
-    const CONFIG_FETCHED_KEY = 'mediflow-config-fetched-at';
-    const lastFetch = Number(localStorage.getItem(CONFIG_FETCHED_KEY) || 0);
-    const configStale = Date.now() - lastFetch > 5 * 60 * 1000; // re-fetch every 5 min max
-
-    const configFetches = configStale
-      ? [
-          fetch(`${PLATFORM_API}/config/auto_reject_minutes`).then(r => r.json()).catch(() => null),
-          fetch(`${PLATFORM_API}/config/prescription_reject_minutes`).then(r => r.json()).catch(() => null),
-          fetch(`${PLATFORM_API}/config/delivery_timeout_hours`).then(r => r.json()).catch(() => null),
-        ]
-      : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)];
-
     Promise.all([
       fetch(`${PHARMACY_API}/portal-notifications?portalType=pharmacy&recipientId=${ownerId}`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then(r => r.json()),
-      ...configFetches,
+      fetch(`${PLATFORM_API}/config/auto_reject_minutes`).then(r => r.json()).catch(() => ({ data: { value: '10' } })),
     ])
-      .then(async ([d, configRes, rxConfigRes, deliveryConfigRes]) => {
+      .then(async ([d, configRes]) => {
         const notifs: any[] = d.data || [];
-        const timeoutMin  = Number(configRes?.data?.value  || localStorage.getItem('mediflow-order-timeout-min')   || 10);
-        const rxTimeoutMin = Number(rxConfigRes?.data?.value || localStorage.getItem('mediflow-rx-timeout-min')    || 30);
-        const deliveryH   = Number(deliveryConfigRes?.data?.value || localStorage.getItem('mediflow-delivery-timeout-h') || 24);
-
-        if (configStale) {
-          localStorage.setItem('mediflow-order-timeout-min',  String(timeoutMin));
-          localStorage.setItem('mediflow-rx-timeout-min',     String(rxTimeoutMin));
-          localStorage.setItem('mediflow-delivery-timeout-h', String(deliveryH));
-          localStorage.setItem(CONFIG_FETCHED_KEY, String(Date.now()));
-        }
-
+        const timeoutMin = Number(configRes?.data?.value || 10);
         const now = Date.now();
 
         const reservParsed = notifs
           .map(n => parseReservation(n.message, n.id, n.created_at, dIds, cIds, rIds, timeoutMin))
           .filter(Boolean) as Reservation[];
 
-        const rxParsedRaw = notifs
+        const rxParsed = notifs
           .map(n => parsePrescription(n, rxIds, rxdIds))
           .filter(Boolean) as PrescriptionRequest[];
 
-        // Check backend claim status — at most once per prescription per 5 min to avoid excess calls
-        const myPharmacyId = pharmacyId || '';
-        const RX_CHECK_KEY = 'mediflow-rx-last-checked';
-        const rxChecked: Record<string, number> = JSON.parse(localStorage.getItem(RX_CHECK_KEY) || '{}');
-        const rxParsed = await Promise.all(
-          rxParsedRaw.map(async rx => {
-            if (rx.claimed || rx.rxDelivered || !rx.prescriptionId) return rx;
-            const lastChecked = rxChecked[rx.prescriptionId] || 0;
-            if (Date.now() - lastChecked < 5 * 60 * 1000) return rx;
-            try {
-              const d = await fetch(`${PHARMACY_API}/prescriptions/${rx.prescriptionId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              }).then(r => r.json());
-              rxChecked[rx.prescriptionId] = Date.now();
-              if (d?.data?.status === 'claimed') {
-                const claimedBy = d.data.claimed_by || '';
-                if (claimedBy === myPharmacyId) {
-                  rxIds.add(rx.notifId);
-                  return { ...rx, claimed: true };
-                } else {
-                  return { ...rx, claimed: true, externalClaim: true };
-                }
-              }
-            } catch {}
-            return rx;
-          })
-        );
-        localStorage.setItem(RX_CHECK_KEY, JSON.stringify(rxChecked));
-        localStorage.setItem(CLAIMED_RX_KEY, JSON.stringify(Array.from(rxIds)));
-
+        // Auto-reject timed-out pending reservations
+        // Only fire if: timed out AND within 3× the timeout window (prevents stale old notifications from triggering rejections)
         const currentPharmacyName = localStorage.getItem('pharmacy-name') || 'الصيدلية';
-
-        // ── Rule 1: Auto-reject pending reservations (10 min window) ──────────
         const toKeep: Reservation[] = [];
         for (const r of reservParsed) {
           const isPending = !r.confirmed && !r.delivered && !r.rejected;
@@ -253,73 +195,30 @@ export default function OrdersPage() {
           if (isPending && isFreshEnoughToReject && !autoRejected.has(r.id) && !inFlightRejections.has(r.id)) {
             inFlightRejections.add(r.id);
             autoRejected.add(r.id);
+            // Notify the patient once
             if (r.patientId) {
               fetch(`${PHARMACY_API}/portal-notifications`, {
-                method: 'POST', headers: pharmH(),
+                method: 'POST',
+                headers: pharmH(),
                 body: JSON.stringify({
-                  portalType: 'patient', recipientId: r.patientId, senderName: currentPharmacyName,
+                  portalType: 'patient',
+                  recipientId: r.patientId,
+                  senderName: currentPharmacyName,
                   message: `❌ رُفض طلبك تلقائياً\nالدواء: ${r.drug}\nلم تستجب الصيدلية خلال ${timeoutMin} دقيقة.\nنقترح البحث عن صيدلية أخرى.`,
                 }),
               }).catch(() => {});
             }
           }
+          // Always keep in list (expired ones show as منتهي, stale old ones are silently ignored)
           toKeep.push(r);
         }
         localStorage.setItem(AUTO_REJECTED_KEY, JSON.stringify(Array.from(autoRejected)));
-
-        // ── Rule 2: Auto-expire unclaimed prescriptions (rxTimeoutMin) ────────
-        // Patient expiry notification is sent by the PATIENT portal (layout.tsx) — not here,
-        // to avoid duplicate notifications when prescription is sent to multiple pharmacies.
-        const rxAutoExpired: Set<string> = new Set(JSON.parse(localStorage.getItem(RX_AUTO_EXPIRED_KEY) || '[]'));
-        for (const rx of rxParsed) {
-          if (rx.claimed || rx.rxDelivered || rxAutoExpired.has(rx.notifId)) continue;
-          const ageMin = (now - new Date(rx.createdAt).getTime()) / 60000;
-          if (ageMin >= rxTimeoutMin) {
-            rxAutoExpired.add(rx.notifId);
-          }
-        }
-        localStorage.setItem(RX_AUTO_EXPIRED_KEY, JSON.stringify(Array.from(rxAutoExpired)));
-        setRxExpiredIds(new Set(rxAutoExpired));
-
-        // ── Rule 3: Auto-reject confirmed-but-undelivered orders (deliveryH) ─
-        const deliveryAutoRejected: Set<string> = new Set(JSON.parse(localStorage.getItem(DELIVERY_AUTO_REJECTED_KEY) || '[]'));
-        for (const r of toKeep) {
-          if (!r.confirmed || r.delivered || r.rejected || deliveryAutoRejected.has(r.id)) continue;
-          const ageH = (now - new Date(r.createdAt).getTime()) / 3600000;
-          if (ageH >= deliveryH) {
-            deliveryAutoRejected.add(r.id);
-            if (r.patientId) {
-              fetch(`${PHARMACY_API}/portal-notifications`, {
-                method: 'POST', headers: pharmH(),
-                body: JSON.stringify({
-                  portalType: 'patient', recipientId: r.patientId, senderName: currentPharmacyName,
-                  message: `❌ تم إلغاء طلبك تلقائياً\nالدواء: ${r.drug}\nلم يتم ${r.delivery === 'delivery' ? 'توصيل' : 'استلام'} طلبك خلال ${deliveryH} ساعة.\nيُنصح بالتواصل مع الصيدلية أو البحث عن صيدلية أخرى.`,
-                }),
-              }).catch(() => {});
-            }
-          }
-        }
-        localStorage.setItem(DELIVERY_AUTO_REJECTED_KEY, JSON.stringify(Array.from(deliveryAutoRejected)));
 
         setReservations(toKeep);
         setPrescriptions(rxParsed);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    loadOrders();
-    const interval = setInterval(loadOrders, 60_000);
-    const onVisible = () => { if (document.visibilityState === 'visible') loadOrders(); };
-    const onRxUpdate = () => loadOrders();
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('mediflow-rx-update', onRxUpdate);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('mediflow-rx-update', onRxUpdate);
-    };
   }, []);
 
   const saveSet = (key: string, s: Set<string>) => localStorage.setItem(key, JSON.stringify(Array.from(s)));
@@ -435,18 +334,7 @@ export default function OrdersPage() {
       const next = new Set(Array.from(claimedIds).concat(rx.notifId));
       setClaimedIds(next);
       saveSet(CLAIMED_RX_KEY, next);
-      // Also store prescriptionId so the notification bell panel can verify this pharmacy accepted it
-      if (rx.prescriptionId) {
-        try {
-          const myAccepted: string[] = JSON.parse(localStorage.getItem('mediflow-my-accepted-rx-ids') || '[]');
-          if (!myAccepted.includes(rx.prescriptionId)) {
-            myAccepted.push(rx.prescriptionId);
-            localStorage.setItem('mediflow-my-accepted-rx-ids', JSON.stringify(myAccepted));
-          }
-        } catch {}
-      }
       setPrescriptions(prev => prev.map(p => p.notifId === rx.notifId ? { ...p, claimed: true } : p));
-      window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
     } catch {}
     setClaiming(null);
   };
@@ -472,7 +360,6 @@ export default function OrdersPage() {
       setRxDeliveredIds(next);
       saveSet(RX_DELIVERED_KEY, next);
       setPrescriptions(prev => prev.map(p => p.notifId === rx.notifId ? { ...p, rxDelivered: true } : p));
-      window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
     } catch {}
     setRxDelivering(null);
   };
@@ -520,7 +407,6 @@ export default function OrdersPage() {
       setClaimedIds(next);
       saveSet(CLAIMED_RX_KEY, next);
       setPrescriptions(prev => prev.map(p => p.notifId === rx.notifId ? { ...p, claimed: true } : p));
-      window.dispatchEvent(new CustomEvent('mediflow-rx-update'));
       setRxPanel(null);
       setRxActionMode(null);
     } catch {}
@@ -591,8 +477,8 @@ export default function OrdersPage() {
         <button onClick={() => setActiveTab('prescriptions')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium transition-colors ${activeTab === 'prescriptions' ? 'bg-white text-gray-900 shadow' : 'text-gray-500 hover:text-gray-700'}`}>
           <FileImage className="w-4 h-4" /> وصفات طبية
-          {prescriptions.filter(p => !p.claimed && !rxExpiredIds.has(p.notifId)).length > 0 && (
-            <span className="bg-sky-500 text-white text-xs px-1.5 py-0.5 rounded-full">{prescriptions.filter(p => !p.claimed && !rxExpiredIds.has(p.notifId)).length}</span>
+          {prescriptions.filter(p => !p.claimed).length > 0 && (
+            <span className="bg-sky-500 text-white text-xs px-1.5 py-0.5 rounded-full">{prescriptions.filter(p => !p.claimed).length}</span>
           )}
         </button>
       </div>
@@ -609,20 +495,18 @@ export default function OrdersPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {prescriptions.map(rx => {
-              const isExpired = rxExpiredIds.has(rx.notifId) && !rx.claimed && !rx.rxDelivered;
-              return (
-              <div key={rx.notifId} className={`bg-white rounded-2xl shadow-sm border-r-4 overflow-hidden ${rx.rxDelivered ? 'border-green-500' : rx.claimed ? 'border-blue-400' : isExpired ? 'border-gray-300' : 'border-sky-400'}`}>
+            {prescriptions.map(rx => (
+              <div key={rx.notifId} className={`bg-white rounded-2xl shadow-sm border-r-4 overflow-hidden ${rx.rxDelivered ? 'border-green-500' : rx.claimed ? 'border-blue-400' : 'border-sky-400'}`}>
                 {/* Card header */}
                 <div className="p-4 flex items-start gap-4">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${rx.rxDelivered ? 'bg-green-100' : rx.claimed ? 'bg-blue-100' : isExpired ? 'bg-gray-100' : 'bg-sky-100'}`}>
-                    <FileImage className={`w-5 h-5 ${rx.rxDelivered ? 'text-green-600' : rx.claimed ? 'text-blue-600' : isExpired ? 'text-gray-400' : 'text-sky-600'}`} />
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${rx.rxDelivered ? 'bg-green-100' : rx.claimed ? 'bg-blue-100' : 'bg-sky-100'}`}>
+                    <FileImage className={`w-5 h-5 ${rx.rxDelivered ? 'text-green-600' : rx.claimed ? 'text-blue-600' : 'text-sky-600'}`} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <p className="font-bold text-gray-900">وصفة طبية</p>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${rx.rxDelivered ? 'bg-green-100 text-green-700' : rx.externalClaim ? 'bg-gray-100 text-gray-500' : rx.claimed ? 'bg-blue-100 text-blue-700' : isExpired ? 'bg-gray-100 text-gray-500' : 'bg-sky-100 text-sky-700'}`}>
-                        {rx.rxDelivered ? 'تم التسليم ✓' : rx.externalClaim ? 'قُبلت من صيدلية أخرى' : rx.claimed ? 'مقبولة' : isExpired ? 'منتهية ⏱' : 'جديدة'}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${rx.rxDelivered ? 'bg-green-100 text-green-700' : rx.claimed ? 'bg-blue-100 text-blue-700' : 'bg-sky-100 text-sky-700'}`}>
+                        {rx.rxDelivered ? 'تم التسليم ✓' : rx.claimed ? 'مقبولة' : 'جديدة'}
                       </span>
                     </div>
                     <div className="text-sm text-gray-500 space-y-0.5 mt-1">
@@ -655,8 +539,8 @@ export default function OrdersPage() {
                   </div>
                 )}
 
-                {/* Action panel toggle (only on unclaimed, non-expired prescriptions) */}
-                {!rx.claimed && !rx.rxDelivered && !isExpired && (
+                {/* Action panel toggle (only on unclaimed prescriptions) */}
+                {!rx.claimed && !rx.rxDelivered && (
                   <div className="border-t border-gray-100">
                     {/* Toggle bar */}
                     <button onClick={() => openRxPanel(rx.notifId)}
@@ -776,7 +660,7 @@ export default function OrdersPage() {
                   </div>
                 )}
               </div>
-            );})}
+            ))}
           </div>
         )
       )}

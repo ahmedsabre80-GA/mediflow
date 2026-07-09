@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Save, Truck, Store, Calculator, Upload, X, MapPin, Clock, Navigation, Send, Lock, Palette, FileText, Globe, KeyRound } from 'lucide-react';
+import { Save, Truck, Store, Calculator, Upload, X, MapPin, Clock, Navigation, Send, Lock, Palette, FileText, Globe, KeyRound, ShieldCheck } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import DraggableModal from '@/components/DraggableModal';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
@@ -93,7 +94,9 @@ export default function SettingsPage() {
   const [saving,        setSaving]        = useState(false);
   const [locationSaved, setLocationSaved] = useState<'idle'|'saving'|'ok'|'err'>('idle');
   const [logoImage, setLogoImage] = useState('');
-  const [tab,       setTab]       = useState<'info'|'location'|'delivery'|'hours'>('info');
+  const [tab,       setTab]       = useState<'info'|'location'|'delivery'|'hours'|'manager'>('info');
+  const [expiryWarnDays, setExpiryWarnDays] = useState(30);
+  const [expiryInput, setExpiryInput] = useState('30');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [settings, setSettings] = useState({
@@ -123,14 +126,26 @@ export default function SettingsPage() {
   );
 
   useEffect(() => {
+    const saved = Number(localStorage.getItem('pharmacy-expiry-warn-days')) || 30;
+    setExpiryWarnDays(saved);
+    setExpiryInput(String(saved));
+  }, []);
+
+  useEffect(() => {
     const token = localStorage.getItem('pharmacy-token');
     if (!token) return;
 
     // Load cached location from localStorage first (survives tab switches + offline)
-    const cachedLat = localStorage.getItem('pharmacy-saved-lat');
-    const cachedLng = localStorage.getItem('pharmacy-saved-lng');
+    const cachedLat      = localStorage.getItem('pharmacy-saved-lat');
+    const cachedLng      = localStorage.getItem('pharmacy-saved-lng');
+    const cachedProvince = localStorage.getItem('pharmacy-saved-province');
     if (cachedLat && cachedLng) {
-      setSettings(s => ({ ...s, latitude: Number(cachedLat), longitude: Number(cachedLng) }));
+      setSettings(s => ({
+        ...s,
+        latitude: Number(cachedLat),
+        longitude: Number(cachedLng),
+        ...(cachedProvince ? { province: cachedProvince } : {}),
+      }));
     }
 
     const tokenEmail = localStorage.getItem('pharmacy-email') || '';
@@ -150,11 +165,13 @@ export default function SettingsPage() {
       const info = info_data?.data || {};
       const lat = d.latitude ?? (cachedLat ? Number(cachedLat) : null);
       const lng = d.longitude ?? (cachedLng ? Number(cachedLng) : null);
+      const province = cachedProvince || d.province || 'baghdad';
       setSettings(s => ({
         ...s,
         ...d,
         latitude: lat,
         longitude: lng,
+        province,
         name:  info.name  || d.name  || s.name,
         phone: info.phone || d.phone || s.phone,
         email: tokenEmail || info.owner_email || d.email || s.email,
@@ -212,7 +229,30 @@ export default function SettingsPage() {
 
   const handleGPS = () => {
     navigator.geolocation?.getCurrentPosition(
-      pos => saveLocation(pos.coords.latitude, pos.coords.longitude),
+      async pos => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        let nearestKey = 'baghdad';
+        let minDist = Infinity;
+        Object.entries(IRAQ_PROVINCES).forEach(([key, p]) => {
+          const d = Math.hypot(p.lat - lat, p.lng - lng);
+          if (d < minDist) { minDist = d; nearestKey = key; }
+        });
+        setSettings(s => ({ ...s, province: nearestKey, latitude: lat, longitude: lng }));
+        localStorage.setItem('pharmacy-saved-lat', String(lat));
+        localStorage.setItem('pharmacy-saved-lng', String(lng));
+        localStorage.setItem('pharmacy-saved-province', nearestKey);
+        setLocationSaved('saving');
+        try {
+          const token = localStorage.getItem('pharmacy-token') || '';
+          const res = await fetch(`${API}/my/settings`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ latitude: lat, longitude: lng, province: nearestKey }),
+          });
+          setLocationSaved(res.ok ? 'ok' : 'err');
+        } catch { setLocationSaved('err'); }
+        setTimeout(() => setLocationSaved('idle'), 4000);
+      },
       () => alert('تعذر الحصول على موقعك. تأكد من منح الإذن.')
     );
   };
@@ -287,10 +327,11 @@ export default function SettingsPage() {
   const mapLng = settings.longitude ?? IRAQ_PROVINCES[settings.province]?.lng ?? 44.3661;
 
   const TABS = [
-    { id: 'info',     label: 'معلومات', icon: Store },
-    { id: 'location', label: 'الموقع',  icon: MapPin },
+    { id: 'info',     label: 'معلومات',    icon: Store },
+    { id: 'location', label: 'الموقع',     icon: MapPin },
     { id: 'hours',    label: 'أوقات العمل', icon: Clock },
-    { id: 'delivery', label: 'التوصيل', icon: Truck },
+    { id: 'delivery', label: 'التوصيل',    icon: Truck },
+    { id: 'manager',  label: 'المدير',     icon: ShieldCheck },
   ] as const;
 
   return (
@@ -440,58 +481,50 @@ export default function SettingsPage() {
       )}
 
       {/* ── CHANGE REQUEST MODAL ── */}
-      {changeReq && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" dir="rtl">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b">
-              <button onClick={() => setChangeReq(null)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-              <h3 className="font-bold text-gray-900">طلب تعديل — {changeReq.label}</h3>
+      <DraggableModal open={!!changeReq} onClose={() => setChangeReq(null)} title={`طلب تعديل — ${changeReq?.label || ''}`} initialWidth={440}>
+        <div className="px-6 py-5 space-y-4" dir="rtl">
+          {reqSent ? (
+            <div className="text-center py-6">
+              <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Send className="w-7 h-7 text-green-600" />
+              </div>
+              <p className="font-bold text-gray-900">تم إرسال الطلب!</p>
+              <p className="text-sm text-gray-500 mt-1">ستتلقى إشعاراً بعد مراجعة الإدارة</p>
             </div>
-            <div className="px-6 py-5 space-y-4">
-              {reqSent ? (
-                <div className="text-center py-6">
-                  <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Send className="w-7 h-7 text-green-600" />
-                  </div>
-                  <p className="font-bold text-gray-900">تم إرسال الطلب!</p>
-                  <p className="text-sm text-gray-500 mt-1">ستتلقى إشعاراً بعد مراجعة الإدارة</p>
-                </div>
-              ) : (
-                <>
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
-                    سيصل طلبك لإدارة المنصة وسيتم مراجعته والرد عليك في أقرب وقت.
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">{changeReq.placeholder} *</label>
-                    <input type="text" value={changeReqVal} onChange={e => setChangeReqVal(e.target.value)}
-                      placeholder={changeReq.placeholder}
-                      dir={changeReq.field === 'name' ? 'rtl' : 'ltr'}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">سبب الطلب *</label>
-                    <textarea value={changeReqNote} onChange={e => setChangeReqNote(e.target.value)}
-                      placeholder="اشرح سبب رغبتك في التغيير..."
-                      rows={2} dir="rtl"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm resize-none" />
-                  </div>
-                  <div className="flex gap-3 pt-1">
-                    <button onClick={() => setChangeReq(null)}
-                      className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
-                      إلغاء
-                    </button>
-                    <button onClick={handleSendChangeRequest} disabled={sendingReq || !changeReqVal.trim() || !changeReqNote.trim()}
-                      className="flex-1 bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2">
-                      {sendingReq ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send className="w-4 h-4" />}
-                      {sendingReq ? 'جاري الإرسال...' : 'إرسال الطلب للإدارة'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+          ) : changeReq && (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
+                سيصل طلبك لإدارة المنصة وسيتم مراجعته والرد عليك في أقرب وقت.
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">{changeReq.placeholder} *</label>
+                <input type="text" value={changeReqVal} onChange={e => setChangeReqVal(e.target.value)}
+                  placeholder={changeReq.placeholder}
+                  dir={changeReq.field === 'name' ? 'rtl' : 'ltr'}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">سبب الطلب *</label>
+                <textarea value={changeReqNote} onChange={e => setChangeReqNote(e.target.value)}
+                  placeholder="اشرح سبب رغبتك في التغيير..."
+                  rows={2} dir="rtl"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm resize-none" />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setChangeReq(null)}
+                  className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                  إلغاء
+                </button>
+                <button onClick={handleSendChangeRequest} disabled={sendingReq || !changeReqVal.trim() || !changeReqNote.trim()}
+                  className="flex-1 bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2">
+                  {sendingReq ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send className="w-4 h-4" />}
+                  {sendingReq ? 'جاري الإرسال...' : 'إرسال الطلب للإدارة'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </DraggableModal>
 
       {/* ── LOCATION TAB ── */}
       {tab === 'location' && (
@@ -651,6 +684,96 @@ export default function SettingsPage() {
             </div>
           </>
           )}
+        </div>
+      )}
+
+      {/* ── MANAGER TAB ── */}
+      {tab === 'manager' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl p-6 shadow-sm space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <ShieldCheck className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">تنبيه انتهاء الصلاحية</h3>
+                <p className="text-xs text-gray-400 mt-0.5">يُعلم الكاشير والمدير عند اقتراب انتهاء صلاحية الدواء</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">عدد أيام التحذير المسبق</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min="1" max="365"
+                    value={expiryInput}
+                    onChange={e => setExpiryInput(e.target.value)}
+                    onBlur={() => {
+                      const v = Math.min(365, Math.max(1, Number(expiryInput) || 30));
+                      setExpiryWarnDays(v);
+                      setExpiryInput(String(v));
+                      localStorage.setItem('pharmacy-expiry-warn-days', String(v));
+                    }}
+                    className="w-20 text-center border border-gray-300 rounded-xl px-2 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <span className="text-sm text-gray-500">يوم</span>
+                </div>
+              </div>
+
+              <input
+                type="range" min="1" max="180" step="1"
+                value={expiryWarnDays}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  setExpiryWarnDays(v);
+                  setExpiryInput(String(v));
+                  localStorage.setItem('pharmacy-expiry-warn-days', String(v));
+                }}
+                className="w-full accent-amber-500 cursor-pointer"
+              />
+
+              <div className="flex justify-between text-xs text-gray-400">
+                <span>1 يوم</span>
+                <span>7</span>
+                <span>30</span>
+                <span>60</span>
+                <span>180 يوم</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[1, 7, 14, 30, 60, 90].map(d => (
+                  <button key={d} onClick={() => {
+                    setExpiryWarnDays(d); setExpiryInput(String(d));
+                    localStorage.setItem('pharmacy-expiry-warn-days', String(d));
+                  }}
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${expiryWarnDays === d ? 'bg-amber-500 text-white border-amber-500' : 'border-gray-200 text-gray-600 hover:bg-amber-50 hover:border-amber-300'}`}>
+                    {d === 1 ? 'يوم' : d === 7 ? 'أسبوع' : d === 14 ? 'أسبوعان' : d === 30 ? 'شهر' : d === 60 ? 'شهران' : '3 أشهر'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className={`rounded-xl px-4 py-3 border-2 text-sm flex items-center gap-3 ${expiryWarnDays <= 7 ? 'bg-red-50 border-red-300 text-red-700' : 'bg-amber-50 border-amber-300 text-amber-700'}`}>
+              <span className="text-xl">{expiryWarnDays <= 7 ? '🔴' : '🟡'}</span>
+              <span>سيظهر تنبيه للأدوية التي تنتهي خلال <strong>{expiryWarnDays} يوم</strong> أو أقل</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-6 shadow-sm space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center">
+                <ShieldCheck className="w-5 h-5 text-sky-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">حد الخصم للموظفين</h3>
+                <p className="text-xs text-gray-400 mt-0.5">الحد الأقصى المسموح للموظف عند إعطاء خصم على الفاتورة</p>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm text-gray-600">
+              الإعداد الحالي: <span className="font-bold text-sky-700">10% حد أقصى للموظفين — بلا حد للمدراء والمالكين</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

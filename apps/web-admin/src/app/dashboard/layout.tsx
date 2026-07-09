@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, Building2, Users, ShoppingCart,
   BarChart3, Shield, Settings, LogOut, Menu, X, Bell,
-  Package, Stethoscope, ClipboardList, UserCog, MessageSquare, Trash2, HeartPulse, KeyRound
+  Package, Stethoscope, ClipboardList, UserCog, MessageSquare, Trash2, HeartPulse, KeyRound, Pill
 } from 'lucide-react';
 import {
   startSession, endSession,
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/pharmacies', label: 'الصيدليات', icon: Building2 },
 
   { href: '/dashboard/warehouses', label: 'المذاخر', icon: Package },
+  { href: '/dashboard/drugs', label: 'كتالوج الأدوية', icon: Pill },
   { href: '/dashboard/doctors', label: 'الأطباء', icon: Stethoscope },
   { href: '/dashboard/patients', label: 'المرضى', icon: HeartPulse },
   { href: '/dashboard/users', label: 'المستخدمون', icon: Users },
@@ -28,7 +29,6 @@ const NAV_ITEMS = [
   { href: '/dashboard/analytics', label: 'التحليلات', icon: BarChart3 },
   { href: '/dashboard/messages', label: 'مركز الرسائل', icon: MessageSquare },
   { href: '/dashboard/audit', label: 'سجل المراقبة', icon: Shield },
-  { href: '/dashboard/password-resets', label: 'إعادة كلمة المرور', icon: KeyRound },
   { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
 ];
 

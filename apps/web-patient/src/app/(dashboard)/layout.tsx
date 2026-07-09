@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle, CalendarDays, RefreshCw } from 'lucide-react';
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -48,6 +48,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [cancelling,     setCancelling]     = useState(false);
   const [cancelledIds,   setCancelledIds]   = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem(CANCELLED_KEY) || '[]')); } catch { return new Set(); }
+  });
+  const [rxResearchModal, setRxResearchModal] = useState(false);
+  const [pendingRxBase64, setPendingRxBase64] = useState('');
+  const [resendingRx,     setResendingRx]     = useState(false);
+  const [resendingPartial, setResendingPartial] = useState(false);
+  const [resentRxNotifIds, setResentRxNotifIds] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('mediflow-resent-rx-notifs') || '[]')); } catch { return new Set(); }
   });
 
   const refresh = useCallback(async (uid: string) => {
@@ -99,6 +106,49 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [refresh]);
 
+  const checkPendingRx = useCallback(async (uid: string) => {
+    if (!uid) return;
+    try {
+      const raw = localStorage.getItem('mediflow-pending-rx');
+      if (!raw) return;
+      const pending = JSON.parse(raw);
+      if (!pending?.sentAt) return;
+
+      // Read timeout from localStorage (written by admin portal settings), default 30 min
+      const rxTimeoutMin = Number(localStorage.getItem('mediflow-rx-timeout-min') || '30');
+      const ageMin = (Date.now() - new Date(pending.sentAt).getTime()) / 60000;
+      if (ageMin < rxTimeoutMin) return;
+
+      // Check if prescription was already accepted (status no longer open)
+      const rxData = await fetch(`${PHARMACY_API}/prescriptions/${pending.id}`).then(r => r.json()).catch(() => ({}));
+      if (rxData?.data?.status && rxData.data.status !== 'open') {
+        // Already handled — clear the pending entry
+        localStorage.removeItem('mediflow-pending-rx');
+        return;
+      }
+
+      // Expired and still open — notify patient and trigger re-search modal
+      localStorage.removeItem('mediflow-pending-rx');
+      await fetch(`${PHARMACY_API}/portal-notifications`, {
+        method: 'POST',
+        headers: patientAuthHeaders(),
+        body: JSON.stringify({
+          portalType: 'patient',
+          recipientId: uid,
+          senderName: 'ميديفلو',
+          message: `❌ لم يتم قبول وصفتك الطبية\nلم تستجب أي صيدلية خلال ${rxTimeoutMin} دقيقة.\nانقر لإعادة البحث أو توسيع النطاق.[prescription_id:${pending.id}]`,
+        }),
+      }).catch(() => {});
+      refresh(uid);
+
+      // Show re-search modal with the prescription image
+      if (pending.imageBase64) {
+        setPendingRxBase64(pending.imageBase64);
+        setRxResearchModal(true);
+      }
+    } catch {}
+  }, [refresh]);
+
   useEffect(() => {
     const stored = localStorage.getItem('mediflow-auth');
     if (!stored) { router.push('/login'); return; }
@@ -112,11 +162,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setUserName(user?.name || user?.email?.split('@')[0] || 'مريض');
       refresh(uid);
       checkReminders(uid);
+      checkPendingRx(uid);
       const iv1 = setInterval(() => refresh(uid), 30000);
       const iv2 = setInterval(() => checkReminders(uid), 60000);
-      return () => { clearInterval(iv1); clearInterval(iv2); };
+      const iv3 = setInterval(() => checkPendingRx(uid), 60000);
+      return () => { clearInterval(iv1); clearInterval(iv2); clearInterval(iv3); };
     } catch { router.push('/login'); }
-  }, [router, refresh, checkReminders]);
+  }, [router, refresh, checkReminders, checkPendingRx]);
 
   const unread = notifs.filter(n => !n.isRead).length;
 
@@ -285,9 +337,138 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </nav>
 
+      {/* ── PRESCRIPTION RE-SEARCH MODAL ────────────────────────── */}
+      {rxResearchModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-amber-50 border-b border-amber-200 px-5 py-4">
+              <div className="flex items-center justify-between">
+                <button onClick={() => setRxResearchModal(false)}>
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+                <h2 className="font-bold text-gray-900 text-base">انتهت مدة انتظار وصفتك</h2>
+              </div>
+              <p className="text-sm text-amber-700 mt-1 text-right">
+                لم تقبل أي صيدلية وصفتك — يمكنك إعادة الإرسال بنفس الوصفة أو تغيير النطاق
+              </p>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {/* Prescription image preview */}
+              {pendingRxBase64 && (
+                <div className="flex justify-center">
+                  <img
+                    src={`data:image/jpeg;base64,${pendingRxBase64}`}
+                    alt="الوصفة الطبية"
+                    className="w-40 h-40 object-cover rounded-xl border-2 border-sky-200"
+                  />
+                </div>
+              )}
+              <p className="text-sm text-gray-600 text-center">
+                وصفتك جاهزة — اضغط &quot;إعادة البحث&quot; لإرسالها مجدداً مع إمكانية تغيير النطاق
+              </p>
+            </div>
+
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                onClick={() => setRxResearchModal(false)}
+                className="flex-1 border border-gray-300 text-gray-600 py-3 rounded-xl text-sm font-medium hover:bg-gray-50">
+                لاحقاً
+              </button>
+              <button
+                onClick={() => {
+                  setRxResearchModal(false);
+                  // Save the image back to pending-rx so search page can pre-fill
+                  localStorage.setItem('mediflow-pending-rx', JSON.stringify({
+                    imageBase64: pendingRxBase64,
+                    sentAt: null,
+                  }));
+                  router.push('/search?tab=prescription');
+                }}
+                className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4" />
+                إعادة البحث
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── NOTIFICATION DETAIL MODAL ───────────────────────────── */}
       {selected && (() => {
         const isReservation = isReservationNotif(selected);
+        const isPartialAccept = selected.message.includes('قبول جزئي للوصفة') || selected.message.includes('جميع الأدوية متوفرة');
+        const partialPharmacyOwnerId = selected.message.match(/\[pharmacy_owner_id:([^\]]+)\]/)?.[1] || selected.senderId || '';
+        const partialPrescriptionId  = selected.message.match(/\[prescription_id:([^\]]+)\]/)?.[1]  || '';
+        const displayMessage = selected.message
+          .replace(/\[pharmacy_owner_id:[^\]]*\]/g, '')
+          .replace(/\[prescription_id:[^\]]*\]/g, '')
+          .replace(/\[delivery:[^\]]*\]/g, '')
+          .replace(/\[price:[^\]]*\]/g, '')
+          .replace(/\[currency:[^\]]*\]/g, '')
+          .trim();
+
+        const handleResendToSamePharmacy = async () => {
+          setResendingPartial(true);
+          try {
+            const pendingRaw = localStorage.getItem('mediflow-pending-rx');
+            const pending = pendingRaw ? JSON.parse(pendingRaw) : null;
+            const imageBase64 = pending?.imageBase64 || '';
+            const notes       = pending?.notes || '';
+            const deliveryMethod = pending?.deliveryMethod || 'pickup';
+            const deliveryAddress = pending?.deliveryAddress || '';
+            const prescriptionId = partialPrescriptionId || pending?.id || `rx-${Date.now()}`;
+
+            // Resolve pharmacy owner ID: from tag → senderId → nearby lookup by senderName
+            let ownerId = partialPharmacyOwnerId;
+            if (!ownerId && selected.senderName) {
+              const lat  = pending?.lat  || 33.3;
+              const lng  = pending?.lng  || 44.4;
+              const near = await fetch(`${PHARMACY_API}/nearby?lat=${lat}&lng=${lng}&radius=500`).then(r => r.json()).catch(() => ({}));
+              const match = (near.data || []).find((p: any) =>
+                (p.name_ar || p.name || '').toLowerCase() === selected.senderName.toLowerCase()
+              );
+              ownerId = match?.owner_id || '';
+            }
+            if (!ownerId) { alert('لم نتمكن من تحديد الصيدلية — يرجى المحاولة مرة أخرى'); setResendingPartial(false); return; }
+
+            const deliveryLine = deliveryMethod === 'delivery'
+              ? `🚚 توصيل للمنزل${deliveryAddress ? ` — ${deliveryAddress}` : ''}`
+              : '🏪 استلام من الصيدلية';
+
+            await fetch(`${PHARMACY_API}/portal-notifications`, {
+              method: 'POST',
+              headers: patientAuthHeaders(),
+              body: JSON.stringify({
+                portalType: 'pharmacy',
+                recipientId: ownerId,
+                senderName: userName,
+                message: `📋 قبول جزئي — المريض وافق على تحضير الأدوية المتوفرة\nطريقة الاستلام: ${deliveryLine}\n${notes ? `ملاحظات: ${notes}\n` : ''}[partial_accept:true][prescription_id:${prescriptionId}][patient_id:${userId}][delivery:${deliveryMethod}]`,
+                imageBase64,
+              }),
+            });
+
+            localStorage.setItem('mediflow-pending-rx', JSON.stringify({
+              id: prescriptionId,
+              imageBase64,
+              notes,
+              deliveryMethod,
+              deliveryAddress,
+              sentAt: new Date().toISOString(),
+              pharmacyOwnerIds: [ownerId],
+            }));
+
+            await refresh(userId);
+            setResentRxNotifIds(prev => {
+              const next = new Set(Array.from(prev).concat(selected.id));
+              localStorage.setItem('mediflow-resent-rx-notifs', JSON.stringify(Array.from(next)));
+              return next;
+            });
+            closeModal();
+          } catch { alert('حدث خطأ، حاول مجدداً'); }
+          setResendingPartial(false);
+        };
+
         return (
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40"
             onClick={closeModal}>
@@ -299,8 +480,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
                 <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
               </div>
-              <div className="bg-sky-50 rounded-xl p-4 mb-4">
-                <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selected.message}</p>
+              <div className={`rounded-xl p-4 mb-4 ${isPartialAccept ? 'bg-amber-50' : 'bg-sky-50'}`}>
+                {isPartialAccept ? (
+                  <div className="text-sm leading-relaxed space-y-0.5">
+                    {displayMessage.split('\n').map((line, i) => {
+                      const isAvail    = line.includes('✓ متوفر');
+                      const isUnavail  = line.includes('✗ غير متوفر');
+                      const isSep      = /^━+$/.test(line.trim());
+                      return (
+                        <p key={i}
+                          className={
+                            isAvail   ? 'text-green-700 font-medium' :
+                            isUnavail ? 'text-red-500 font-medium'   :
+                            isSep     ? 'text-amber-300 text-xs'     :
+                            'text-gray-800'
+                          }>
+                          {line || ' '}
+                        </p>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{displayMessage}</p>
+                )}
               </div>
               <div className="space-y-1.5 text-sm mb-5">
                 {selected.senderName && (
@@ -315,8 +517,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
               </div>
 
+              {/* Partial accept response buttons */}
+              {isPartialAccept && !showCancelForm && (
+                <div className="space-y-2 mb-3">
+                  {resentRxNotifIds.has(selected.id) ? (
+                    <>
+                      <p className="text-sm font-semibold text-green-700 text-center py-2">✅ تم إرسال الوصفة للصيدلية</p>
+                      <button onClick={closeModal} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">
+                        إغلاق
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-amber-700 text-right">⚠️ هذه الصيدلية قبلت وصفتك جزئياً — اختر:</p>
+                      <button
+                        onClick={handleResendToSamePharmacy}
+                        disabled={resendingPartial}
+                        className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                        {resendingPartial ? 'جاري الإرسال...' : '✅ قبول وإعادة الإرسال لنفس الصيدلية'}
+                      </button>
+                      <button
+                        disabled={resendingPartial}
+                        onClick={() => { closeModal(); router.push('/search?tab=prescription'); }}
+                        className="w-full border border-sky-400 text-sky-600 hover:bg-sky-50 disabled:opacity-50 font-bold py-3 rounded-xl text-sm">
+                        🔍 البحث عن صيدلية أخرى
+                      </button>
+                      <button disabled={resendingPartial} onClick={closeModal} className="w-full border border-gray-300 text-gray-500 disabled:opacity-50 py-2.5 rounded-xl text-sm">
+                        إغلاق
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Cancel reasons — only for pending reservations */}
-              {isReservation && showCancelForm ? (
+              {!isPartialAccept && (isReservation && showCancelForm ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-gray-700 text-right">سبب الإلغاء:</p>
                   {CANCEL_REASONS.map(reason => (
@@ -354,7 +589,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                   )}
                 </div>
-              )}
+              ))}
             </div>
           </div>
         );

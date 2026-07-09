@@ -43,13 +43,16 @@ function generateTempPassword() {
 }
 
 export default function PasswordResetsPage() {
-  const [requests,  setRequests]  = useState<ResetRequest[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [acting,    setActing]    = useState<string | null>(null);
-  const [done,      setDone]      = useState<Record<string, 'approved' | 'rejected'>>({});
+  const [requests,    setRequests]    = useState<ResetRequest[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [acting,      setActing]      = useState<string | null>(null);
+  const [done,        setDone]        = useState<Record<string, 'approved' | 'rejected'>>({});
+  const [shownPass,   setShownPass]   = useState<{ name: string; email: string; pass: string } | null>(null);
 
   useEffect(() => {
-    fetch(`${PHARMACY_API}/portal-notifications?portalType=admin&recipientId=admin`)
+    fetch(`${PHARMACY_API}/portal-notifications?portalType=admin&recipientId=admin`, {
+      headers: adminH(),
+    })
       .then(r => r.json())
       .then(d => {
         const notifs: any[] = d.data || [];
@@ -90,6 +93,7 @@ export default function PasswordResetsPage() {
       await fetch(`${PHARMACY_API}/portal-notifications/${req.id}`, { method: 'DELETE' }).catch(() => {});
 
       setDone(prev => ({ ...prev, [req.id]: 'approved' }));
+      setShownPass({ name: req.pharmacyName, email: req.pharmacyEmail, pass: tempPass });
     } catch (e) { alert('حدث خطأ — حاول مجدداً'); }
     setActing(null);
   };
@@ -122,6 +126,30 @@ export default function PasswordResetsPage() {
 
   return (
     <div className="space-y-6" dir="rtl">
+
+      {/* Temp password dialog */}
+      {shownPass && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" dir="rtl">
+            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <KeyRound className="w-6 h-6 text-green-600" />
+            </div>
+            <h3 className="text-lg font-bold text-gray-900 mb-1">تمت الموافقة</h3>
+            <p className="text-sm text-gray-500 mb-4">{shownPass.name} — {shownPass.email}</p>
+            <p className="text-xs text-gray-500 mb-2">كلمة المرور المؤقتة</p>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3">
+              <span className="font-mono text-lg font-bold tracking-widest text-gray-900 select-all">{shownPass.pass}</span>
+              <button onClick={() => navigator.clipboard.writeText(shownPass.pass)}
+                className="text-xs text-sky-600 hover:text-sky-700 font-medium shrink-0">نسخ</button>
+            </div>
+            <p className="text-xs text-gray-400 mb-5">تم إرسالها أيضاً كإشعار داخل بوابة الصيدلية</p>
+            <button onClick={() => setShownPass(null)}
+              className="w-full bg-sky-500 hover:bg-sky-600 text-white rounded-xl py-2.5 text-sm font-medium">
+              حسناً
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <KeyRound className="w-6 h-6 text-orange-500" />

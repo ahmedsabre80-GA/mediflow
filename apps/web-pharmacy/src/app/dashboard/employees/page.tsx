@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Shield, Eye, EyeOff, Copy, CheckCircle, Bell, ClipboardList, Send, UserPlus, UserMinus, Lock } from 'lucide-react';
 import { addLocalNotification } from '@/lib/portalNotifications';
+import DraggableModal from '@/components/DraggableModal';
 
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
@@ -188,7 +189,7 @@ export default function PharmacyEmployeesPage() {
               إضافة موظف
             </button>
             {!canAddEmployee && (
-              <div className="absolute bottom-full mb-2 right-0 bg-gray-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+              <div className="absolute top-full mt-2 left-0 bg-gray-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                 أرسل طلباً للإدارة أولاً — ستُفعَّل بعد الموافقة
               </div>
             )}
@@ -337,14 +338,12 @@ export default function PharmacyEmployeesPage() {
         </div>
       )}
 
-      {/* Credentials modal */}
-      {credentials && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" dir="rtl">
+      <DraggableModal open={!!credentials} onClose={() => setCredentials(null)} title="تم إنشاء الحساب" initialWidth={380}>
+        {credentials && (
+          <div className="p-6 text-center" dir="rtl">
             <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600" />
             </div>
-            <h2 className="text-lg font-bold text-gray-900 mb-1">تم إنشاء الحساب</h2>
             <p className="text-sm text-gray-500 mb-5">احفظ بيانات الدخول وأرسلها للموظف</p>
             <div className="bg-gray-50 rounded-xl p-4 space-y-3 text-right mb-5">
               <div className="flex items-center justify-between">
@@ -359,68 +358,59 @@ export default function PharmacyEmployeesPage() {
             <p className="text-xs text-red-500 mb-4">⚠️ لن تتمكن من رؤية كلمة المرور مرة أخرى</p>
             <button onClick={() => setCredentials(null)} className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-xl text-sm">حسناً، تم الحفظ</button>
           </div>
-        </div>
-      )}
+        )}
+      </DraggableModal>
 
-      {/* Send notification modal */}
-      {notifTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6" dir="rtl">
-            <h2 className="font-bold text-gray-900 mb-1">إرسال إشعار</h2>
-            <p className="text-sm text-gray-500 mb-4">إلى: {notifTarget.name}</p>
-            <textarea value={notifMsg} onChange={e => setNotifMsg(e.target.value)} rows={3}
-              placeholder="اكتب رسالة الإشعار هنا..."
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
-            <div className="flex gap-3 mt-4">
-              <button onClick={() => setNotifTarget(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-              <button onClick={sendNotification} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-                <Send className="w-4 h-4" /> إرسال
-              </button>
+      <DraggableModal open={!!notifTarget} onClose={() => setNotifTarget(null)} title={`إرسال إشعار — ${notifTarget?.name || ''}`} initialWidth={380}>
+        <div className="p-6" dir="rtl">
+          <textarea value={notifMsg} onChange={e => setNotifMsg(e.target.value)} rows={3}
+            placeholder="اكتب رسالة الإشعار هنا..."
+            className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+          <div className="flex gap-3 mt-4">
+            <button onClick={() => setNotifTarget(null)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+            <button onClick={sendNotification} className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+              <Send className="w-4 h-4" /> إرسال
+            </button>
+          </div>
+        </div>
+      </DraggableModal>
+
+      <DraggableModal open={showAdminReq} onClose={() => setShowAdminReq(false)} title="طلب إلى إدارة المنصة" initialWidth={440}>
+        <div className="p-6" dir="rtl">
+          {reqSent ? (
+            <div className="text-center py-4">
+              <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+              <p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p>
+              <p className="text-sm text-gray-500 mt-1">ستظهر زر "إضافة موظف" بعد موافقة الإدارة</p>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Admin request modal */}
-      {showAdminReq && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6" dir="rtl">
-            {reqSent ? (
-              <div className="text-center py-4">
-                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
-                <p className="font-bold text-gray-900">تم إرسال الطلب للإدارة</p>
-                <p className="text-sm text-gray-500 mt-1">ستظهر زر "إضافة موظف" بعد موافقة الإدارة</p>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-4">
+                <button onClick={() => setReqType('add')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'add' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}>
+                  <UserPlus className="w-4 h-4" /> إضافة موظف
+                </button>
+                <button onClick={() => setReqType('remove')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'remove' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600'}`}>
+                  <UserMinus className="w-4 h-4" /> حذف موظف
+                </button>
               </div>
-            ) : (
-              <>
-                <h2 className="font-bold text-gray-900 mb-4">طلب إلى إدارة المنصة</h2>
-                <div className="flex gap-2 mb-4">
-                  <button onClick={() => setReqType('add')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'add' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}>
-                    <UserPlus className="w-4 h-4" /> إضافة موظف
-                  </button>
-                  <button onClick={() => setReqType('remove')} className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border-2 ${reqType === 'remove' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-600'}`}>
-                    <UserMinus className="w-4 h-4" /> حذف موظف
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <input value={reqName} onChange={e => setReqName(e.target.value)} placeholder="اسم الموظف *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
-                  <input type="email" dir="ltr" value={reqEmail} onChange={e => setReqEmail(e.target.value)} placeholder="البريد الإلكتروني *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
-                  <input value={reqRole} onChange={e => setReqRole(e.target.value)} placeholder="الدور الوظيفي (صيدلاني، كاشير...)" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
-                  <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} rows={2} placeholder="سبب الطلب" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
-                </div>
-                <div className="flex gap-3 mt-4">
-                  <button onClick={() => setShowAdminReq(false)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
-                  <button onClick={submitAdminRequest} disabled={reqLoading || !reqName || !reqEmail}
-                    className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2">
-                    {reqLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                    إرسال الطلب
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+              <div className="space-y-3">
+                <input value={reqName} onChange={e => setReqName(e.target.value)} placeholder="اسم الموظف *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                <input type="email" dir="ltr" value={reqEmail} onChange={e => setReqEmail(e.target.value)} placeholder="البريد الإلكتروني *" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left" />
+                <input value={reqRole} onChange={e => setReqRole(e.target.value)} placeholder="الدور الوظيفي (صيدلاني، كاشير...)" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} rows={2} placeholder="سبب الطلب" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+              </div>
+              <div className="flex gap-3 mt-4">
+                <button onClick={() => setShowAdminReq(false)} className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700">إلغاء</button>
+                <button onClick={submitAdminRequest} disabled={reqLoading || !reqName || !reqEmail}
+                  className="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2">
+                  {reqLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  إرسال الطلب
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </DraggableModal>
 
       {showModal && (
         <EmployeeModal
@@ -496,12 +486,8 @@ function EmployeeModal({ employee, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
-        <div className="p-6 border-b flex items-center justify-between sticky top-0 bg-white z-10">
-          <h2 className="text-lg font-bold text-gray-900">{employee ? 'تعديل موظف' : 'إضافة موظف جديد'}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
-        </div>
+    <DraggableModal open onClose={onClose} title={employee ? 'تعديل موظف' : 'إضافة موظف جديد'} initialWidth={620}>
+      <div dir="rtl">
         <div className="p-6 space-y-5">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{error}</div>}
           <div className="grid grid-cols-2 gap-4">
@@ -569,6 +555,6 @@ function EmployeeModal({ employee, onClose, onSave }: {
           </button>
         </div>
       </div>
-    </div>
+    </DraggableModal>
   );
 }

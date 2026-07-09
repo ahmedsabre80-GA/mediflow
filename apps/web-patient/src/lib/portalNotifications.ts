@@ -4,6 +4,7 @@ export interface PatientNotif {
   id: string;
   message: string;
   senderName: string;
+  senderId: string;
   isRead: boolean;
   createdAt: string;
 }
@@ -31,7 +32,7 @@ export async function fetchPatientNotifications(userId: string): Promise<Patient
     const d = await r.json();
     return (d.data || []).map((n: any) => ({
       id: n.id, message: n.message, senderName: n.sender_name || '',
-      isRead: n.is_read, createdAt: n.created_at,
+      senderId: n.sender_id || '', isRead: n.is_read, createdAt: n.created_at,
     }));
   } catch { return []; }
 }

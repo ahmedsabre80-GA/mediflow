@@ -117,14 +117,19 @@ export default function AnalyticsPage() {
           <div className="flex items-end gap-2 h-36">
             {last7.map((day, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <span className="text-xs font-bold text-gray-700">{day.total > 0 ? day.total : ''}</span>
-                <div className="w-full relative flex items-end" style={{ height: '100px' }}>
-                  <div className="w-full bg-sky-200 rounded-t transition-all"
-                    style={{ height: `${(day.total / maxBar) * 100}%` }} />
-                  {day.delivered > 0 && (
-                    <div className="w-full bg-green-400 rounded-t absolute bottom-0 transition-all"
+                <div className="flex items-end gap-0.5 w-full" style={{ height: '100px' }}>
+                  {/* Total bar — sky blue */}
+                  <div className="flex-1 flex flex-col justify-end items-center">
+                    {day.total > 0 && <span className="text-[10px] font-bold text-sky-600 mb-0.5">{day.total}</span>}
+                    <div className="w-full bg-sky-300 rounded-t transition-all"
+                      style={{ height: `${(day.total / maxBar) * 100}%` }} />
+                  </div>
+                  {/* Delivered bar — green */}
+                  <div className="flex-1 flex flex-col justify-end items-center">
+                    {day.delivered > 0 && <span className="text-[10px] font-bold text-green-600 mb-0.5">{day.delivered}</span>}
+                    <div className="w-full bg-green-400 rounded-t transition-all"
                       style={{ height: `${(day.delivered / maxBar) * 100}%` }} />
-                  )}
+                  </div>
                 </div>
                 <span className="text-xs text-gray-400 text-center leading-tight">{day.label}</span>
               </div>
@@ -132,7 +137,7 @@ export default function AnalyticsPage() {
           </div>
         )}
         <div className="flex items-center gap-4 mt-3">
-          <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-sky-200" /><span className="text-xs text-gray-500">إجمالي الطلبات</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-sky-300" /><span className="text-xs text-gray-500">إجمالي الطلبات</span></div>
           <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-green-400" /><span className="text-xs text-gray-500">تم التسليم</span></div>
         </div>
       </div>
