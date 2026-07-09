@@ -140,7 +140,7 @@ export default function PatientDashboard() {
   const confirmMapLocation = () => {
     setLat(mapCoords.lat); setLng(mapCoords.lng); setGpsReady(true);
     saveCoords(mapCoords.lat, mapCoords.lng);
-    setShowMap(false); setShowLocModal(false);
+    setShowMap(false);
   };
 
   const quickActions = [
