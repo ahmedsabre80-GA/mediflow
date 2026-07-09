@@ -202,8 +202,8 @@ export default function DashboardPage() {
   const deliveredAll = orders.filter(o => o.delivered);
   const revenue      = (list: any[]) => list.filter(o => o.delivered).reduce((s, o) => s + o.price * o.qty, 0);
 
-  const orderTimeoutMin  = Number(localStorage.getItem('mediflow-order-timeout-min')   || 10);
-  const deliveryTimeoutH = Number(localStorage.getItem('mediflow-delivery-timeout-h')  || 24);
+  const orderTimeoutMin  = typeof window !== 'undefined' ? Number(localStorage.getItem('mediflow-order-timeout-min')  || 10) : 10;
+  const deliveryTimeoutH = typeof window !== 'undefined' ? Number(localStorage.getItem('mediflow-delivery-timeout-h') || 24) : 24;
   const pendingOrders = orders.filter(o => {
     if (o.delivered || o.rejected) return false;
     const ageMin = (Date.now() - o.createdAt.getTime()) / 60000;

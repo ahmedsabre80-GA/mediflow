@@ -268,7 +268,7 @@ export default function SalesPage() {
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
   const releaseCamera = () => {
-    try { zxingRef.current?.reset?.(); } catch {}
+    try { (zxingRef.current as any)?.reset?.(); } catch {}
     zxingRef.current = null;
     try {
       cameraStreamRef.current?.getTracks().forEach(t => t.stop());
@@ -299,7 +299,7 @@ export default function SalesPage() {
     let cancelled = false;
 
     const run = async () => {
-      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
       if (cancelled) return;
 
       const video = videoRef.current;

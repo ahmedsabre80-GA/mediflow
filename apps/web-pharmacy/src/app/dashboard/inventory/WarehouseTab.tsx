@@ -43,6 +43,7 @@ export interface StockBatch {
   id: string; drugName: string; brandName?: string; barcode?: string;
   qtyRemaining: number; unitCost: number; sellingPrice: number;
   purchaseId: string; purchaseDate: string; expiry: string;
+  category?: string; originCountry?: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -157,7 +158,7 @@ export default function WarehouseTab() {
     let cancelled = false;
 
     const run = async () => {
-      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
       if (cancelled) return;
 
       const video = videoRef.current;

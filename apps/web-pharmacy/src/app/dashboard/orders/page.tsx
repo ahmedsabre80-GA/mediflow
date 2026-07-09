@@ -293,7 +293,7 @@ export default function OrdersPage() {
                 method: 'POST', headers: pharmH(),
                 body: JSON.stringify({
                   portalType: 'patient', recipientId: r.patientId, senderName: currentPharmacyName,
-                  message: `❌ تم إلغاء طلبك تلقائياً\nالدواء: ${r.drug}\nلم يتم ${r.delivery === 'delivery' ? 'توصيل' : 'استلام'} طلبك خلال ${deliveryH} ساعة.\nيُنصح بالتواصل مع الصيدلية أو البحث عن صيدلية أخرى.`,
+                  message: `❌ تم إلغاء طلبك تلقائياً\nالدواء: ${r.drug}\nلم يتم ${r.deliveryChoice === 'delivery' ? 'توصيل' : 'استلام'} طلبك خلال ${deliveryH} ساعة.\nيُنصح بالتواصل مع الصيدلية أو البحث عن صيدلية أخرى.`,
                 }),
               }).catch(() => {});
             }

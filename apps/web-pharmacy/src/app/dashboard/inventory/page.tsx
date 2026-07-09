@@ -108,7 +108,7 @@ function InventoryPage() {
       if (needsBackfill) {
         try {
           const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-          const purchaseMap = new Map<string, any[]>();
+          const purchaseMap = new Map<string, any>();
           purchases.forEach(p => {
             (p.invoices || []).forEach((inv: any) => {
               (inv.items || []).forEach((it: any) => {
@@ -784,7 +784,7 @@ function InventoryPage() {
       {/* ═══════════════════════════════════════════════════════════════════════
           MODAL OVERLAY
       ═══════════════════════════════════════════════════════════════════════ */}
-      <DraggableModal open={!!mode} onClose={closeModal} title={mode === 'update' ? 'تحديث المخزون' : mode === 'add' ? 'إضافة دواء جديد' : mode === 'scan' ? 'مسح باركود' : 'اختر نوع العملية'} initialWidth={480}>
+      <DraggableModal open={!!mode} onClose={closeModal} title={mode === 'update' ? 'تحديث المخزون' : mode === 'scan' ? 'مسح باركود' : mode === 'manual' ? 'إضافة دواء جديد' : 'اختر نوع العملية'} initialWidth={480}>
         <div dir="rtl">
 
             {/* ── CHOOSE ── */}
