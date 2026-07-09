@@ -129,7 +129,7 @@ export default function WarehouseTab() {
   const scanLookupDoneRef  = useRef(true); // false while drug-lookup fetch is in flight
 
   const releaseCamera = () => {
-    try { zxingRef.current?.reset?.(); } catch {}
+    try { (zxingRef.current as any)?.reset?.(); } catch {}
     zxingRef.current = null;
     try { cameraStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
     cameraStreamRef.current = null;
