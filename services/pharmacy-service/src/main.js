@@ -369,8 +369,9 @@ async function bootstrap() {
   ]);
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // server-to-server / curl
+      if (!origin) return cb(null, true);
       if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+      if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
       cb(new Error('CORS: origin not allowed'));
     },
     credentials: true,
