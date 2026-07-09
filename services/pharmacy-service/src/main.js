@@ -103,6 +103,7 @@ function requireRole(...roles) {
     next();
   };
 }
+const isAdmin = requireRole('admin', 'super_admin', 'auditor', 'support');
 
 function notFoundHandler(req, res) {
   res.status(404).json({
@@ -659,7 +660,6 @@ async function bootstrap() {
   });
 
   // ─── ADMIN ENDPOINTS ──────────────────────────────────────────────────
-  const isAdmin = requireRole('admin', 'super_admin', 'auditor', 'support');
   router.get('/admin/all', authenticate, isAdmin, async (_req, res, next) => {
     try {
       const result = await pool.query(`
