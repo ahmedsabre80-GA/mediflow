@@ -155,7 +155,7 @@ export default function OrdersPage() {
         if (!rxGroups.has(key)) rxGroups.set(key, []);
         rxGroups.get(key)!.push(o);
       }
-      for (const group of rxGroups.values()) {
+      for (const group of Array.from(rxGroups.values())) {
         const first  = group[0];
         const latest = { ...group[group.length - 1], submittedAt: first.date };
         group.forEach(o => shown.add(o.id));
