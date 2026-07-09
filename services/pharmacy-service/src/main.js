@@ -70,13 +70,19 @@ function authenticate(req, _res, next) {
   }
   const token = authHeader.slice(7);
   try {
-    // If JWT_PUBLIC_KEY is not configured, decode without verification (dev fallback)
-    const payload = publicKey
-      ? jwt.verify(token, publicKey, {
-          algorithms: ['RS256'],
-          issuer: process.env.JWT_ISSUER || 'https://auth.mediflow.io',
-        })
-      : jwt.decode(token);
+    let payload;
+    if (publicKey) {
+      // RS256 with public key (production)
+      payload = jwt.verify(token, publicKey, {
+        algorithms: ['RS256'],
+        issuer: process.env.JWT_ISSUER || 'https://auth.mediflow.io',
+      });
+    } else {
+      // HS256 with shared secret — requires JWT_SECRET to be set
+      const secret = process.env.JWT_SECRET;
+      if (!secret) return next(new AuthenticationError('AUTH_001', 'Auth service not configured'));
+      payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
+    }
     if (!payload) return next(new AuthenticationError('AUTH_001', 'Invalid token'));
     req.user = payload;
     next();
@@ -276,13 +282,15 @@ async function bootstrap() {
 
   const app = express();
   app.use(helmet());
+  const ALLOWED_ORIGINS = new Set([
+    ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+    'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002',
+    'http://localhost:3003', 'http://localhost:3004',
+  ]);
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // non-browser / server-to-server
-      const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /localhost/.test(origin)) {
-        return cb(null, true);
-      }
+      if (!origin) return cb(null, true); // server-to-server / curl
+      if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
       cb(new Error('CORS: origin not allowed'));
     },
     credentials: true,
@@ -303,12 +311,9 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/settings', async (req, res, next) => {
+  router.patch('/settings', authenticate, isAdmin, async (req, res, next) => {
     try {
-      const { secret, ...body } = req.body;
-      if (secret !== 'mediflow-admin-2026') {
-        return res.status(403).json({ success: false, error: { title: 'Forbidden' } });
-      }
+      const { ...body } = req.body;
       const allowed = ['require_certificate', 'log_admin_actions'];
       for (const [key, value] of Object.entries(body)) {
         if (!allowed.includes(key)) continue;
@@ -395,7 +400,8 @@ async function bootstrap() {
   });
 
   // ─── ADMIN ENDPOINTS ──────────────────────────────────────────────────
-  router.get('/admin/all', async (_req, res, next) => {
+  const isAdmin = requireRole('admin', 'super_admin', 'auditor', 'support');
+  router.get('/admin/all', authenticate, isAdmin, async (_req, res, next) => {
     try {
       const result = await pool.query(`
         SELECT p.id, p.owner_id, p.name, p.name_ar, p.license_number,
@@ -411,7 +417,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/admin/:id/status', async (req, res, next) => {
+  router.patch('/admin/:id/status', authenticate, isAdmin, async (req, res, next) => {
     const client = await pool.connect();
     try {
       const { id } = req.params;
@@ -433,7 +439,7 @@ async function bootstrap() {
     } finally { client.release(); }
   });
 
-  router.delete('/admin/:id', async (req, res, next) => {
+  router.delete('/admin/:id', authenticate, isAdmin, async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -447,7 +453,7 @@ async function bootstrap() {
     } finally { client.release(); }
   });
 
-  router.post('/admin/:id/delete', async (req, res, next) => {
+  router.post('/admin/:id/delete', authenticate, isAdmin, async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -693,7 +699,7 @@ async function bootstrap() {
   });
 
   // ─── ADMIN REQUESTS ───────────────────────────────────────────────────
-  router.post('/admin-requests', async (req, res, next) => {
+  router.post('/admin-requests', authenticate, async (req, res, next) => {
     try {
       const b = req.body;
       const r = await pool.query(`
@@ -707,7 +713,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.get('/admin-requests', async (req, res, next) => {
+  router.get('/admin-requests', authenticate, async (req, res, next) => {
     try {
       const { requester_id, portal_type, status } = req.query;
       const conditions = [];
@@ -721,7 +727,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/admin-requests/:id/status', async (req, res, next) => {
+  router.patch('/admin-requests/:id/status', authenticate, isAdmin, async (req, res, next) => {
     try {
       await pool.query('UPDATE public.admin_requests SET status=$1, decided_at=NOW() WHERE id=$2',
         [req.body.status, req.params.id]);
@@ -729,7 +735,7 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/admin-requests/:id', async (req, res, next) => {
+  router.patch('/admin-requests/:id', authenticate, async (req, res, next) => {
     try {
       const { requester_entity, requester_name } = req.body;
       const sets = []; const params = [];
@@ -742,14 +748,14 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.delete('/admin-requests/:id', async (req, res, next) => {
+  router.delete('/admin-requests/:id', authenticate, isAdmin, async (req, res, next) => {
     try {
       await pool.query('DELETE FROM public.admin_requests WHERE id=$1', [req.params.id]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
 
-  router.delete('/admin-requests', async (req, res, next) => {
+  router.delete('/admin-requests', authenticate, isAdmin, async (req, res, next) => {
     try {
       const { status } = req.query;
       if (status) {
@@ -762,7 +768,7 @@ async function bootstrap() {
   });
 
   // ─── PORTAL NOTIFICATIONS ─────────────────────────────────────────────
-  router.post('/portal-notifications', async (req, res, next) => {
+  router.post('/portal-notifications', authenticate, async (req, res, next) => {
     try {
       const b = req.body;
       // Support bulk send: portalTypes array + recipientId, or single portalType
@@ -780,7 +786,7 @@ async function bootstrap() {
   });
 
   // Admin: view all sent notifications
-  router.get('/portal-notifications/admin-log', async (_req, res, next) => {
+  router.get('/portal-notifications/admin-log', authenticate, isAdmin, async (_req, res, next) => {
     try {
       const r = await pool.query(
         `SELECT * FROM public.portal_notifications ORDER BY created_at DESC LIMIT 100`
@@ -789,10 +795,13 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.get('/portal-notifications', async (req, res, next) => {
+  router.get('/portal-notifications', authenticate, async (req, res, next) => {
     try {
       const { portalType, recipientId } = req.query;
-      // Return both targeted and broadcast messages for this portal type
+      // Verify user can only read their own notifications
+      if (recipientId && recipientId !== req.user?.sub) {
+        return res.status(403).json({ success: false, error: { title: 'Access denied', status: 403 } });
+      }
       const r = await pool.query(
         `SELECT * FROM public.portal_notifications
          WHERE portal_type=$1 AND (recipient_id=$2 OR recipient_id='broadcast')
@@ -804,17 +813,20 @@ async function bootstrap() {
   });
 
   // Mark all notifications as read for a recipient
-  router.patch('/portal-notifications/read-all', async (req, res, next) => {
+  router.patch('/portal-notifications/read-all', authenticate, async (req, res, next) => {
     try {
       const { portalType, recipientId } = req.query;
       if (!portalType || !recipientId) return res.status(400).json({ success: false, error: 'portalType and recipientId required' });
+      if (recipientId && recipientId !== req.user?.sub) {
+        return res.status(403).json({ success: false, error: { title: 'Access denied', status: 403 } });
+      }
       await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE portal_type=$1 AND recipient_id=$2', [portalType, recipientId]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
 
-  // Delete all notifications for a recipient (admin or self-clear)
-  router.delete('/portal-notifications/by-recipient', async (req, res, next) => {
+  // Delete all notifications for a recipient (admin only)
+  router.delete('/portal-notifications/by-recipient', authenticate, isAdmin, async (req, res, next) => {
     try {
       const { portalType, recipientId } = req.query;
       if (!portalType || !recipientId) return res.status(400).json({ success: false, error: 'portalType and recipientId required' });
@@ -823,23 +835,23 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  router.patch('/portal-notifications/:id/read', async (req, res, next) => {
+  router.patch('/portal-notifications/:id/read', authenticate, async (req, res, next) => {
     try {
       await pool.query('UPDATE public.portal_notifications SET is_read=TRUE WHERE id=$1', [req.params.id]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
 
-  // Admin: delete a notification by id (removes from both sides)
-  router.delete('/portal-notifications/:id', async (req, res, next) => {
+  // Admin: delete a notification by id
+  router.delete('/portal-notifications/:id', authenticate, isAdmin, async (req, res, next) => {
     try {
       await pool.query('DELETE FROM public.portal_notifications WHERE id=$1', [req.params.id]);
       res.json({ success: true });
     } catch (err) { next(err); }
   });
 
-  // Admin: delete all notifications sent by a specific sender_name
-  router.delete('/portal-notifications', async (req, res, next) => {
+  // Admin: delete all notifications by sender_name or message prefix
+  router.delete('/portal-notifications', authenticate, isAdmin, async (req, res, next) => {
     try {
       const { sender_name, message_prefix } = req.query;
       if (sender_name) {
@@ -1179,7 +1191,7 @@ async function bootstrap() {
   });
 
   // Get prescription by ID (pharmacy views it)
-  router.get('/prescriptions/:id', async (req, res, next) => {
+  router.get('/prescriptions/:id', authenticate, async (req, res, next) => {
     try {
       const r = await pool.query('SELECT * FROM public.prescription_requests WHERE id=$1', [req.params.id]);
       if (!r.rows.length) return res.status(404).json({ success: false });
@@ -1189,7 +1201,7 @@ async function bootstrap() {
   });
 
   // Get prescription image (separate endpoint to avoid large payloads)
-  router.get('/prescriptions/:id/image', async (req, res, next) => {
+  router.get('/prescriptions/:id/image', authenticate, async (req, res, next) => {
     try {
       const r = await pool.query('SELECT image_base64 FROM public.prescription_requests WHERE id=$1', [req.params.id]);
       if (!r.rows.length) return res.status(404).json({ success: false });
@@ -1200,7 +1212,7 @@ async function bootstrap() {
   // Pharmacy claims prescription (removes it from others)
   router.patch('/prescriptions/:id/claim', authenticate, async (req, res, next) => {
     try {
-      const pharmacyId = req.pharmacy?.id;
+      const pharmacyId = req.body.pharmacyId || req.user?.sub;
       const r = await pool.query(
         `UPDATE public.prescription_requests SET status='claimed', claimed_by=$1, claimed_at=NOW()
          WHERE id=$2 AND status='open' RETURNING *`,
@@ -1418,13 +1430,9 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // Admin: set a config value (protected by admin secret header)
-  app.patch('/api/v1/platform/config/:key', async (req, res, next) => {
+  // Admin: set a config value (requires admin JWT)
+  app.patch('/api/v1/platform/config/:key', authenticate, isAdmin, async (req, res, next) => {
     try {
-      const adminSecret = req.headers['x-admin-secret'];
-      if (adminSecret !== (process.env.ADMIN_SECRET || 'mediflow-admin-2026')) {
-        return res.status(403).json({ success: false, error: { title: 'Forbidden' } });
-      }
       const { value } = req.body;
       if (value === undefined || value === null) return res.status(422).json({ success: false });
       await pool.query(

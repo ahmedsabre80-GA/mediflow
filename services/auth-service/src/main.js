@@ -12,7 +12,19 @@ const PORT = process.env.PORT || 8001;
 
 // ─── MIDDLEWARE ──────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: (origin, cb) => cb(null, origin || true), credentials: true }));
+const AUTH_ALLOWED_ORIGINS = new Set([
+  ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002',
+  'http://localhost:3003', 'http://localhost:3004',
+]);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (AUTH_ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+    cb(new Error('CORS: origin not allowed'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // ─── DATABASE ────────────────────────────────────────────────────────────────
@@ -32,19 +44,27 @@ if (process.env.REDIS_URL) {
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+if (!JWT_SECRET || JWT_SECRET === 'mediflow-secret-key-change-in-production') {
+  console.error('FATAL: JWT_SECRET env var is missing or uses the insecure default. Set a strong random value.');
+  process.exit(1);
+}
+if (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET === 'mediflow-refresh-secret') {
+  console.error('FATAL: JWT_REFRESH_SECRET env var is missing or uses the insecure default. Set a strong random value.');
+  process.exit(1);
+}
+
 function generateToken(userId, role) {
-  const secret = process.env.JWT_SECRET || 'mediflow-secret-key-change-in-production';
-  return jwt.sign({ sub: userId, role, iat: Date.now() }, secret, { expiresIn: '15m' });
+  return jwt.sign({ sub: userId, role, iat: Math.floor(Date.now() / 1000) }, JWT_SECRET, { expiresIn: '15m' });
 }
 
 function generateRefreshToken(userId) {
-  const secret = process.env.JWT_REFRESH_SECRET || 'mediflow-refresh-secret';
-  return jwt.sign({ sub: userId }, secret, { expiresIn: '30d' });
+  return jwt.sign({ sub: userId }, JWT_REFRESH_SECRET, { expiresIn: '30d' });
 }
 
 function verifyToken(token) {
-  const secret = process.env.JWT_SECRET || 'mediflow-secret-key-change-in-production';
-  return jwt.verify(token, secret);
+  return jwt.verify(token, JWT_SECRET);
 }
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────

@@ -115,7 +115,7 @@ export default function SettingsPage() {
     try {
       await fetch(`${PHARMACY_API}/platform/config/auto_reject_minutes`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('admin-token') || ''}` },
         body: JSON.stringify({ value: val }),
       });
       await broadcastToPharmacies(`⏱ تحديث قاعدة الطلبات\n━━━━━━━━━━━━━━━\nتم تحديث مدة الرفض التلقائي لطلبات الحجز إلى ${val} دقيقة.\nيسري هذا الإعداد فوراً على جميع الطلبات الجديدة.`);
@@ -133,7 +133,7 @@ export default function SettingsPage() {
     try {
       await fetch(`${PHARMACY_API}/platform/config/prescription_reject_minutes`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('admin-token') || ''}` },
         body: JSON.stringify({ value: val }),
       });
       await broadcastToPharmacies(`📋 تحديث قاعدة الوصفات الطبية\n━━━━━━━━━━━━━━━\nتم تحديث مدة انتهاء صلاحية الوصفة الطبية إلى ${val} دقيقة.\nالوصفات غير المقبولة خلال هذه المدة ستُلغى تلقائياً.`);
@@ -151,7 +151,7 @@ export default function SettingsPage() {
     try {
       await fetch(`${PHARMACY_API}/platform/config/delivery_timeout_hours`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('admin-token') || ''}` },
         body: JSON.stringify({ value: val }),
       });
       await broadcastToPharmacies(`🚚 تحديث قاعدة التسليم\n━━━━━━━━━━━━━━━\nتم تحديث مهلة التسليم/الاستلام إلى ${val} ساعة.\nالطلبات المؤكدة غير المسلَّمة خلال هذه المدة ستُرفض تلقائياً.`);
@@ -175,7 +175,6 @@ export default function SettingsPage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          secret: 'mediflow-admin-2026',
           require_certificate: settings.requireCertificate,
           log_admin_actions: settings.logAdminActions,
         }),
