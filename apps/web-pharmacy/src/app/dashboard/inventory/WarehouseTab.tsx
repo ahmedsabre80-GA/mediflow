@@ -81,12 +81,86 @@ const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const CATEGORIES = ['مسكنات الألم','مضادات الالتهاب','مضادات حيوية','أدوية القلب والضغط','أدوية السكري','أدوية الجهاز الهضمي','أدوية الجهاز التنفسي','أدوية الحساسية','فيتامينات ومكملات','أدوية نفسية وأعصاب','مضادات الفطريات','مضادات الفيروسات','أدوية الأطفال','أدوية النساء والتوليد','أخرى'];
 const COUNTRIES = ['العراق','الأردن','مصر','السعودية','الإمارات','سوريا','لبنان','تركيا','الهند','ألمانيا','فرنسا','المملكة المتحدة','الولايات المتحدة','الصين','إيران','باكستان','أخرى'];
 
+// ── Backend sync helpers ─────────────────────────────────────────────────────
+function stripImages<T>(data: T): T {
+  // Remove base64 images before syncing to backend (too large; stored locally only)
+  return JSON.parse(JSON.stringify(data, (k, v) => {
+    if ((k === 'image' || k === 'receiptImage') && typeof v === 'string' && v.startsWith('data:')) return '';
+    return v;
+  }));
+}
+
+async function pushState(key: string, value: unknown) {
+  try {
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (!token || !pharmacyId) return;
+    await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/state/${key}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ value: stripImages(value) }),
+    });
+  } catch {}
+}
+
+async function pullState<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (!token || !pharmacyId) return fallback;
+    const r = await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/state/${key}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const d = await r.json();
+    if (d.success && d.data && Array.isArray(d.data) && d.data.length > 0) return d.data as T;
+  } catch {}
+  return fallback;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 export default function WarehouseTab() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() => load(WH_KEY, []));
   const [purchases,  setPurchases]  = useState<Purchase[]> (() => load(PUR_KEY, []));
   const [payments,   setPayments]   = useState<Payment[]>  (() => load(PAY_KEY, []));
   const [activeWh,   setActiveWh]   = useState('');
+
+  // Sync from backend on mount (merge: backend wins for items not in localStorage)
+  useEffect(() => {
+    (async () => {
+      const localWh: Warehouse[] = load(WH_KEY, []);
+      const localPur: Purchase[] = load(PUR_KEY, []);
+      const localPay: Payment[] = load(PAY_KEY, []);
+
+      const [remoteWh, remotePur, remotePay] = await Promise.all([
+        pullState<Warehouse[]>('wh-warehouses', []),
+        pullState<Purchase[]>('wh-purchases', []),
+        pullState<Payment[]>('wh-payments', []),
+      ]);
+
+      // Merge: combine local + remote, deduplicate by id (local takes priority)
+      const merge = <T extends { id: string }>(local: T[], remote: T[]): T[] => {
+        const map = new Map<string, T>();
+        remote.forEach(r => map.set(r.id, r));
+        local.forEach(l => map.set(l.id, l)); // local overrides remote
+        return Array.from(map.values());
+      };
+
+      const mergedWh = merge(localWh, remoteWh);
+      const mergedPur = merge(localPur, remotePur);
+      const mergedPay = merge(localPay, remotePay);
+
+      // Save merged back to localStorage
+      if (mergedWh.length > localWh.length) { save(WH_KEY, mergedWh); setWarehouses(mergedWh); }
+      if (mergedPur.length > localPur.length) { save(PUR_KEY, mergedPur); setPurchases(mergedPur); }
+      if (mergedPay.length > localPay.length) { save(PAY_KEY, mergedPay); setPayments(mergedPay); }
+
+      // If local has more data than remote, push local up
+      if (localWh.length > remoteWh.length) pushState('wh-warehouses', mergedWh);
+      if (localPur.length > remotePur.length) pushState('wh-purchases', mergedPur);
+      if (localPay.length > remotePay.length) pushState('wh-payments', mergedPay);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [view, setView] = useState<'list' | 'purchase' | 'payment' | 'addWh'>('list');
 
   // ── Add Warehouse ─────────────────────────────────────────────────────────
@@ -98,6 +172,7 @@ export default function WarehouseTab() {
     const wh: Warehouse = { id: uid(), ...whForm };
     const next = [...warehouses, wh];
     setWarehouses(next); save(WH_KEY, next);
+    pushState('wh-warehouses', next);
     setActiveWh(wh.id);
     setWhForm({ name: '', phone: '', address: '' });
     setView('list');
@@ -348,6 +423,7 @@ export default function WarehouseTab() {
     };
     const nextPur = [...purchases, purchase];
     setPurchases(nextPur); save(PUR_KEY, nextPur);
+    pushState('wh-purchases', nextPur);
 
     // FEFO batches
     const batches: StockBatch[] = load(BAT_KEY, []);
@@ -428,6 +504,7 @@ export default function WarehouseTab() {
       .map(r => ({ id: uid(), warehouseId: payWh, warehouseName: wh.name, amount: Number(r.amount), date: r.date, notes: r.notes, receiptImage: r.receiptImage }));
     const next = [...payments, ...newPays];
     setPayments(next); save(PAY_KEY, next);
+    pushState('wh-payments', next);
     setPayRows([{ amount: '', date: new Date().toISOString().slice(0,10), notes: '', receiptImage: '' }]);
     setPayWh(''); setSavingPay(false); setView('list');
   };

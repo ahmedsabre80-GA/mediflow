@@ -194,7 +194,20 @@ function InventoryPage() {
       })
       .then(d => {
         if (!d) return;
-        const items = d.data || [];
+        const raw: any[] = d.data || [];
+        // Deduplicate by generic_name (sum quantities when same drug has multiple stock rows)
+        const deduped = new Map<string, any>();
+        raw.forEach((item: any) => {
+          const key = (item.generic_name || '').toLowerCase().trim();
+          if (deduped.has(key)) {
+            const ex = deduped.get(key)!;
+            ex.quantity = (ex.quantity || 0) + (item.quantity || 0);
+            ex.reserved_qty = (ex.reserved_qty || 0) + (item.reserved_qty || 0);
+          } else {
+            deduped.set(key, { ...item });
+          }
+        });
+        const items = Array.from(deduped.values());
         setInventory(items);
         buildLocalItems(items);
         const limits = getItemLimits();
@@ -559,19 +572,40 @@ function InventoryPage() {
   }, []);
 
   useEffect(() => {
+    const buildMap = (purchases: any[]) => {
+      try {
+        const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
+        const purMap: Record<string, string> = {};
+        purchases.forEach((p: any) => { purMap[p.id] = p.warehouseName; });
+        const map: Record<string, string> = {};
+        [...batches].reverse().forEach((b: any) => {
+          if (b.drugName && b.purchaseId && purMap[b.purchaseId] && !map[b.drugName.toLowerCase()]) {
+            map[b.drugName.toLowerCase()] = purMap[b.purchaseId];
+          }
+        });
+        setDrugWarehouseMap(map);
+      } catch {}
+    };
+
     try {
-      const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
       const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-      const purMap: Record<string, string> = {};
-      purchases.forEach((p: any) => { purMap[p.id] = p.warehouseName; });
-      // For each drug, pick the most recent batch's warehouse
-      const map: Record<string, string> = {};
-      [...batches].reverse().forEach((b: any) => {
-        if (b.drugName && b.purchaseId && purMap[b.purchaseId] && !map[b.drugName.toLowerCase()]) {
-          map[b.drugName.toLowerCase()] = purMap[b.purchaseId];
+      if (purchases.length > 0) {
+        buildMap(purchases);
+      } else {
+        // localStorage empty — pull from backend
+        const token = localStorage.getItem('pharmacy-token');
+        const pharmacyId = localStorage.getItem('pharmacy-id');
+        if (token && pharmacyId) {
+          fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/state/wh-purchases`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(r => r.json()).then(d => {
+            if (d.success && Array.isArray(d.data) && d.data.length > 0) {
+              localStorage.setItem('pharmacy-wh-purchases', JSON.stringify(d.data));
+              buildMap(d.data);
+            }
+          }).catch(() => {});
         }
-      });
-      setDrugWarehouseMap(map);
+      }
     } catch {}
   }, [mainTab]);
 
