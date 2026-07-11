@@ -152,41 +152,33 @@ export default function OrdersPage() {
     const token       = localStorage.getItem('pharmacy-token');
     const pharmacyId  = localStorage.getItem('pharmacy-id');
 
-    // Load status sets: merge localStorage (local machine) with backend (cross-device)
-    const mergeWithBackend = async () => {
-      const localD   = loadSet(DELIVERED_KEY);
-      const localC   = loadSet(CONFIRMED_KEY);
-      const localR   = loadSet(REJECTED_KEY);
-      const localRxD = loadSet(RX_DELIVERED_KEY);
-      if (pharmacyId && token) {
-        const base = `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${pharmacyId}/state`;
-        const h = { Authorization: `Bearer ${token}` };
-        try {
-          const [dRes, cRes, rRes, rxdRes] = await Promise.all([
-            fetch(`${base}/delivered`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
-            fetch(`${base}/confirmed`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
-            fetch(`${base}/rejected`,  { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
-            fetch(`${base}/rxdelivered`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
-          ]);
-          const merge = (local: Set<string>, remote: string[]) => new Set([...Array.from(local), ...(remote || [])]);
-          const dIds   = merge(localD,   dRes.data);
-          const cIds   = merge(localC,   cRes.data);
-          const rIds   = merge(localR,   rRes.data);
-          const rxdIds = merge(localRxD, rxdRes.data);
-          // If local has more than remote, push up to backend
-          if (dIds.size > (dRes.data?.length ?? 0))   fetch(`${base}/delivered`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(dIds) }) }).catch(() => {});
-          if (cIds.size > (cRes.data?.length ?? 0))   fetch(`${base}/confirmed`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(cIds) }) }).catch(() => {});
-          if (rIds.size > (rRes.data?.length ?? 0))   fetch(`${base}/rejected`,    { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(rIds) }) }).catch(() => {});
-          if (rxdIds.size > (rxdRes.data?.length ?? 0)) fetch(`${base}/rxdelivered`, { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(rxdIds) }) }).catch(() => {});
-          setDeliveredIds(dIds); setConfirmedIds(cIds); setRejectedIds(rIds); setRxDeliveredIds(rxdIds);
-        } catch {
-          setDeliveredIds(localD); setConfirmedIds(localC); setRejectedIds(localR); setRxDeliveredIds(localRxD);
-        }
-      } else {
-        setDeliveredIds(localD); setConfirmedIds(localC); setRejectedIds(localR); setRxDeliveredIds(localRxD);
-      }
-    };
-    mergeWithBackend();
+    // Load from localStorage synchronously (used for initial parse below)
+    const dIds   = loadSet(DELIVERED_KEY);
+    const cIds   = loadSet(CONFIRMED_KEY);
+    const rIds   = loadSet(REJECTED_KEY);
+    const rxdIds = loadSet(RX_DELIVERED_KEY);
+    setDeliveredIds(dIds); setConfirmedIds(cIds); setRejectedIds(rIds); setRxDeliveredIds(rxdIds);
+
+    // Async: merge with backend and update state (causes re-render with correct statuses)
+    if (pharmacyId && token) {
+      const base = `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${pharmacyId}/state`;
+      const h = { Authorization: `Bearer ${token}` };
+      Promise.all([
+        fetch(`${base}/delivered`,   { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${base}/confirmed`,   { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${base}/rejected`,    { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${base}/rxdelivered`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+      ]).then(([dRes, cRes, rRes, rxdRes]) => {
+        const merge = (local: Set<string>, remote: string[]) => new Set([...Array.from(local), ...(remote || [])]);
+        const mD = merge(dIds, dRes.data); const mC = merge(cIds, cRes.data);
+        const mR = merge(rIds, rRes.data); const mRxd = merge(rxdIds, rxdRes.data);
+        if (mD.size > (dRes.data?.length ?? 0))   fetch(`${base}/delivered`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(mD) }) }).catch(() => {});
+        if (mC.size > (cRes.data?.length ?? 0))   fetch(`${base}/confirmed`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(mC) }) }).catch(() => {});
+        if (mR.size > (rRes.data?.length ?? 0))   fetch(`${base}/rejected`,    { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(mR) }) }).catch(() => {});
+        if (mRxd.size > (rxdRes.data?.length ?? 0)) fetch(`${base}/rxdelivered`, { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(mRxd) }) }).catch(() => {});
+        setDeliveredIds(mD); setConfirmedIds(mC); setRejectedIds(mR); setRxDeliveredIds(mRxd);
+      }).catch(() => {});
+    }
 
     const rxIds = loadSet(CLAIMED_RX_KEY);
     setClaimedIds(rxIds);
