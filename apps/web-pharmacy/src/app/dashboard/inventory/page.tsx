@@ -213,6 +213,42 @@ function InventoryPage() {
 
   useEffect(() => { fetchInventory(); }, [fetchInventory]);
 
+  // Auto-sync localStorage batches to backend once per device
+  useEffect(() => {
+    const SYNC_FLAG = 'pharmacy-batches-synced-v1';
+    if (localStorage.getItem(SYNC_FLAG)) return;
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (!token || !pharmacyId) return;
+    try {
+      const batches: any[] = JSON.parse(localStorage.getItem(BAT_KEY) || '[]');
+      if (batches.length === 0) { localStorage.setItem(SYNC_FLAG, '1'); return; }
+      (async () => {
+        for (const b of batches) {
+          await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              genericName: b.drugName,
+              brandName: b.brandName || '',
+              barcode: b.barcode || null,
+              quantity: b.qtyRemaining,
+              sellingPrice: b.sellingPrice || 0,
+              reorderLevel: 10,
+              expiryDate: b.expiry || null,
+              originCountry: b.originCountry || '',
+              category: b.category || '',
+              buyingPrice: b.unitCost || undefined,
+            }),
+          }).catch(() => {});
+        }
+        localStorage.setItem(SYNC_FLAG, '1');
+        fetchInventory();
+      })();
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ────────────────────────────────────────────────────────────────────────────
   // Drug catalog search (for manual add)
   const searchDrugs = async (q: string) => {

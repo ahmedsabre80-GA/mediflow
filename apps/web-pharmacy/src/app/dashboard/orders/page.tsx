@@ -149,19 +149,47 @@ export default function OrdersPage() {
   const pharmacyName = typeof window !== 'undefined' ? localStorage.getItem('pharmacy-name') || '' : '';
 
   const loadOrders = () => {
-    const dIds = loadSet(DELIVERED_KEY);
-    const cIds = loadSet(CONFIRMED_KEY);
-    const rIds = loadSet(REJECTED_KEY);
-    const rxIds = loadSet(CLAIMED_RX_KEY);
-    const rxdIds = loadSet(RX_DELIVERED_KEY);
-    setDeliveredIds(dIds);
-    setConfirmedIds(cIds);
-    setRejectedIds(rIds);
-    setClaimedIds(rxIds);
-    setRxDeliveredIds(rxdIds);
-
     const token       = localStorage.getItem('pharmacy-token');
     const pharmacyId  = localStorage.getItem('pharmacy-id');
+
+    // Load status sets: merge localStorage (local machine) with backend (cross-device)
+    const mergeWithBackend = async () => {
+      const localD   = loadSet(DELIVERED_KEY);
+      const localC   = loadSet(CONFIRMED_KEY);
+      const localR   = loadSet(REJECTED_KEY);
+      const localRxD = loadSet(RX_DELIVERED_KEY);
+      if (pharmacyId && token) {
+        const base = `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${pharmacyId}/state`;
+        const h = { Authorization: `Bearer ${token}` };
+        try {
+          const [dRes, cRes, rRes, rxdRes] = await Promise.all([
+            fetch(`${base}/delivered`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+            fetch(`${base}/confirmed`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+            fetch(`${base}/rejected`,  { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+            fetch(`${base}/rxdelivered`, { headers: h }).then(r => r.json()).catch(() => ({ data: [] })),
+          ]);
+          const merge = (local: Set<string>, remote: string[]) => new Set([...Array.from(local), ...(remote || [])]);
+          const dIds   = merge(localD,   dRes.data);
+          const cIds   = merge(localC,   cRes.data);
+          const rIds   = merge(localR,   rRes.data);
+          const rxdIds = merge(localRxD, rxdRes.data);
+          // If local has more than remote, push up to backend
+          if (dIds.size > (dRes.data?.length ?? 0))   fetch(`${base}/delivered`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(dIds) }) }).catch(() => {});
+          if (cIds.size > (cRes.data?.length ?? 0))   fetch(`${base}/confirmed`,   { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(cIds) }) }).catch(() => {});
+          if (rIds.size > (rRes.data?.length ?? 0))   fetch(`${base}/rejected`,    { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(rIds) }) }).catch(() => {});
+          if (rxdIds.size > (rxdRes.data?.length ?? 0)) fetch(`${base}/rxdelivered`, { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Array.from(rxdIds) }) }).catch(() => {});
+          setDeliveredIds(dIds); setConfirmedIds(cIds); setRejectedIds(rIds); setRxDeliveredIds(rxdIds);
+        } catch {
+          setDeliveredIds(localD); setConfirmedIds(localC); setRejectedIds(localR); setRxDeliveredIds(localRxD);
+        }
+      } else {
+        setDeliveredIds(localD); setConfirmedIds(localC); setRejectedIds(localR); setRxDeliveredIds(localRxD);
+      }
+    };
+    mergeWithBackend();
+
+    const rxIds = loadSet(CLAIMED_RX_KEY);
+    setClaimedIds(rxIds);
     const ownerId     = localStorage.getItem('pharmacy-user-id') || localStorage.getItem('pharmacy-owner-id') || '';
     if (!pharmacyId) { setLoading(false); return; }
 
@@ -342,6 +370,7 @@ export default function OrdersPage() {
       const next = new Set(Array.from(confirmedIds).concat(r.id));
       setConfirmedIds(next);
       saveSet(CONFIRMED_KEY, next);
+      { const _t = localStorage.getItem('pharmacy-token'), _pid = localStorage.getItem('pharmacy-id'); if (_pid && _t) fetch(`https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${_pid}/state/confirmed`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_t}` }, body: JSON.stringify({ value: Array.from(next) }) }).catch(() => {}); }
       setReservations(prev => prev.map(x => x.id === r.id ? { ...x, confirmed: true } : x));
     } catch {}
     setConfirming(null);
@@ -365,6 +394,7 @@ export default function OrdersPage() {
       const next = new Set(Array.from(rejectedIds).concat(r.id));
       setRejectedIds(next);
       saveSet(REJECTED_KEY, next);
+      { const _t = localStorage.getItem('pharmacy-token'), _pid = localStorage.getItem('pharmacy-id'); if (_pid && _t) fetch(`https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${_pid}/state/rejected`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_t}` }, body: JSON.stringify({ value: Array.from(next) }) }).catch(() => {}); }
       setReservations(prev => prev.map(x => x.id === r.id ? { ...x, rejected: true } : x));
     } catch {}
     setRejecting(null);
@@ -403,6 +433,8 @@ export default function OrdersPage() {
       const next = new Set(Array.from(deliveredIds).concat(r.id));
       setDeliveredIds(next);
       saveSet(DELIVERED_KEY, next);
+      const pid = localStorage.getItem('pharmacy-id');
+      if (pid && token) fetch(`https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/${pid}/state/delivered`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ value: Array.from(next) }) }).catch(() => {});
       setReservations(prev => prev.map(x => x.id === r.id ? { ...x, delivered: true, confirmed: true } : x));
     } catch {}
     setDelivering(null);

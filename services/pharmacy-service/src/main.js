@@ -186,6 +186,17 @@ async function bootstrap() {
       ELSE NULL END WHERE generic_name_en IS NULL
   `).catch(() => {});
 
+  // Pharmacy state table (per-pharmacy key-value for syncing order statuses across devices)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.pharmacy_state (
+      pharmacy_id UUID NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (pharmacy_id, key)
+    )
+  `).catch(() => {});
+
   // Platform config table (key-value store for admin settings)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.platform_config (
@@ -1698,6 +1709,30 @@ async function bootstrap() {
   });
 
   app.use('/api/v1/appointments/doctors', apptRouter);
+
+  // ── Pharmacy state endpoints (sync order statuses across devices) ─────
+  app.get('/api/v1/pharmacies/:id/state/:key', authenticate, async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        'SELECT value FROM public.pharmacy_state WHERE pharmacy_id=$1 AND key=$2',
+        [req.params.id, req.params.key]
+      );
+      res.json({ success: true, data: r.rows[0]?.value ? JSON.parse(r.rows[0].value) : [] });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/v1/pharmacies/:id/state/:key', authenticate, async (req, res, next) => {
+    try {
+      const value = JSON.stringify(req.body.value ?? []);
+      await pool.query(
+        `INSERT INTO public.pharmacy_state (pharmacy_id, key, value, updated_at)
+         VALUES ($1,$2,$3,NOW())
+         ON CONFLICT (pharmacy_id, key) DO UPDATE SET value=$3, updated_at=NOW()`,
+        [req.params.id, req.params.key, value]
+      );
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
 
   // ── Platform config endpoints ──────────────────────────────────────────
   // Public: get a config value

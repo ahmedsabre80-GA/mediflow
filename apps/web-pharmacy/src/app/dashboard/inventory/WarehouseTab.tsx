@@ -432,39 +432,6 @@ export default function WarehouseTab() {
     setPayWh(''); setSavingPay(false); setView('list');
   };
 
-  // ── Sync old localStorage batches to backend ─────────────────────────────
-  const [syncing, setSyncing] = useState(false);
-  const [syncDone, setSyncDone] = useState(false);
-
-  const syncOldBatches = async () => {
-    const token = localStorage.getItem('pharmacy-token');
-    const pharmacyId = localStorage.getItem('pharmacy-id');
-    if (!token || !pharmacyId) return;
-    const batches: StockBatch[] = load(BAT_KEY, []);
-    if (batches.length === 0) { setSyncDone(true); return; }
-    setSyncing(true);
-    for (const b of batches) {
-      await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          genericName: b.drugName,
-          brandName: b.brandName || '',
-          barcode: b.barcode || null,
-          quantity: b.qtyRemaining,
-          sellingPrice: b.sellingPrice || 0,
-          reorderLevel: 10,
-          expiryDate: b.expiry || null,
-          originCountry: b.originCountry || '',
-          category: b.category || '',
-          buyingPrice: b.unitCost || undefined,
-        }),
-      }).catch(() => {});
-    }
-    setSyncing(false);
-    setSyncDone(true);
-  };
-
   const whPurchases = activeWh ? purchases.filter(p => p.warehouseId === activeWh) : purchases;
   const whPayments  = activeWh ? payments.filter(p => p.warehouseId === activeWh)  : payments;
   const activeWhObj = warehouses.find(w => w.id === activeWh);
@@ -1017,15 +984,6 @@ export default function WarehouseTab() {
       <div className="flex flex-wrap gap-2 justify-between items-center">
         <h2 className="font-bold text-gray-900 text-lg">إدارة المستودعات</h2>
         <div className="flex gap-2 flex-wrap">
-          {!syncDone && (
-            <button onClick={syncOldBatches} disabled={syncing}
-              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-medium">
-              {syncing ? 'جاري المزامنة...' : 'مزامنة الأدوية القديمة'}
-            </button>
-          )}
-          {syncDone && (
-            <span className="flex items-center gap-1 text-green-600 text-sm font-medium px-3">✓ تمت المزامنة</span>
-          )}
           <button onClick={() => { setPurchaseWh(activeWh); setView('purchase'); }}
             className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-medium">
             <FileText className="w-4 h-4" /> فاتورة شراء
