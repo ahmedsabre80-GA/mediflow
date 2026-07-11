@@ -143,7 +143,7 @@ async function bootstrap() {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
     const r = await pool.query(
-      `UPDATE users SET status='active' WHERE email=$1 RETURNING id, email, status`,
+      `UPDATE auth.users SET status='active' WHERE LOWER(email)=LOWER($1) RETURNING id, email, status`,
       [email]
     );
     if (r.rows.length === 0) return res.status(404).json({ error: 'User not found' });
