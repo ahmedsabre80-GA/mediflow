@@ -1773,6 +1773,30 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // Secret admin endpoint: activate pharmacy + auth user by email
+  app.post('/api/v1/admin/activate-by-email', async (req, res, next) => {
+    try {
+      const secret = req.headers['x-admin-secret'];
+      if (secret !== (process.env.ADMIN_SECRET || 'mediflow-admin-2026'))
+        return res.status(403).json({ error: 'Forbidden' });
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ error: 'email required' });
+      // Activate in auth.users
+      const uRes = await pool.query(
+        `UPDATE auth.users SET status='active', updated_at=NOW() WHERE LOWER(email)=LOWER($1) RETURNING id, email, status`,
+        [email]
+      );
+      if (uRes.rows.length === 0) return res.status(404).json({ error: 'User not found in auth.users' });
+      const userId = uRes.rows[0].id;
+      // Also activate the pharmacy record if any
+      const pRes = await pool.query(
+        `UPDATE pharmacies.pharmacies SET status='active', updated_at=NOW() WHERE owner_id=$1 RETURNING id, status`,
+        [userId]
+      );
+      res.json({ success: true, user: uRes.rows[0], pharmacy: pRes.rows[0] || null });
+    } catch (err) { next(err); }
+  });
+
   app.use(notFoundHandler);
   app.use(errorHandler);
 
