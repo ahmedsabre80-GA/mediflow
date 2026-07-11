@@ -49,13 +49,44 @@ interface ExpectedVisitor {
 function getEV(): ExpectedVisitor[] { return JSON.parse(localStorage.getItem(EV_KEY) || '[]'); }
 function saveEV(ev: ExpectedVisitor[]) { localStorage.setItem(EV_KEY, JSON.stringify(ev)); }
 
-const PT_RX_KEY = 'doctor-patient-rx-history';
+const PT_RX_KEY  = 'doctor-patient-rx-history';
+const STATE_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/user-state';
 interface PatientRxRecord { patientName: string; rxId: string; date: string; rxText: string; }
 function getPatientRxHistory(): PatientRxRecord[] { try { return JSON.parse(localStorage.getItem(PT_RX_KEY) || '[]'); } catch { return []; } }
+
+async function pushRxHistory(list: PatientRxRecord[]) {
+  try {
+    const token  = localStorage.getItem('doctor-token') || '';
+    const userId = localStorage.getItem('doctor-user-id') || '';
+    if (!token || !userId) return;
+    await fetch(`${STATE_API}/${userId}/rx-history`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ value: list }),
+    });
+  } catch {}
+}
+
+async function pullRxHistory(): Promise<PatientRxRecord[]> {
+  try {
+    const token  = localStorage.getItem('doctor-token') || '';
+    const userId = localStorage.getItem('doctor-user-id') || '';
+    if (!token || !userId) return [];
+    const r = await fetch(`${STATE_API}/${userId}/rx-history`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const d = await r.json();
+    if (d.success && Array.isArray(d.data) && d.data.length > 0) return d.data;
+  } catch {}
+  return [];
+}
+
 function savePatientRx(record: PatientRxRecord) {
   const list = getPatientRxHistory();
   list.unshift(record);
-  localStorage.setItem(PT_RX_KEY, JSON.stringify(list.slice(0, 500)));
+  const next = list.slice(0, 500);
+  localStorage.setItem(PT_RX_KEY, JSON.stringify(next));
+  pushRxHistory(next);
 }
 function getHistoryForPatient(patientName: string) {
   return getPatientRxHistory().filter(r => r.patientName.trim().toLowerCase() === patientName.trim().toLowerCase());
@@ -182,6 +213,17 @@ function AppointmentsContent() {
       if (saved.generalTime) setBookingOpenGeneral(saved.generalTime);
       if (saved.perDay) setBookingOpenPerDay(saved.perDay);
     }
+    // Sync rx history from backend (cross-device)
+    pullRxHistory().then(remote => {
+      if (remote.length > 0) {
+        const local = getPatientRxHistory();
+        // Merge: remote wins, deduplicate by rxId
+        const merged = [...remote, ...local].filter(
+          (r, i, arr) => arr.findIndex(x => x.rxId === r.rxId) === i
+        ).slice(0, 500);
+        localStorage.setItem(PT_RX_KEY, JSON.stringify(merged));
+      }
+    });
   }, [loadEV]);
 
   // Check if any expected visitor needs a call reminder (1-2 days before revisit)

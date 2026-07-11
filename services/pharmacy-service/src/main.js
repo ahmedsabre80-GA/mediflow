@@ -1746,6 +1746,30 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // ── Generic user-state endpoints (doctors, warehouse, etc.) ─────────────
+  app.get('/api/v1/user-state/:userId/:key', authenticate, async (req, res, next) => {
+    try {
+      const r = await pool.query(
+        'SELECT value FROM public.pharmacy_state WHERE pharmacy_id=$1 AND key=$2',
+        [req.params.userId, req.params.key]
+      );
+      res.json({ success: true, data: r.rows[0]?.value ? JSON.parse(r.rows[0].value) : [] });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/v1/user-state/:userId/:key', authenticate, async (req, res, next) => {
+    try {
+      const value = JSON.stringify(req.body.value ?? []);
+      await pool.query(
+        `INSERT INTO public.pharmacy_state (pharmacy_id, key, value, updated_at)
+         VALUES ($1,$2,$3,NOW())
+         ON CONFLICT (pharmacy_id, key) DO UPDATE SET value=$3, updated_at=NOW()`,
+        [req.params.userId, req.params.key, value]
+      );
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  });
+
   // ── Platform config endpoints ──────────────────────────────────────────
   // Public: get a config value
   app.get('/api/v1/platform/config/:key', async (req, res, next) => {
