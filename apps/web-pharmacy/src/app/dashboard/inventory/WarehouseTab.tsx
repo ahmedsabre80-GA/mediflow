@@ -77,6 +77,7 @@ function emptyItemForm() {
 }
 
 const DRUG_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/drugs/search';
+const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 const CATEGORIES = ['مسكنات الألم','مضادات الالتهاب','مضادات حيوية','أدوية القلب والضغط','أدوية السكري','أدوية الجهاز الهضمي','أدوية الجهاز التنفسي','أدوية الحساسية','فيتامينات ومكملات','أدوية نفسية وأعصاب','مضادات الفطريات','مضادات الفيروسات','أدوية الأطفال','أدوية النساء والتوليد','أخرى'];
 const COUNTRIES = ['العراق','الأردن','مصر','السعودية','الإمارات','سوريا','لبنان','تركيا','الهند','ألمانيا','فرنسا','المملكة المتحدة','الولايات المتحدة','الصين','إيران','باكستان','أخرى'];
 
@@ -364,17 +365,39 @@ export default function WarehouseTab() {
     });
     save(BAT_KEY, batches);
 
-    // Submit manually-entered drugs to catalog
+    // Save drugs to backend inventory + drug catalog
     const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
     invoices.forEach(inv => {
       inv.items.forEach(it => {
-        if (it.drugName.trim()) {
-          fetch(DRUG_API.replace('/search', ''), {
+        if (!it.drugName.trim()) return;
+        const finalCost = inv.discountType === 'total'
+          ? it.finalUnitCost * (1 - inv.totalDiscount / 100) : it.finalUnitCost;
+        // Save to pharmacy inventory so patients can find it
+        if (pharmacyId && token) {
+          fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify({ generic_name: it.drugName.trim(), brand_name: it.brandName || undefined, barcode: it.barcode || undefined, category: it.category || undefined }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              genericName: it.drugName.trim(),
+              brandName: it.brandName || '',
+              barcode: it.barcode || null,
+              quantity: it.qty,
+              sellingPrice: it.sellingPrice || 0,
+              reorderLevel: 10,
+              expiryDate: it.expiry || null,
+              originCountry: it.originCountry || '',
+              category: it.category || '',
+              buyingPrice: finalCost || undefined,
+            }),
           }).catch(() => {});
         }
+        // Also register in drug catalog
+        fetch(DRUG_API.replace('/search', ''), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ generic_name: it.drugName.trim(), brand_name: it.brandName || undefined, barcode: it.barcode || undefined, category: it.category || undefined }),
+        }).catch(() => {});
       });
     });
 
@@ -407,6 +430,39 @@ export default function WarehouseTab() {
     setPayments(next); save(PAY_KEY, next);
     setPayRows([{ amount: '', date: new Date().toISOString().slice(0,10), notes: '', receiptImage: '' }]);
     setPayWh(''); setSavingPay(false); setView('list');
+  };
+
+  // ── Sync old localStorage batches to backend ─────────────────────────────
+  const [syncing, setSyncing] = useState(false);
+  const [syncDone, setSyncDone] = useState(false);
+
+  const syncOldBatches = async () => {
+    const token = localStorage.getItem('pharmacy-token');
+    const pharmacyId = localStorage.getItem('pharmacy-id');
+    if (!token || !pharmacyId) return;
+    const batches: StockBatch[] = load(BAT_KEY, []);
+    if (batches.length === 0) { setSyncDone(true); return; }
+    setSyncing(true);
+    for (const b of batches) {
+      await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          genericName: b.drugName,
+          brandName: b.brandName || '',
+          barcode: b.barcode || null,
+          quantity: b.qtyRemaining,
+          sellingPrice: b.sellingPrice || 0,
+          reorderLevel: 10,
+          expiryDate: b.expiry || null,
+          originCountry: b.originCountry || '',
+          category: b.category || '',
+          buyingPrice: b.unitCost || undefined,
+        }),
+      }).catch(() => {});
+    }
+    setSyncing(false);
+    setSyncDone(true);
   };
 
   const whPurchases = activeWh ? purchases.filter(p => p.warehouseId === activeWh) : purchases;
@@ -960,7 +1016,16 @@ export default function WarehouseTab() {
     <div className="space-y-5" dir="rtl">
       <div className="flex flex-wrap gap-2 justify-between items-center">
         <h2 className="font-bold text-gray-900 text-lg">إدارة المستودعات</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {!syncDone && (
+            <button onClick={syncOldBatches} disabled={syncing}
+              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-medium">
+              {syncing ? 'جاري المزامنة...' : 'مزامنة الأدوية القديمة'}
+            </button>
+          )}
+          {syncDone && (
+            <span className="flex items-center gap-1 text-green-600 text-sm font-medium px-3">✓ تمت المزامنة</span>
+          )}
           <button onClick={() => { setPurchaseWh(activeWh); setView('purchase'); }}
             className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-medium">
             <FileText className="w-4 h-4" /> فاتورة شراء

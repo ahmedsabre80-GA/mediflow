@@ -521,6 +521,25 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
+  // ── Public: search warehouse inventory by drug name ──────────────────────
+  app.get('/api/v1/warehouses/drugs/search', async (req, res, next) => {
+    try {
+      const q = (req.query.q || '').trim();
+      if (!q || q.length < 2) return res.json({ success: true, data: [] });
+      const r = await pool.query(`
+        SELECT i.id, i.name, i.name_ar, i.batch_number, i.quantity, i.unit_price, i.expiry_date,
+          w.id AS warehouse_id, w.name AS warehouse_name, w.city AS warehouse_city, w.phone AS warehouse_phone
+        FROM warehouses.inventory i
+        JOIN warehouses.warehouses w ON w.id = i.warehouse_id AND w.status = 'active'
+        WHERE i.quantity > 0
+          AND (i.name ILIKE $1 OR i.name_ar ILIKE $1)
+        ORDER BY i.name
+        LIMIT 20
+      `, [`%${q}%`]);
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
   // ── Pharmacy: place B2B order ─────────────────────────────────────────────
   app.post('/api/v1/warehouses/b2b-orders', authenticate, async (req, res, next) => {
     try {

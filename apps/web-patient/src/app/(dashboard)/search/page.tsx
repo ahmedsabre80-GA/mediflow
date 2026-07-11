@@ -65,7 +65,7 @@ function SearchContent() {
     if (activeTab !== 'doctor' || doctors.length > 0) return;
     setDocsLoading(true);
     Promise.all([
-      fetch(`${PHARM_API_URL}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${PHARM_API_URL}/admin-requests`, { headers: patientH() }).then(r => r.json()).catch(() => ({ data: [] })),
       fetch(`${AUTH_API_URL}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([reqRes, authRes]) => {
       const authUsers: any[] = authRes.data || authRes.users || [];
@@ -85,6 +85,7 @@ function SearchContent() {
   const [nearbyPharm,  setNearbyPharm]  = useState<StockPharmacy[]>([]);
   const [expandedDrug, setExpandedDrug] = useState<string | null>(null);
   const [stockMap,     setStockMap]     = useState<Record<string, StockPharmacy[]>>({});
+  const [warehouseResults, setWarehouseResults] = useState<any[]>([]);
   const [stockLoading, setStockLoading] = useState<string | null>(null);
   const [coords,       setCoords]       = useState(() => {
     try {
@@ -275,15 +276,16 @@ function SearchContent() {
     setShowSug(false);
     setExpandedDrug(null);
     setStockMap({});
+    setWarehouseResults([]);
     try {
-      const r = await fetch(`${API}/drugs/search?q=${encodeURIComponent(q)}&limit=20`);
-      const d = await r.json();
-      const drugList: Drug[] = d.data || [];
+      const [drugRes, whRes] = await Promise.allSettled([
+        fetch(`${API}/drugs/search?q=${encodeURIComponent(q)}&limit=20`).then(r => r.json()),
+        fetch(`https://mediflow-production-d815.up.railway.app/api/v1/warehouses/drugs/search?q=${encodeURIComponent(q)}`).then(r => r.json()),
+      ]);
+      const drugList: Drug[] = drugRes.status === 'fulfilled' ? (drugRes.value.data || []) : [];
       setDrugs(drugList);
-      // Auto-expand first drug and load its pharmacies
-      if (drugList.length > 0) {
-        loadPharmaciesForDrug(drugList[0], true);
-      }
+      if (whRes.status === 'fulfilled') setWarehouseResults(whRes.value.data || []);
+      if (drugList.length > 0) loadPharmaciesForDrug(drugList[0], true);
     } catch { setDrugs([]); }
     finally { setLoading(false); }
   }, [coords]);
@@ -847,6 +849,27 @@ function SearchContent() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Warehouse Results */}
+      {activeTab === 'drug' && !loading && warehouseResults.length > 0 && (
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-xs font-bold text-purple-700 flex items-center gap-1">🏭 متوفر في المستودعات ({warehouseResults.length})</p>
+          {warehouseResults.map((item: any) => (
+            <div key={item.id} className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3">
+              <div className="w-11 h-11 bg-purple-50 rounded-xl flex items-center justify-center text-2xl shrink-0">🏭</div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900 text-sm">{item.name_ar || item.name}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{item.warehouse_name}{item.warehouse_city ? ` — ${item.warehouse_city}` : ''}</p>
+                {item.warehouse_phone && <p className="text-xs text-gray-400">{item.warehouse_phone}</p>}
+              </div>
+              <div className="text-right shrink-0">
+                {item.unit_price > 0 && <p className="font-bold text-purple-600 text-sm">{Number(item.unit_price).toLocaleString('ar-IQ')} IQD</p>}
+                <p className="text-xs text-green-600">متوفر ({item.quantity})</p>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
