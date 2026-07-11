@@ -42,15 +42,16 @@ export default function WarehouseMessagesPage() {
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000); };
 
   useEffect(() => {
-    fetch(`${PHARMACY_API}/admin/all`)
+    fetch(`${PHARMACY_API}/active`, { headers: warehouseH() })
       .then(r => r.json())
-      .then(d => setPharmacies((d.data || []).filter((p: any) => p.status === 'active')))
+      .then(d => setPharmacies(d.data || []))
       .catch(() => {});
   }, []);
 
   const loadSent = () => {
     setSentLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    const warehouseId = typeof window !== 'undefined' ? localStorage.getItem('warehouse-id') || '' : '';
+    fetch(`${PHARMACY_API}/portal-notifications?portalType=warehouse-internal&recipientId=${warehouseId}`, { headers: warehouseH() })
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];

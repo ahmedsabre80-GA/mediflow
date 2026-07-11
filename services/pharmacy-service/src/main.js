@@ -691,6 +691,18 @@ async function bootstrap() {
   });
 
   // ─── ADMIN ENDPOINTS ──────────────────────────────────────────────────
+  router.get('/active', authenticate, async (_req, res, next) => {
+    try {
+      const result = await pool.query(`
+        SELECT id, name, name_ar, phone, city, address, status
+        FROM pharmacies.pharmacies
+        WHERE status = 'active'
+        ORDER BY name_ar ASC
+      `);
+      res.json({ success: true, data: result.rows });
+    } catch (err) { next(err); }
+  });
+
   router.get('/admin/all', authenticate, isAdmin, async (_req, res, next) => {
     try {
       const result = await pool.query(`
