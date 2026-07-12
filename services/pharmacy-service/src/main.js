@@ -1701,13 +1701,20 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // PATCH booking status
+  // PATCH booking (status, appointment_date, notes)
   apptRouter.patch('/:doctorId/bookings/:bookingId', async (req, res, next) => {
     try {
-      const { status } = req.body;
+      const { status, appointment_date, notes } = req.body;
+      const setClauses = [];
+      const params = [];
+      if (status           !== undefined) { params.push(status);           setClauses.push(`status=$${params.length}`); }
+      if (appointment_date !== undefined) { params.push(appointment_date); setClauses.push(`appointment_date=$${params.length}`); }
+      if (notes            !== undefined) { params.push(notes);            setClauses.push(`notes=$${params.length}`); }
+      if (!setClauses.length) return res.status(400).json({ success: false, error: { title: 'nothing to update' } });
+      params.push(req.params.bookingId, req.params.doctorId);
       const r = await pool.query(
-        "UPDATE appointments.bookings SET status=$1 WHERE id=$2 AND doctor_id=$3 RETURNING *",
-        [status, req.params.bookingId, req.params.doctorId]
+        `UPDATE appointments.bookings SET ${setClauses.join(', ')} WHERE id=$${params.length - 1} AND doctor_id=$${params.length} RETURNING *`,
+        params
       );
       res.json({ success: true, data: r.rows[0] });
     } catch (err) { next(err); }

@@ -593,7 +593,9 @@ function AppointmentsContent() {
     const notifyStatuses = ['confirmed', 'cancelled', 'completed'];
     if (notifyStatuses.includes(status)) {
       const booking = [...bookings, ...allBookings].find(b => String(b.id) === String(bookingId));
-      const patientId = booking?.patient_id || booking?.patientId || patientIdMap[(booking?.patient_email || '').toLowerCase()] || '';
+      const bkEmailKey = (booking?.patient_email || '').toLowerCase();
+      const bkNotesMatch = String(booking?.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
+      const patientId = booking?.patient_id || booking?.patientId || bkNotesMatch?.[1] || patientIdMap[bkEmailKey] || '';
       if (patientId) {
         const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
         const drName = `د. ${doctorName}`;
@@ -640,8 +642,10 @@ function AppointmentsContent() {
       headers: notifHeaders(),
       body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
     }).catch(() => {});
-    // Notify patient
-    const patientId = b.patient_id || b.patientId || '';
+    // Notify patient — use all available ID sources
+    const emailKey = (b.patient_email || b.patientEmail || '').toLowerCase();
+    const notesMatch = String(b.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
+    const patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
     const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
     if (patientId) {
       await fetch(NOTIF_API, {
