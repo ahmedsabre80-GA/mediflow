@@ -585,19 +585,23 @@ function AppointmentsContent() {
       body: JSON.stringify({ status }),
     }).catch(()=>{});
 
-    // Send patient notification on confirm or cancel
-    if (status === 'confirmed' || status === 'cancelled') {
+    // Notify patient on any status change
+    const notifyStatuses = ['confirmed', 'cancelled', 'completed'];
+    if (notifyStatuses.includes(status)) {
       const booking = [...bookings, ...allBookings].find(b => String(b.id) === String(bookingId));
       const patientId = booking?.patient_id || booking?.patientId || patientIdMap[(booking?.patient_email || '').toLowerCase()] || '';
       if (patientId) {
         const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
-        const msg = status === 'confirmed'
-          ? `✅ تم تأكيد موعدك\nالتاريخ: ${booking?.appointment_date || ''}\nمع الدكتور: ${doctorName}\n\nيمكنك مراجعة تفاصيل موعدك من قسم "مواعيدي".`
-          : `❌ تم إلغاء موعدك\nالتاريخ: ${booking?.appointment_date || ''}\nمع الدكتور: ${doctorName}\n\nيرجى التواصل معنا لإعادة الحجز.`;
+        const drName = `د. ${doctorName}`;
+        const date = booking?.appointment_date || '';
+        const msg =
+          status === 'confirmed'  ? `✅ تم تأكيد موعدك\nالتاريخ: ${date}\nمع ${drName}\n\nيمكنك مراجعة تفاصيل موعدك من قسم "مواعيدي".` :
+          status === 'cancelled'  ? `❌ تم إلغاء موعدك\nالتاريخ: ${date}\nمع ${drName}\n\nيرجى التواصل معنا لإعادة الحجز.` :
+          /* completed */           `✅ تم إنهاء زيارتك بنجاح\nالتاريخ: ${date}\nمع ${drName}\n\n⭐ نرجو تقييم زيارتك من قسم "مواعيدي".`;
         fetch(NOTIF_API, {
           method: 'POST',
           headers: notifHeaders(),
-          body: JSON.stringify({ portalType: 'patient', recipientId: patientId, senderName: `د. ${doctorName}`, message: msg }),
+          body: JSON.stringify({ portalType: 'patient', recipientId: patientId, senderName: drName, message: msg }),
         }).catch(() => {});
       }
     }
@@ -702,41 +706,36 @@ function AppointmentsContent() {
     if (addForm.patient_email) {
       const emailKey = addForm.patient_email.toLowerCase();
 
-      // 1. Check booking response — backend may include patient_id when patient is registered
-      const patientIdFromBooking = d?.data?.patient_id || d?.data?.patientId || d?.patient_id || '';
+      // 1. Check booking response — backend returns patient_id when email matches a registered patient
+      const patientIdFromBooking = String(d?.data?.patient_id || d?.data?.patientId || d?.patient_id || '').trim();
 
-      // 2. Check map built from existing bookings (works when patient previously booked via patient portal)
+      // 2. Check map built from existing bookings
       const patientIdFromMap = patientIdMap[emailKey] || '';
 
-      const resolvedId = String(patientIdFromBooking || patientIdFromMap);
-
-      if (resolvedId) {
-        await sendPatientNotif(resolvedId);
-      } else {
-        // 3. Fallback: try auth service endpoints (may fail with doctor token — silent)
-        let patientId = '';
-        const endpoints = [
-          `${AUTH_API}/auth/admin/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
-          `${AUTH_API}/auth/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
-          `${AUTH_API}/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
+      // 3. Try auth service with doctor token (public /users/by-email or similar)
+      let patientIdFromAuth = '';
+      if (!patientIdFromBooking && !patientIdFromMap) {
+        const tryUrls = [
+          `${AUTH_API}/users/by-email?email=${encodeURIComponent(addForm.patient_email)}`,
+          `${AUTH_API}/auth/users?email=${encodeURIComponent(addForm.patient_email)}&limit=1`,
         ];
-        for (const url of endpoints) {
-          if (patientId) break;
+        for (const url of tryUrls) {
+          if (patientIdFromAuth) break;
           try {
             const r = await fetch(url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${drToken()}` } });
             if (r.ok) {
               const j = await r.json();
-              const users: any[] = j.data || j.users || (Array.isArray(j) ? j : []);
-              const match = users.find((u: any) => u.email?.toLowerCase() === emailKey);
-              if (match?.id) patientId = String(match.id);
+              const u = j.data || j.user || (Array.isArray(j.data) ? j.data[0] : null) || (Array.isArray(j) ? j[0] : null);
+              if (u?.id && u.email?.toLowerCase() === emailKey) patientIdFromAuth = String(u.id);
             }
           } catch {}
         }
-        if (patientId) {
-          // Cache for future use
-          setPatientIdMap(prev => ({ ...prev, [emailKey]: patientId }));
-          await sendPatientNotif(patientId);
-        }
+      }
+
+      const resolvedId = patientIdFromBooking || patientIdFromMap || patientIdFromAuth;
+      if (resolvedId) {
+        if (!patientIdFromMap) setPatientIdMap(prev => ({ ...prev, [emailKey]: resolvedId }));
+        await sendPatientNotif(resolvedId);
       }
     }
 
