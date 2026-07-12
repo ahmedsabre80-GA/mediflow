@@ -535,16 +535,16 @@ export default function AppointmentsPage() {
       {/* Reschedule modal */}
       {rescheduleFor && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => !rescheduleSaving && setRescheduleFor(null)}>
-          <div className="bg-white rounded-t-3xl w-full" dir="rtl" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mt-4 mb-4" />
-            <div className="flex items-center justify-between px-5 pb-3 border-b">
+          <div className="bg-white rounded-t-3xl w-full max-h-[85vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mt-4 mb-4 flex-shrink-0" />
+            <div className="flex items-center justify-between px-5 pb-3 border-b flex-shrink-0">
               <div className="flex items-center gap-2">
                 <CalendarClock className="w-5 h-5 text-amber-500" />
                 <p className="font-bold text-gray-900">تغيير الموعد</p>
               </div>
               <button onClick={() => setRescheduleFor(null)} className="p-2 hover:bg-gray-100 rounded-xl"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
-            <div className="px-5 py-4 space-y-4">
+            <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
               <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-sm text-sky-800">
                 الموعد الحالي: <span className="font-bold">{new Date(rescheduleFor.b.date + 'T00:00:00').toLocaleDateString('ar-IQ', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
                 <span className="mx-2">·</span>{rescheduleFor.b.doctorName}
@@ -575,7 +575,7 @@ export default function AppointmentsPage() {
                 )}
               </div>
             </div>
-            <div className="px-5 pb-10 flex gap-3">
+            <div className="px-5 pb-10 pt-3 flex gap-3 border-t flex-shrink-0">
               <button onClick={() => setRescheduleFor(null)}
                 className="flex-1 border border-gray-300 py-3 rounded-2xl text-sm font-medium text-gray-700">إلغاء</button>
               <button onClick={doReschedule} disabled={rescheduleSaving || !rescheduleFor.newDate || rescheduleFor.newDate === rescheduleFor.b.date || (rescheduleFor.reason === 'أخرى' && !rescheduleFor.customReason.trim())}
