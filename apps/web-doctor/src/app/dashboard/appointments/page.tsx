@@ -130,6 +130,7 @@ function AppointmentsContent() {
   const [tab, setTab]             = useState<'calendar'|'all'|'schedule'|'patients'|'expected'>(initTab);
   const [allBookings, setAllBookings] = useState<any[]>([]);
   const [allLoading, setAllLoading]   = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
   // email → patient auth user ID — built from bookings that have patient_id
   const [patientIdMap, setPatientIdMap] = useState<Record<string, string>>({});
   const [weekOffset, setWeekOffset]   = useState(0);
@@ -595,7 +596,14 @@ function AppointmentsContent() {
       const booking = [...bookings, ...allBookings].find(b => String(b.id) === String(bookingId));
       const bkEmailKey = (booking?.patient_email || '').toLowerCase();
       const bkNotesMatch = String(booking?.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
-      const patientId = booking?.patient_id || booking?.patientId || bkNotesMatch?.[1] || patientIdMap[bkEmailKey] || '';
+      let patientId = booking?.patient_id || booking?.patientId || bkNotesMatch?.[1] || patientIdMap[bkEmailKey] || '';
+      // Fallback: look up by email from auth service
+      if (!patientId && bkEmailKey) {
+        try {
+          const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(bkEmailKey)}`);
+          if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
+        } catch {}
+      }
       if (patientId) {
         const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
         const drName = `د. ${doctorName}`;
@@ -642,51 +650,28 @@ function AppointmentsContent() {
       `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`,
     ].filter(Boolean).join('\n');
 
-    // Strategy: cancel old booking → create new one on the new date.
-    // This works without any backend change (PATCH only-status limitation bypassed).
-    let success = false;
-
-    // Step 1: create new booking first (so we don't cancel unless creation succeeds)
-    const createRes = await fetch(`${API}/${doctorId}/bookings`, {
-      method: 'POST',
+    const patchRes = await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
+      method: 'PATCH',
       headers: notifHeaders(),
-      body: JSON.stringify({
-        patient_name:  b.patient_name  || b.patientName,
-        patient_phone: b.patient_phone || b.patientPhone || '',
-        patient_email: b.patient_email || b.patientEmail || '',
-        appointment_date: newDate,
-        notes: updatedNotes,
-      }),
+      body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
     }).catch(() => null);
 
-    if (createRes?.ok) {
-      // Step 2: cancel old booking silently
-      await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
-        method: 'PATCH',
-        headers: notifHeaders(),
-        body: JSON.stringify({ status: 'cancelled' }),
-      }).catch(() => {});
-      success = true;
-    } else {
-      // Fallback: try direct PATCH (works once backend is deployed)
-      const patchRes = await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
-        method: 'PATCH',
-        headers: notifHeaders(),
-        body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
-      }).catch(() => null);
-      success = !!patchRes?.ok;
-    }
-
-    if (!success) {
-      showToast('❌ فشل تغيير الموعد — تحقق من توفر الطبيب في ذلك اليوم');
+    if (!patchRes?.ok) {
+      showToast('❌ فشل تغيير الموعد');
       setRescheduleSaving(false);
       return;
     }
 
-    // Notify patient
+    // Notify patient — resolve their auth ID by all available methods
     const emailKey = (b.patient_email || b.patientEmail || '').toLowerCase();
     const notesMatch = String(b.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
-    const patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
+    let patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
+    if (!patientId && emailKey) {
+      try {
+        const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(emailKey)}`);
+        if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
+      } catch {}
+    }
     const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
     if (patientId) {
       await fetch(NOTIF_API, {
@@ -712,13 +697,13 @@ function AppointmentsContent() {
     setAddError('');
     setAddSaving(true);
 
-    // Prevent duplicate: same patient email + same date
+    // Prevent duplicate: fetch live bookings for that date from API
     if (addForm.patient_email && addForm.appointment_date) {
       const emailL = addForm.patient_email.toLowerCase();
-      const dup = [...bookings, ...allBookings].find(b =>
-        (b.patient_email||b.patientEmail||'').toLowerCase() === emailL &&
-        (b.appointment_date||b.date) === addForm.appointment_date &&
-        b.status !== 'cancelled'
+      const liveRes = await fetch(`${API}/${doctorId}/bookings?date=${addForm.appointment_date}`, { headers: notifHeaders() }).then(r => r.json()).catch(() => ({ data: [] }));
+      const liveBks: any[] = liveRes.data || [];
+      const dup = liveBks.find(b =>
+        (b.patient_email || '').toLowerCase() === emailL && b.status !== 'cancelled'
       );
       if (dup) { setAddError('يوجد موعد مسبق لهذا المريض في نفس التاريخ'); setAddSaving(false); return; }
     }
@@ -772,24 +757,17 @@ function AppointmentsContent() {
       // 2. Check map built from existing bookings
       const patientIdFromMap = patientIdMap[emailKey] || '';
 
-      // 3. Try auth service with doctor token (public /users/by-email or similar)
+      // 3. Auth service public lookup by email
       let patientIdFromAuth = '';
       if (!patientIdFromBooking && !patientIdFromMap) {
-        const tryUrls = [
-          `${AUTH_API}/users/by-email?email=${encodeURIComponent(addForm.patient_email)}`,
-          `${AUTH_API}/auth/users?email=${encodeURIComponent(addForm.patient_email)}&limit=1`,
-        ];
-        for (const url of tryUrls) {
-          if (patientIdFromAuth) break;
-          try {
-            const r = await fetch(url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${drToken()}` } });
-            if (r.ok) {
-              const j = await r.json();
-              const u = j.data || j.user || (Array.isArray(j.data) ? j.data[0] : null) || (Array.isArray(j) ? j[0] : null);
-              if (u?.id && u.email?.toLowerCase() === emailKey) patientIdFromAuth = String(u.id);
-            }
-          } catch {}
-        }
+        try {
+          const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(addForm.patient_email)}`);
+          if (r.ok) {
+            const j = await r.json();
+            const uid = j.data?.id || '';
+            if (uid) patientIdFromAuth = String(uid);
+          }
+        } catch {}
       }
 
       const resolvedId = patientIdFromBooking || patientIdFromMap || patientIdFromAuth;
@@ -1143,7 +1121,10 @@ function AppointmentsContent() {
           <div className="px-6 py-4 border-b flex items-center justify-between">
             <h2 className="font-bold text-gray-900">جميع المواعيد القادمة (30 يوم)</h2>
             <div className="flex items-center gap-2">
-              {allBookings.length > 0 && <span className="bg-teal-100 text-teal-700 text-xs font-medium px-2.5 py-1 rounded-full">{allBookings.length} موعد</span>}
+              <button onClick={() => setShowCancelled(v => !v)}
+                className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${showCancelled ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                {showCancelled ? 'إخفاء الملغية' : 'عرض الملغية'}
+              </button>
               <button onClick={loadAllBookings} disabled={allLoading}
                 className="p-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                 <RefreshCw className={`w-4 h-4 ${allLoading?'animate-spin':''}`} />
@@ -1152,12 +1133,13 @@ function AppointmentsContent() {
           </div>
           {allLoading ? (
             <div className="p-12 text-center text-gray-400">جاري التحميل...</div>
-          ) : allBookings.length === 0 ? (
+          ) : allBookings.filter(b => showCancelled || b.status !== 'cancelled').length === 0 ? (
             <div className="p-12 text-center text-gray-400"><Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد مواعيد خلال الـ 30 يوم القادمة</div>
           ) : (
             <div className="divide-y">
-              {allBookings.map((b,i) => {
-                const prevDate = i>0 ? allBookings[i-1].appointment_date : null;
+              {allBookings.filter(b => showCancelled || b.status !== 'cancelled').map((b,i) => {
+                const displayed = allBookings.filter(x => showCancelled || x.status !== 'cancelled');
+                const prevDate = i>0 ? displayed[i-1].appointment_date : null;
                 const showHeader = b.appointment_date !== prevDate;
                 const dateLabel = new Date(b.appointment_date+'T00:00:00').toLocaleDateString('ar-IQ',{weekday:'long',day:'numeric',month:'long'});
                 return (

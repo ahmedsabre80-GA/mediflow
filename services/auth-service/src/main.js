@@ -403,6 +403,22 @@ app.get('/api/v1/auth/users/doctors', async (req, res) => {
   }
 });
 
+// ─── PUBLIC: look up any user by email (for cross-portal notifications) ──────
+app.get('/api/v1/auth/users/by-email', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ success: false, error: { title: 'email required' } });
+  try {
+    const r = await pool.query(
+      `SELECT u.id, u.email, u.role FROM auth.users u WHERE lower(u.email) = lower($1) AND u.deleted_at IS NULL LIMIT 1`,
+      [email]
+    );
+    if (!r.rows.length) return res.status(404).json({ success: false, error: { title: 'not found' } });
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Internal server error' } });
+  }
+});
+
 // ─── ADMIN: list all users ────────────────────────────────────────────────────
 app.get('/api/v1/auth/admin/users', requireAdmin, async (req, res) => {
   const { role } = req.query;
