@@ -694,7 +694,7 @@ async function bootstrap() {
   router.get('/active', async (_req, res, next) => {
     try {
       const result = await pool.query(`
-        SELECT id, name, name_ar, phone, city, address, status,
+        SELECT id, owner_id, name, name_ar, phone, city, address, status,
                (status = 'active') AS is_online
         FROM pharmacies.pharmacies
         WHERE status IN ('active', 'inactive')
