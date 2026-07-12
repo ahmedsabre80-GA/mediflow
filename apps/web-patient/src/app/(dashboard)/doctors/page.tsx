@@ -68,7 +68,7 @@ export default function DoctorsPage() {
     setPatientFileNo(localStorage.getItem('patient-file-no') || '');
 
     Promise.all([
-      fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${PHARM_API}/admin-requests`, { headers: patientH() }).then(r => r.json()).catch(() => ({ data: [] })),
       fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([reqRes, authRes]) => {
       const authUsers: any[] = authRes.data || authRes.users || [];
@@ -162,9 +162,10 @@ export default function DoctorsPage() {
     const notesWithTime = prefTime
       ? `الوقت المفضل: ${prefTime}${notes.trim() ? ' | ' + notes.trim() : ''}`
       : notes.trim();
+    const patientUserId = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.user?.id || s.state?.userId || s.user?.id || ''; } catch { return ''; } })();
     const res = await fetch(`${APPT_API}/${selected.authId || selected.id}/bookings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: patientH(),
       body: JSON.stringify({
         patient_name: patientName.trim(),
         patient_phone: patientPhone.trim(),
@@ -176,6 +177,7 @@ export default function DoctorsPage() {
           patientAge.trim()    ? `عمر المريض: ${patientAge.trim()}` : '',
           patientGender.trim() ? `جنس المريض: ${patientGender.trim()}` : '',
           patientFileNo.trim() ? `رقم الملف: ${patientFileNo.trim()}` : '',
+          patientUserId        ? `[patient_user_id:${patientUserId}]` : '',
         ].filter(Boolean).join('\n'),
       }),
     });

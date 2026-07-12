@@ -280,7 +280,7 @@ export default function AppointmentsPage() {
     const oldDate = b.date;
     const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
     // Helper to get patient auth token
-    const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+    const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.state?.token || s.accessToken || s.token || ''; } catch { return ''; } })();
     const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
 
     // Patch API for API-sourced bookings

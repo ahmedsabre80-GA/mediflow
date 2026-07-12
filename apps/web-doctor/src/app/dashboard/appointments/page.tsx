@@ -275,6 +275,10 @@ function AppointmentsContent() {
       const email = b.patient_email || b.patientEmail || '';
       const pid   = b.patient_id   || b.patientId   || '';
       if (email && pid) map[email.toLowerCase()] = String(pid);
+      // Also extract from notes: [patient_user_id:xxx]
+      const notes = b.notes || b.note || '';
+      const m = String(notes).match(/\[patient_user_id:([^\]]+)\]/);
+      if (email && m?.[1]) map[email.toLowerCase()] = m[1];
     }
     setPatientIdMap(prev => ({ ...prev, ...map }));
   };
@@ -662,6 +666,17 @@ function AppointmentsContent() {
     e.preventDefault();
     setAddError('');
     setAddSaving(true);
+
+    // Prevent duplicate: same patient email + same date
+    if (addForm.patient_email && addForm.appointment_date) {
+      const emailL = addForm.patient_email.toLowerCase();
+      const dup = [...bookings, ...allBookings].find(b =>
+        (b.patient_email||b.patientEmail||'').toLowerCase() === emailL &&
+        (b.appointment_date||b.date) === addForm.appointment_date &&
+        b.status !== 'cancelled'
+      );
+      if (dup) { setAddError('يوجد موعد مسبق لهذا المريض في نفس التاريخ'); setAddSaving(false); return; }
+    }
 
     // Embed time in notes so patient portal can extract it
     const timeNote  = addForm.appointment_time ? `الوقت المفضل: ${addForm.appointment_time}` : '';

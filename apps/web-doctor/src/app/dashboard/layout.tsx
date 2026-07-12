@@ -31,12 +31,29 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
     }
   }, []);
 
+  const validateToken = useCallback(() => {
+    const token    = localStorage.getItem('doctor-token');
+    const doctorId = localStorage.getItem('doctor-id');
+    if (!token || !doctorId) { router.push('/auth/login'); return; }
+    fetch(`https://mediflow-production-d815.up.railway.app/api/v1/doctors/${doctorId}/bookings?limit=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => {
+      if (r.status === 401) {
+        ['doctor-token','doctor-name','doctor-id','doctor-user-id']
+          .forEach(k => localStorage.removeItem(k));
+        router.push('/auth/login');
+      }
+    }).catch(() => {});
+  }, [router]);
+
   useEffect(() => {
-    if (!localStorage.getItem('doctor-token')) router.push('/auth/login');
+    if (!localStorage.getItem('doctor-token')) { router.push('/auth/login'); return; }
+    validateToken();
     refresh();
-    const iv = setInterval(refresh, 30000);
-    return () => clearInterval(iv);
-  }, [router, refresh]);
+    const iv    = setInterval(refresh, 30000);
+    const ivVal = setInterval(validateToken, 15 * 60 * 1000); // re-validate every 15 min
+    return () => { clearInterval(iv); clearInterval(ivVal); };
+  }, [router, refresh, validateToken]);
 
   const unread = notifs.filter(n => !n.isRead).length;
 
@@ -181,10 +198,18 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
                 <span className="font-medium text-gray-700">التاريخ</span>
               </div>
             </div>
-            <button onClick={() => setSelectedNotif(null)}
-              className="mt-5 w-full bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
-              إغلاق
-            </button>
+            <div className="mt-5 flex gap-2">
+              {(selectedNotif.message.includes('موعد') || selectedNotif.message.includes('حجز') || selectedNotif.message.includes('تأكيد') || selectedNotif.message.includes('إلغاء') || selectedNotif.message.includes('تغيير')) && (
+                <button onClick={() => { setSelectedNotif(null); router.push('/dashboard/appointments'); }}
+                  className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
+                  فتح المواعيد
+                </button>
+              )}
+              <button onClick={() => setSelectedNotif(null)}
+                className="flex-1 border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2.5 rounded-xl transition-colors text-sm">
+                إغلاق
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -120,7 +120,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (ageMin < rxTimeoutMin) return;
 
       // Check if prescription was already accepted (status no longer open)
-      const rxData = await fetch(`${PHARMACY_API}/prescriptions/${pending.id}`).then(r => r.json()).catch(() => ({}));
+      const rxData = await fetch(`${PHARMACY_API}/prescriptions/${pending.id}`, { headers: patientAuthHeaders() }).then(r => r.json()).catch(() => ({}));
       if (rxData?.data?.status && rxData.data.status !== 'open') {
         // Already handled — clear the pending entry
         localStorage.removeItem('mediflow-pending-rx');
@@ -160,13 +160,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const uid  = user?.id || '';
       setUserId(uid);
       setUserName(user?.name || user?.email?.split('@')[0] || 'مريض');
+
+      // Validate token with backend on mount
+      const token = parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
+      const validateToken = () => {
+        if (!token) { localStorage.removeItem('mediflow-auth'); router.push('/login'); return; }
+        fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/profile', {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then(r => {
+          if (r.status === 401) {
+            localStorage.removeItem('mediflow-auth');
+            router.push('/login');
+          }
+        }).catch(() => {});
+      };
+      validateToken();
+
       refresh(uid);
       checkReminders(uid);
       checkPendingRx(uid);
-      const iv1 = setInterval(() => refresh(uid), 30000);
-      const iv2 = setInterval(() => checkReminders(uid), 60000);
-      const iv3 = setInterval(() => checkPendingRx(uid), 60000);
-      return () => { clearInterval(iv1); clearInterval(iv2); clearInterval(iv3); };
+      const iv1   = setInterval(() => refresh(uid), 30000);
+      const iv2   = setInterval(() => checkReminders(uid), 60000);
+      const iv3   = setInterval(() => checkPendingRx(uid), 60000);
+      const ivVal = setInterval(validateToken, 15 * 60 * 1000); // re-validate every 15 min
+      return () => { clearInterval(iv1); clearInterval(iv2); clearInterval(iv3); clearInterval(ivVal); };
     } catch { router.push('/login'); }
   }, [router, refresh, checkReminders, checkPendingRx]);
 
@@ -576,11 +593,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </div>
                 </div>
               ) : (
-                <div className="flex gap-3">
+                <div className="flex gap-3 flex-wrap">
                   <button onClick={closeModal}
                     className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl text-sm">
                     إغلاق
                   </button>
+                  {(selected.message.includes('موعد') || selected.message.includes('حجز') || selected.message.includes('تأكيد') || selected.message.includes('زيارة')) && (
+                    <button onClick={() => { closeModal(); router.push('/appointments'); }}
+                      className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl text-sm">
+                      فتح المواعيد
+                    </button>
+                  )}
                   {isReservation && (
                     <button onClick={() => setShowCancelForm(true)}
                       className="flex-1 flex items-center justify-center gap-2 border border-red-300 text-red-600 hover:bg-red-50 py-2.5 rounded-xl text-sm font-medium transition-colors">
