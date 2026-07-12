@@ -302,13 +302,15 @@ export default function AppointmentsPage() {
         }),
       }).catch(() => {});
     }
-    // Update localStorage
+    // Update localStorage immediately for instant feedback
     const all = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
-    const updated = all.map((item: any) => item.id === b.id ? { ...item, date: newDate, notes: updatedNotes } : item);
+    const updated = all.map((item: any) => item.id === b.id ? { ...item, date: newDate, status: 'pending', notes: updatedNotes } : item);
     localStorage.setItem('mediflow-my-bookings', JSON.stringify(updated));
     setBookings(updated);
     setRescheduleSaving(false);
     setRescheduleFor(null);
+    // Re-sync from API so the list reflects the backend's updated date
+    setTimeout(() => syncFromAPI(), 800);
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -540,7 +542,7 @@ export default function AppointmentsPage() {
 
       {/* Reschedule modal */}
       {rescheduleFor && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => !rescheduleSaving && setRescheduleFor(null)}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end pb-16" onClick={() => !rescheduleSaving && setRescheduleFor(null)}>
           <div className="bg-white rounded-t-3xl w-full max-h-[85vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
             <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mt-4 mb-4 flex-shrink-0" />
             <div className="flex items-center justify-between px-5 pb-3 border-b flex-shrink-0">
