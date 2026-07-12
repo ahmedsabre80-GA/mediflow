@@ -581,7 +581,7 @@ function AppointmentsContent() {
   const updateStatus = async (bookingId: string, status: string) => {
     await fetch(`${API}/${doctorId}/bookings/${bookingId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: notifHeaders(),
       body: JSON.stringify({ status }),
     }).catch(()=>{});
 
@@ -614,7 +614,7 @@ function AppointmentsContent() {
 
   const deleteBooking = async () => {
     if (!deleteConfirm) return;
-    await fetch(`${API}/${doctorId}/bookings/${deleteConfirm}`, { method:'DELETE' }).catch(()=>{});
+    await fetch(`${API}/${doctorId}/bookings/${deleteConfirm}`, { method:'DELETE', headers: notifHeaders() }).catch(()=>{});
     setDeleteConfirm(null);
     setAllBookings(prev => prev.filter(x => x.id !== deleteConfirm));
     loadBookings();
@@ -633,7 +633,7 @@ function AppointmentsContent() {
     const updatedNotes = [b.notes, `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
     await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: notifHeaders(),
       body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
     }).catch(() => {});
     // Notify patient
@@ -671,7 +671,7 @@ function AppointmentsContent() {
 
     const res = await fetch(`${API}/${doctorId}/bookings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: notifHeaders(),
       body: JSON.stringify(payload),
     });
     const d = await res.json();
