@@ -694,10 +694,11 @@ async function bootstrap() {
   router.get('/active', authenticate, async (_req, res, next) => {
     try {
       const result = await pool.query(`
-        SELECT id, name, name_ar, phone, city, address, status
+        SELECT id, name, name_ar, phone, city, address, status,
+               (status = 'active') AS is_online
         FROM pharmacies.pharmacies
-        WHERE status = 'active'
-        ORDER BY name_ar ASC
+        WHERE status IN ('active', 'inactive')
+        ORDER BY is_online DESC, name_ar ASC
       `);
       res.json({ success: true, data: result.rows });
     } catch (err) { next(err); }
@@ -946,7 +947,7 @@ async function bootstrap() {
                   (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) AS distance_km,
                   'pharmacy' AS result_type
            FROM pharmacies.pharmacies p
-           WHERE p.status = 'active'
+           WHERE p.status IN ('active', 'inactive')
              AND (p.name ILIKE $1 OR p.name_ar ILIKE $1)
              AND (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) < $4::float
            ORDER BY distance_km ASC LIMIT 5`,
