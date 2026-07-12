@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { CalendarDays, Clock, Stethoscope, Trash2, CheckCircle, XCircle, AlertCircle, RefreshCw, Star, Bell, BellOff, ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { CalendarDays, Clock, Stethoscope, Trash2, CheckCircle, XCircle, AlertCircle, RefreshCw, Star, Bell, BellOff, ChevronDown, ChevronUp, Plus, CalendarClock, X } from 'lucide-react';
 
 const RATING_CATEGORIES = [
   { key: 'cleanliness',    label: 'نظافة العيادة',                                      emoji: '🏥' },
@@ -16,6 +16,13 @@ const RATING_CATEGORIES = [
 const AUTH_API  = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
+const NOTIF_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
+
+const PT_RESCHEDULE_REASONS = ['ظرف طارئ', 'تعارض مع موعد آخر', 'سفر', 'طلب الطبيب', 'أخرى'];
+
+function fmt(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 
 const STATUS_STYLE: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
@@ -44,6 +51,8 @@ export default function AppointmentsPage() {
   const [ratingDone, setRatingDone] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [rescheduleFor, setRescheduleFor] = useState<{ b: any; newDate: string; reason: string; customReason: string } | null>(null);
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
   const [reminderMap, setReminderMap] = useState<Record<string, { h24: boolean; h6: boolean; custom: boolean }>>({});
   // customMin per booking id (default 30 min)
   const [customMin, setCustomMin] = useState<Record<string, number>>({});
@@ -143,7 +152,7 @@ export default function AppointmentsPage() {
 
       // Fetch all approved doctors
       const [reqRes, authRes] = await Promise.all([
-        fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${PHARM_API}/admin-requests`, { headers: (() => { try { const t = JSON.parse(localStorage.getItem('mediflow-auth')||'{}').state?.accessToken||''; return {'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})}; } catch { return {'Content-Type':'application/json'}; } })() }).then(r => r.json()).catch(() => ({ data: [] })),
         fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const authUsers: any[] = authRes.data || authRes.users || [];
@@ -214,10 +223,41 @@ export default function AppointmentsPage() {
     syncFromAPI();
   }, []);
 
-  const cancelBooking = (id: string) => {
+  const cancelBooking = async (id: string, b?: any) => {
+    // Update locally first (instant feedback)
+    const target  = b || bookings.find(item => item.id === id);
     const updated = bookings.map(b => b.id === id ? { ...b, status: 'cancelled' } : b);
     setBookings(updated);
     localStorage.setItem('mediflow-my-bookings', JSON.stringify(updated));
+
+    if (!target) return;
+
+    // For API-sourced bookings: patch the backend + notify doctor
+    if (target.fromAPI && target.doctorAuthId) {
+      // Patch appointment status to cancelled
+      await fetch(`${APPT_API}/${target.doctorAuthId}/bookings/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch(() => {});
+
+      // Notify doctor
+      await fetch(NOTIF_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portalType: 'doctor',
+          recipientId: target.doctorAuthId,
+          senderName: target.patientName || 'المريض',
+          message: [
+            `❌ إلغاء موعد`,
+            `المريض: ${target.patientName || '—'}`,
+            `التاريخ: ${target.date}`,
+            target.prefTime ? `الوقت: ${target.prefTime}` : '',
+          ].filter(Boolean).join('\n'),
+        }),
+      }).catch(() => {});
+    }
   };
 
   const deleteBooking = (id: string) => {
@@ -227,6 +267,42 @@ export default function AppointmentsPage() {
     // Also remove from reminders
     const reminders = JSON.parse(localStorage.getItem('mediflow-appt-reminders') || '[]');
     localStorage.setItem('mediflow-appt-reminders', JSON.stringify(reminders.filter((r: any) => r.id !== id)));
+  };
+
+  const doReschedule = async () => {
+    if (!rescheduleFor) return;
+    const { b, newDate, reason, customReason } = rescheduleFor;
+    const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
+    if (!newDate || !finalReason) return;
+    setRescheduleSaving(true);
+    const oldDate = b.date;
+    const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
+    // Patch API for API-sourced bookings
+    if (b.fromAPI && b.doctorAuthId && b.id) {
+      await fetch(`${APPT_API}/${b.doctorAuthId}/bookings/${b.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
+      }).catch(() => {});
+      // Notify doctor
+      await fetch(NOTIF_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portalType: 'doctor',
+          recipientId: b.doctorAuthId,
+          senderName: b.patientName || 'المريض',
+          message: `📅 طلب تغيير موعد\nالمريض: ${b.patientName}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}`,
+        }),
+      }).catch(() => {});
+    }
+    // Update localStorage
+    const all = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
+    const updated = all.map((item: any) => item.id === b.id ? { ...item, date: newDate, notes: updatedNotes } : item);
+    localStorage.setItem('mediflow-my-bookings', JSON.stringify(updated));
+    setBookings(updated);
+    setRescheduleSaving(false);
+    setRescheduleFor(null);
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -314,7 +390,7 @@ export default function AppointmentsPage() {
               <div className="space-y-3">
                 {grouped[date].map(b => {
                   const Icon = STATUS_ICON[b.status] || AlertCircle;
-                  const isPast = b.date < today;
+                  const isPast = b.date < today || b.status === 'completed';
                   return (
                     <div key={b.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
                       <button className="w-full p-4 text-right" onClick={() => setExpandedId(expandedId === b.id ? null : b.id)}>
@@ -364,8 +440,14 @@ export default function AppointmentsPage() {
 
                           {/* Actions */}
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
+                            {!isPast && (b.status === 'pending' || b.status === 'confirmed') && (
+                              <button onClick={(e) => { e.stopPropagation(); const nextDay = new Date(b.date + 'T00:00:00'); nextDay.setDate(nextDay.getDate() + 1); const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); const defaultDate = fmt(nextDay > tomorrow ? nextDay : tomorrow); setRescheduleFor({ b, newDate: defaultDate, reason: PT_RESCHEDULE_REASONS[0], customReason: '' }); }}
+                                className="text-xs font-semibold border border-amber-300 text-amber-600 px-3 py-1.5 rounded-xl hover:bg-amber-50 transition-colors flex items-center gap-1">
+                                <CalendarClock className="w-3.5 h-3.5" /> تغيير الموعد
+                              </button>
+                            )}
                             {!isPast && b.status === 'pending' && (
-                              <button onClick={(e) => { e.stopPropagation(); cancelBooking(b.id); }}
+                              <button onClick={(e) => { e.stopPropagation(); cancelBooking(b.id, b); }}
                                 className="text-xs text-red-500 font-medium border border-red-200 px-3 py-1.5 rounded-xl hover:bg-red-50 transition-colors">
                                 إلغاء الموعد
                               </button>
@@ -449,6 +531,61 @@ export default function AppointmentsPage() {
           );
         })}
       </div>
+
+      {/* Reschedule modal */}
+      {rescheduleFor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => !rescheduleSaving && setRescheduleFor(null)}>
+          <div className="bg-white rounded-t-3xl w-full" dir="rtl" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mt-4 mb-4" />
+            <div className="flex items-center justify-between px-5 pb-3 border-b">
+              <div className="flex items-center gap-2">
+                <CalendarClock className="w-5 h-5 text-amber-500" />
+                <p className="font-bold text-gray-900">تغيير الموعد</p>
+              </div>
+              <button onClick={() => setRescheduleFor(null)} className="p-2 hover:bg-gray-100 rounded-xl"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-sm text-sky-800">
+                الموعد الحالي: <span className="font-bold">{new Date(rescheduleFor.b.date + 'T00:00:00').toLocaleDateString('ar-IQ', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                <span className="mx-2">·</span>{rescheduleFor.b.doctorName}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">التاريخ الجديد</label>
+                <input type="date" value={rescheduleFor.newDate} min={fmt(new Date())}
+                  onChange={e => setRescheduleFor(r => r ? { ...r, newDate: e.target.value } : r)}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${rescheduleFor.newDate === rescheduleFor.b.date ? 'border-red-300 bg-red-50' : 'border-gray-300'}`} />
+                {rescheduleFor.newDate === rescheduleFor.b.date && (
+                  <p className="text-xs text-red-500 mt-1">يجب اختيار تاريخ مختلف عن الموعد الحالي</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">سبب التغيير</label>
+                <div className="flex flex-wrap gap-2">
+                  {PT_RESCHEDULE_REASONS.map(r => (
+                    <button key={r} onClick={() => setRescheduleFor(prev => prev ? { ...prev, reason: r } : prev)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border-2 transition-all ${rescheduleFor.reason === r ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+                {rescheduleFor.reason === 'أخرى' && (
+                  <input value={rescheduleFor.customReason} onChange={e => setRescheduleFor(r => r ? { ...r, customReason: e.target.value } : r)}
+                    placeholder="اكتب سبب التغيير..."
+                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                )}
+              </div>
+            </div>
+            <div className="px-5 pb-10 flex gap-3">
+              <button onClick={() => setRescheduleFor(null)}
+                className="flex-1 border border-gray-300 py-3 rounded-2xl text-sm font-medium text-gray-700">إلغاء</button>
+              <button onClick={doReschedule} disabled={rescheduleSaving || !rescheduleFor.newDate || rescheduleFor.newDate === rescheduleFor.b.date || (rescheduleFor.reason === 'أخرى' && !rescheduleFor.customReason.trim())}
+                className="flex-1 bg-amber-400 hover:bg-amber-500 disabled:opacity-50 text-white py-3 rounded-2xl text-sm font-bold transition-colors">
+                {rescheduleSaving ? 'جاري...' : 'تأكيد التغيير'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rating modal */}
       {ratingFor && (
