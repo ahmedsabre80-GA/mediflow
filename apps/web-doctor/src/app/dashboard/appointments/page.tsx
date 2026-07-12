@@ -777,7 +777,7 @@ function AppointmentsContent() {
       dates.map(date =>
         fetch(`${API}/${doctorId}/bookings?date=${date}`)
           .then(r => r.json())
-          .then(d => (d.data||[]).map((b:any) => ({ ...b, appointment_date:date })))
+          .then(d => (d.data||[]).map((b:any) => ({ ...b, appointment_date:date, status: b.status || 'pending' })))
           .catch(()=>[])
       )
     );
@@ -1123,7 +1123,7 @@ function AppointmentsContent() {
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_STYLE[b.status]||STATUS_STYLE.pending}`}>
-                          {STATUS_LABEL[b.status]||b.status}
+                          {STATUS_LABEL[b.status]||b.status||'بانتظار التأكيد'}
                         </span>
                         <BookingActions b={b}
                           onStatusChange={(id,s) => setAllBookings(prev=>prev.map(x=>x.id===id?{...x,status:s}:x))} />
