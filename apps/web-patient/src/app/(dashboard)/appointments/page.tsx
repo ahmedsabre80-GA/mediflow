@@ -196,11 +196,29 @@ export default function AppointmentsPage() {
         }
       }));
 
+      // Deduplicate API bookings: same doctor+date → keep only the latest (highest createdAt), prefer non-cancelled
+      const apiDeduped: any[] = [];
+      for (const bk of allApiBookings) {
+        const key = `${bk.doctorAuthId}__${bk.date}`;
+        const existing = apiDeduped.findIndex(x => `${x.doctorAuthId}__${x.date}` === key);
+        if (existing === -1) {
+          apiDeduped.push(bk);
+        } else {
+          const ex = apiDeduped[existing];
+          // Prefer non-cancelled; if tie prefer newer createdAt
+          const exCancelled = ex.status === 'cancelled';
+          const bkCancelled = bk.status === 'cancelled';
+          if (exCancelled && !bkCancelled) { apiDeduped[existing] = bk; }
+          else if (!exCancelled && bkCancelled) { /* keep ex */ }
+          else if (new Date(bk.createdAt || 0) > new Date(ex.createdAt || 0)) { apiDeduped[existing] = bk; }
+        }
+      }
+
       // Merge: API bookings are authoritative.
       // Drop local entries that match an API booking by doctorName+date+patientName
       // (they have different IDs so ID-only check would duplicate them).
       const local = loadLocal();
-      const merged = [...allApiBookings];
+      const merged = [...apiDeduped];
       for (const lb of local) {
         if (lb.fromAPI) continue; // old API-sourced entry, skip
         const isDuplicate = merged.some(a =>

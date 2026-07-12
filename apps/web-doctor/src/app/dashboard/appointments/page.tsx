@@ -636,13 +636,54 @@ function AppointmentsContent() {
     if (!newDate || !finalReason) return;
     setRescheduleSaving(true);
     const oldDate = b.appointment_date || selectedDate;
-    const updatedNotes = [b.notes, `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
-    await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
-      method: 'PATCH',
+    const updatedNotes = [
+      // Strip old reschedule notes, keep original patient notes only
+      (b.notes || '').replace(/\[تم تغيير الموعد[^\]]*\]/g, '').trim(),
+      `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`,
+    ].filter(Boolean).join('\n');
+
+    // Strategy: cancel old booking → create new one on the new date.
+    // This works without any backend change (PATCH only-status limitation bypassed).
+    let success = false;
+
+    // Step 1: create new booking first (so we don't cancel unless creation succeeds)
+    const createRes = await fetch(`${API}/${doctorId}/bookings`, {
+      method: 'POST',
       headers: notifHeaders(),
-      body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
-    }).catch(() => {});
-    // Notify patient — use all available ID sources
+      body: JSON.stringify({
+        patient_name:  b.patient_name  || b.patientName,
+        patient_phone: b.patient_phone || b.patientPhone || '',
+        patient_email: b.patient_email || b.patientEmail || '',
+        appointment_date: newDate,
+        notes: updatedNotes,
+      }),
+    }).catch(() => null);
+
+    if (createRes?.ok) {
+      // Step 2: cancel old booking silently
+      await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
+        method: 'PATCH',
+        headers: notifHeaders(),
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch(() => {});
+      success = true;
+    } else {
+      // Fallback: try direct PATCH (works once backend is deployed)
+      const patchRes = await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
+        method: 'PATCH',
+        headers: notifHeaders(),
+        body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
+      }).catch(() => null);
+      success = !!patchRes?.ok;
+    }
+
+    if (!success) {
+      showToast('❌ فشل تغيير الموعد — تحقق من توفر الطبيب في ذلك اليوم');
+      setRescheduleSaving(false);
+      return;
+    }
+
+    // Notify patient
     const emailKey = (b.patient_email || b.patientEmail || '').toLowerCase();
     const notesMatch = String(b.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
     const patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
@@ -654,8 +695,8 @@ function AppointmentsContent() {
         body: JSON.stringify({
           portalType: 'patient',
           recipientId: patientId,
-          senderName: doctorName,
-          message: `📅 تم تغيير موعدك\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى التأكد من الموعد الجديد.`,
+          senderName: `د. ${doctorName}`,
+          message: `📅 تم تغيير موعدك\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة مواعيدك للتأكيد.`,
         }),
       }).catch(() => {});
     }
