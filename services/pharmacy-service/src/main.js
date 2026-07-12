@@ -691,7 +691,7 @@ async function bootstrap() {
   });
 
   // ─── ADMIN ENDPOINTS ──────────────────────────────────────────────────
-  router.get('/active', authenticate, async (_req, res, next) => {
+  router.get('/active', async (_req, res, next) => {
     try {
       const result = await pool.query(`
         SELECT id, name, name_ar, phone, city, address, status,

@@ -3,12 +3,13 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Calendar, Clock, Users, CheckCircle, XCircle, Trash2, Plus, X, RefreshCw,
   ChevronLeft, ChevronRight, ClipboardCheck, FileText, PlusCircle, Phone, CalendarPlus,
-  UserCheck, Stethoscope, AlertCircle, Eye } from 'lucide-react';
+  UserCheck, Stethoscope, AlertCircle, Eye, CalendarClock } from 'lucide-react';
 import { PrescriptionPreview } from '@/components/PrescriptionPreview';
 
 const API        = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
 const NOTIF_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
-const PHARM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin/all';
+const PHARM_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/active';
+const AUTH_API   = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const EV_KEY     = 'mediflow-expected-visitors';
 
 function drToken(): string {
@@ -129,6 +130,8 @@ function AppointmentsContent() {
   const [tab, setTab]             = useState<'calendar'|'all'|'schedule'|'patients'|'expected'>(initTab);
   const [allBookings, setAllBookings] = useState<any[]>([]);
   const [allLoading, setAllLoading]   = useState(false);
+  // email → patient auth user ID — built from bookings that have patient_id
+  const [patientIdMap, setPatientIdMap] = useState<Record<string, string>>({});
   const [weekOffset, setWeekOffset]   = useState(0);
   const [selectedDate, setSelectedDate] = useState(fmt(new Date()));
   const [bookings, setBookings]   = useState<any[]>([]);
@@ -181,6 +184,10 @@ function AppointmentsContent() {
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
+  // Reschedule modal
+  const [rescheduleFor, setRescheduleFor] = useState<{ b: any; newDate: string; reason: string; customReason: string } | null>(null);
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+
   // Booking open time setting
   const [bookingOpenMode, setBookingOpenMode] = useState<'general'|'per-day'|'always'>('general');
   const [bookingOpenGeneral, setBookingOpenGeneral] = useState('08:00');
@@ -189,7 +196,7 @@ function AppointmentsContent() {
 
   // Booking modal (add / complete expected visitor)
   const [showAdd, setShowAdd]   = useState(false);
-  const [addForm, setAddForm]   = useState({ patient_name:'', patient_phone:'', patient_email:'', appointment_date: fmt(new Date()), notes:'' });
+  const [addForm, setAddForm]   = useState({ patient_name:'', patient_phone:'', patient_email:'', appointment_date: fmt(new Date()), appointment_time:'', notes:'' });
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError]   = useState('');
   const [fromEV, setFromEV]       = useState<string|null>(null); // expectedVisitor id if booking from EV
@@ -262,14 +269,27 @@ function AppointmentsContent() {
     setSchedule(r.data || []);
   }, [doctorId]);
 
+  const buildPatientIdMap = (bks: any[]) => {
+    const map: Record<string, string> = {};
+    for (const b of bks) {
+      const email = b.patient_email || b.patientEmail || '';
+      const pid   = b.patient_id   || b.patientId   || '';
+      if (email && pid) map[email.toLowerCase()] = String(pid);
+    }
+    setPatientIdMap(prev => ({ ...prev, ...map }));
+  };
+
   const loadBookings = useCallback(async () => {
     if (!doctorId) return;
     setLoading(true);
     const r  = await fetch(`${API}/${doctorId}/bookings?date=${selectedDate}`).then(r => r.json()).catch(() => ({ data:[] }));
-    setBookings(r.data || []);
+    const bks = r.data || [];
+    setBookings(bks);
+    buildPatientIdMap(bks);
     const av = await fetch(`${API}/${doctorId}/availability?date=${selectedDate}`).then(r => r.json()).catch(() => null);
     setAvailability(av?.data || null);
     setLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctorId, selectedDate]);
 
   useEffect(() => { if (doctorId) { loadSchedule(); loadBookings(); } }, [doctorId, loadSchedule, loadBookings]);
@@ -387,7 +407,7 @@ function AppointmentsContent() {
       ...rxDrugs
         .filter(d => d.name.trim())
         .map((d, i) =>
-          `${i+1}. ${d.name}${d.dose?' - '+d.dose:''}${d.times?' | '+d.times:''}${d.duration?' | '+d.duration:''}${d.notes?' ('+d.notes+')':''}`
+          `${i+1}. ${d.name}${d.dose?' - '+d.dose+'mg':''}${d.times?' - '+d.times+' مرة/يوم':''}${d.duration?' - '+d.duration+' يوم':''}${d.notes?' ('+d.notes+')':''}`
         ),
       ...(enableRevisit && revisitDate ? ['', `موعد المراجعة: ${new Date(revisitDate+'T00:00:00').toLocaleDateString('ar-IQ',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`] : []),
     ];
@@ -564,6 +584,24 @@ function AppointmentsContent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     }).catch(()=>{});
+
+    // Send patient notification on confirm or cancel
+    if (status === 'confirmed' || status === 'cancelled') {
+      const booking = [...bookings, ...allBookings].find(b => String(b.id) === String(bookingId));
+      const patientId = booking?.patient_id || booking?.patientId || patientIdMap[(booking?.patient_email || '').toLowerCase()] || '';
+      if (patientId) {
+        const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
+        const msg = status === 'confirmed'
+          ? `✅ تم تأكيد موعدك\nالتاريخ: ${booking?.appointment_date || ''}\nمع الدكتور: ${doctorName}\n\nيمكنك مراجعة تفاصيل موعدك من قسم "مواعيدي".`
+          : `❌ تم إلغاء موعدك\nالتاريخ: ${booking?.appointment_date || ''}\nمع الدكتور: ${doctorName}\n\nيرجى التواصل معنا لإعادة الحجز.`;
+        fetch(NOTIF_API, {
+          method: 'POST',
+          headers: notifHeaders(),
+          body: JSON.stringify({ portalType: 'patient', recipientId: patientId, senderName: `د. ${doctorName}`, message: msg }),
+        }).catch(() => {});
+      }
+    }
+
     loadBookings();
     showToast(status==='confirmed' ? '✅ تم تأكيد الموعد' : status==='completed' ? '✅ تم إنهاء الفحص' : '❌ تم إلغاء الموعد');
   };
@@ -579,34 +617,139 @@ function AppointmentsContent() {
     showToast('🗑️ تم حذف الموعد');
   };
 
+  const DR_RESCHEDULE_REASONS = ['طلب المريض', 'انشغال الطبيب', 'ظروف طارئة', 'إعادة جدولة روتينية', 'أخرى'];
+
+  const doReschedule = async () => {
+    if (!rescheduleFor) return;
+    const { b, newDate, reason, customReason } = rescheduleFor;
+    const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
+    if (!newDate || !finalReason) return;
+    setRescheduleSaving(true);
+    const oldDate = b.appointment_date || selectedDate;
+    const updatedNotes = [b.notes, `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
+    await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
+    }).catch(() => {});
+    // Notify patient
+    const patientId = b.patient_id || b.patientId || '';
+    const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
+    if (patientId) {
+      await fetch(NOTIF_API, {
+        method: 'POST',
+        headers: notifHeaders(),
+        body: JSON.stringify({
+          portalType: 'patient',
+          recipientId: patientId,
+          senderName: doctorName,
+          message: `📅 تم تغيير موعدك\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى التأكد من الموعد الجديد.`,
+        }),
+      }).catch(() => {});
+    }
+    setRescheduleSaving(false);
+    setRescheduleFor(null);
+    loadBookings();
+    if (tab === 'all') loadAllBookings();
+    showToast(`✅ تم تغيير الموعد إلى ${newDate}`);
+  };
+
   const addBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError('');
     setAddSaving(true);
+
+    // Embed time in notes so patient portal can extract it
+    const timeNote  = addForm.appointment_time ? `الوقت المفضل: ${addForm.appointment_time}` : '';
+    const fullNotes = [timeNote, addForm.notes].filter(Boolean).join('\n');
+    const payload   = { ...addForm, notes: fullNotes };
+    delete (payload as any).appointment_time;
+
     const res = await fetch(`${API}/${doctorId}/bookings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(addForm),
+      body: JSON.stringify(payload),
     });
     const d = await res.json();
     setAddSaving(false);
     if (!res.ok) { setAddError(d?.error?.title || 'فشل الحجز'); return; }
-    // If booking came from expected visitor, mark as booked
+
+    // Mark expected visitor as booked
     if (fromEV) {
       const ev = getEV().map(v => v.id === fromEV ? { ...v, booked:true } : v);
-      saveEV(ev);
-      loadEV();
-      setFromEV(null);
+      saveEV(ev); loadEV(); setFromEV(null);
     }
+
+    // Notify patient — try multiple methods to resolve their auth user ID
+    const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
+    const notifMsg = [
+      `📅 تم حجز موعدك`,
+      `التاريخ: ${addForm.appointment_date}`,
+      addForm.appointment_time ? `الوقت: ${addForm.appointment_time}` : '',
+      `الطبيب: د. ${doctorName}`,
+      addForm.notes ? `ملاحظات: ${addForm.notes}` : '',
+      `\nيمكنك مراجعة موعدك أو تغييره من قسم "مواعيدي" في بوابة المريض.`,
+    ].filter(Boolean).join('\n');
+
+    const sendPatientNotif = async (recipientId: string) => {
+      await fetch(NOTIF_API, {
+        method: 'POST',
+        headers: notifHeaders(),
+        body: JSON.stringify({ portalType: 'patient', recipientId, senderName: `د. ${doctorName}`, message: notifMsg }),
+      }).catch(() => {});
+    };
+
+    if (addForm.patient_email) {
+      const emailKey = addForm.patient_email.toLowerCase();
+
+      // 1. Check booking response — backend may include patient_id when patient is registered
+      const patientIdFromBooking = d?.data?.patient_id || d?.data?.patientId || d?.patient_id || '';
+
+      // 2. Check map built from existing bookings (works when patient previously booked via patient portal)
+      const patientIdFromMap = patientIdMap[emailKey] || '';
+
+      const resolvedId = String(patientIdFromBooking || patientIdFromMap);
+
+      if (resolvedId) {
+        await sendPatientNotif(resolvedId);
+      } else {
+        // 3. Fallback: try auth service endpoints (may fail with doctor token — silent)
+        let patientId = '';
+        const endpoints = [
+          `${AUTH_API}/auth/admin/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
+          `${AUTH_API}/auth/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
+          `${AUTH_API}/users?email=${encodeURIComponent(addForm.patient_email)}&limit=5`,
+        ];
+        for (const url of endpoints) {
+          if (patientId) break;
+          try {
+            const r = await fetch(url, { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${drToken()}` } });
+            if (r.ok) {
+              const j = await r.json();
+              const users: any[] = j.data || j.users || (Array.isArray(j) ? j : []);
+              const match = users.find((u: any) => u.email?.toLowerCase() === emailKey);
+              if (match?.id) patientId = String(match.id);
+            }
+          } catch {}
+        }
+        if (patientId) {
+          // Cache for future use
+          setPatientIdMap(prev => ({ ...prev, [emailKey]: patientId }));
+          await sendPatientNotif(patientId);
+        }
+      }
+    }
+
     setShowAdd(false);
-    setAddForm({ patient_name:'', patient_phone:'', patient_email:'', appointment_date:fmt(new Date()), notes:'' });
+    setAddForm({ patient_name:'', patient_phone:'', patient_email:'', appointment_date:fmt(new Date()), appointment_time:'', notes:'' });
     if (addForm.appointment_date === selectedDate) loadBookings();
-    showToast('✅ تم إضافة الموعد');
+    if (tab === 'all') loadAllBookings();
+    showToast('✅ تم إضافة الموعد وإشعار المريض');
   };
 
   const openBookingFromEV = (ev: ExpectedVisitor) => {
     setFromEV(ev.id);
-    setAddForm({ patient_name: ev.patientName, patient_phone: ev.patientPhone, patient_email: ev.patientEmail, appointment_date: fmt(new Date()), notes: `مراجعة — التشخيص السابق: ${ev.diagnosis || '—'}` });
+    setAddForm({ patient_name: ev.patientName, patient_phone: ev.patientPhone, patient_email: ev.patientEmail, appointment_date: ev.revisitDate || fmt(new Date()), appointment_time:'', notes: `مراجعة — التشخيص السابق: ${ev.diagnosis || '—'}` });
     setAddError('');
     setShowAdd(true);
   };
@@ -638,7 +781,9 @@ function AppointmentsContent() {
           .catch(()=>[])
       )
     );
-    setAllBookings(results.flat().sort((a,b) => a.appointment_date.localeCompare(b.appointment_date)));
+    const flat = results.flat().sort((a,b) => a.appointment_date.localeCompare(b.appointment_date));
+    setAllBookings(flat);
+    buildPatientIdMap(flat);
     setAllLoading(false);
   }, [doctorId]);
 
@@ -793,6 +938,14 @@ function AppointmentsContent() {
             </button>
           </div>
         )}
+        {(b.status === 'pending' || b.status === 'confirmed') && (
+          <button
+            onClick={() => setRescheduleFor({ b, newDate: b.appointment_date || selectedDate, reason: DR_RESCHEDULE_REASONS[0], customReason: '' })}
+            title="تغيير الموعد"
+            className="p-1.5 text-amber-500 hover:bg-amber-50 rounded-lg">
+            <CalendarClock className="w-4 h-4" />
+          </button>
+        )}
         <button onClick={() => confirmDelete(b.id)} className="p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 rounded-lg"><Trash2 className="w-4 h-4" /></button>
       </div>
     );
@@ -823,7 +976,7 @@ function AppointmentsContent() {
           ))}
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setFromEV(null); setAddForm({patient_name:'',patient_phone:'',patient_email:'',appointment_date:fmt(new Date()),notes:''}); setShowAdd(true); }}
+          <button onClick={() => { setFromEV(null); setAddForm({patient_name:'',patient_phone:'',patient_email:'',appointment_date:fmt(new Date()),appointment_time:'',notes:''}); setShowAdd(true); }}
             className="flex items-center gap-2 bg-teal-500 hover:bg-teal-600 text-white text-sm font-medium px-4 py-2 rounded-xl">
             <Plus className="w-4 h-4" /> إضافة موعد
           </button>
@@ -1019,7 +1172,7 @@ function AppointmentsContent() {
                         <Phone className="w-3.5 h-3.5" /> اتصال
                       </a>
                     )}
-                    <button onClick={() => { setFromEV(null); setAddForm({patient_name:p.name,patient_phone:p.phone,patient_email:p.email,appointment_date:fmt(new Date()),notes:''}); setShowAdd(true); }}
+                    <button onClick={() => { setFromEV(null); setAddForm({patient_name:p.name,patient_phone:p.phone,patient_email:p.email,appointment_date:fmt(new Date()),appointment_time:'',notes:''}); setShowAdd(true); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold rounded-lg">
                       <Plus className="w-3.5 h-3.5" /> حجز
                     </button>
@@ -1408,11 +1561,19 @@ function AppointmentsContent() {
                           placeholder="اسم الدواء *"
                           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
                         <div className="grid grid-cols-3 gap-2">
-                          {(['dose','times','duration'] as const).map((field,fi) => (
-                            <input key={field} value={drug[field]}
-                              onChange={e=>setRxDrugs(d=>d.map((x,idx)=>idx===i?{...x,[field]:e.target.value}:x))}
-                              placeholder={['الجرعة','التكرار','المدة'][fi]}
-                              className="px-2.5 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                          {([
+                            { field: 'dose',     placeholder: 'الجرعة',  unit: 'mg' },
+                            { field: 'times',    placeholder: 'التكرار', unit: 'مرة/يوم' },
+                            { field: 'duration', placeholder: 'المدة',   unit: 'يوم' },
+                          ] as const).map(({ field, placeholder, unit }) => (
+                            <div key={field} className="relative">
+                              <input value={drug[field]}
+                                onChange={e=>setRxDrugs(d=>d.map((x,idx)=>idx===i?{...x,[field]:e.target.value}:x))}
+                                placeholder={placeholder}
+                                type="number" min="0"
+                                className="w-full pl-12 pr-2.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">{unit}</span>
+                            </div>
                           ))}
                         </div>
                         <input value={drug.notes}
@@ -1466,6 +1627,7 @@ function AppointmentsContent() {
                   date={today}
                   rxId={rxId}
                   diagnosis={rxDiagnosis}
+                  revisitDate={enableRevisit ? revisitDate : undefined}
                 />
                 </div>
                 {(!rxDrProfile.name || !rxDrProfile.degree || !rxDrProfile.certNumber) && (
@@ -1647,6 +1809,56 @@ function AppointmentsContent() {
         </div>
       )}
 
+      {/* ── RESCHEDULE MODAL ── */}
+      {rescheduleFor && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" dir="rtl">
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <CalendarClock className="w-5 h-5 text-amber-500" />
+                <p className="font-bold text-gray-900">تغيير الموعد</p>
+              </div>
+              <button onClick={() => setRescheduleFor(null)} className="p-2 hover:bg-gray-100 rounded-xl"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                المريض: <span className="font-bold">{rescheduleFor.b.patient_name}</span>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">التاريخ الجديد</label>
+                <input type="date" value={rescheduleFor.newDate} min={fmt(new Date())}
+                  onChange={e => setRescheduleFor(r => r ? { ...r, newDate: e.target.value } : r)}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">سبب التغيير</label>
+                <div className="flex flex-wrap gap-2">
+                  {DR_RESCHEDULE_REASONS.map(r => (
+                    <button key={r} onClick={() => setRescheduleFor(prev => prev ? { ...prev, reason: r } : prev)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border-2 transition-all ${rescheduleFor.reason === r ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+                {rescheduleFor.reason === 'أخرى' && (
+                  <input value={rescheduleFor.customReason} onChange={e => setRescheduleFor(r => r ? { ...r, customReason: e.target.value } : r)}
+                    placeholder="اكتب سبب التغيير..."
+                    className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                )}
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button onClick={() => setRescheduleFor(null)}
+                className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">إلغاء</button>
+              <button onClick={doReschedule} disabled={rescheduleSaving || !rescheduleFor.newDate || (rescheduleFor.reason === 'أخرى' && !rescheduleFor.customReason.trim())}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-bold transition-colors">
+                {rescheduleSaving ? 'جاري...' : 'تأكيد التغيير'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── DELETE CONFIRMATION ── */}
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1751,7 +1963,7 @@ function AppointmentsContent() {
             </div>
             {fromEV && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-4 text-xs text-amber-700">
-                بيانات المريض مُعبأة تلقائياً من وصفته السابقة — اختر التاريخ واضغط تأكيد
+                بيانات المريض مُعبأة تلقائياً من وصفته السابقة — اختر التاريخ والوقت واضغط تأكيد
               </div>
             )}
             {addError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{addError}</div>}
@@ -1762,17 +1974,23 @@ function AppointmentsContent() {
                   placeholder="الاسم الكامل" required readOnly={!!fromEV}
                   className={`w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${fromEV?'bg-gray-50':''}`} />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف</label>
+                <input type="tel" dir="ltr" value={addForm.patient_phone} onChange={e=>setAddForm(f=>({...f,patient_phone:e.target.value}))}
+                  readOnly={!!fromEV}
+                  className={`w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${fromEV?'bg-gray-50':''}`} />
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف</label>
-                  <input type="tel" dir="ltr" value={addForm.patient_phone} onChange={e=>setAddForm(f=>({...f,patient_phone:e.target.value}))}
-                    readOnly={!!fromEV}
-                    className={`w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${fromEV?'bg-gray-50':''}`} />
-                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ الموعد *</label>
                   <input type="date" value={addForm.appointment_date} onChange={e=>setAddForm(f=>({...f,appointment_date:e.target.value}))}
                     required autoFocus={!!fromEV}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">وقت الموعد *</label>
+                  <input type="time" value={addForm.appointment_time} onChange={e=>setAddForm(f=>({...f,appointment_time:e.target.value}))}
+                    required
                     className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
                 </div>
               </div>
