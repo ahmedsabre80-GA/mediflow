@@ -28,24 +28,17 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'بيانات الدخول غير صحيحة');
       const userId = data.data.userId;
-      // Check approval status
-      let isApproved = false;
-      try {
-        const reqRes = await fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&requester_id=${userId}`);
-        const reqData = await reqRes.json();
-        const record = reqData.data?.[0];
-        isApproved = record?.status === 'approved';
-      } catch {}
+      const accessToken = data.data.accessToken;
       localStorage.setItem('mediflow-auth', JSON.stringify({
         state: {
-          accessToken: data.data.accessToken,
+          accessToken,
           refreshToken: data.data.refreshToken,
           user: { id: userId, role: data.data.role },
           isAuthenticated: true,
-          isApproved,
+          isApproved: true,
         }
       }));
-      router.push(isApproved ? '/dashboard' : '/pending');
+      router.push('/dashboard');
     } catch (err: any) {
       setError(err.message);
     } finally {

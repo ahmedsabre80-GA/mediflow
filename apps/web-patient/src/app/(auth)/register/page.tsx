@@ -29,32 +29,16 @@ export default function RegisterPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.title || 'فشل إنشاء الحساب');
       const userId = data.data.userId;
-      // Create pending approval request in admin portal
-      await fetch(`${PHARMACY_API}/admin-requests`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          portalType: 'patient',
-          requesterId: userId,
-          requesterName: `${form.firstName} ${form.lastName}`,
-          requesterEntity: form.email,
-          actionType: 'register',
-          employeeName: `${form.firstName} ${form.lastName}`,
-          employeeEmail: form.email,
-          employeeRole: 'patient',
-          reason: 'طلب تسجيل مريض جديد',
-        }),
-      }).catch(() => {});
       localStorage.setItem('mediflow-auth', JSON.stringify({
         state: {
           accessToken: data.data.accessToken,
           refreshToken: data.data.refreshToken,
           user: { id: userId, role: 'patient', name: `${form.firstName} ${form.lastName}` },
           isAuthenticated: true,
-          isApproved: false,
+          isApproved: true,
         }
       }));
-      router.push('/pending');
+      router.push('/dashboard');
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };
