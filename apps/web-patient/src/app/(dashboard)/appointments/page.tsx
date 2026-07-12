@@ -234,17 +234,19 @@ export default function AppointmentsPage() {
 
     // For API-sourced bookings: patch the backend + notify doctor
     if (target.fromAPI && target.doctorAuthId) {
+      const tok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+      const hdrs = { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
       // Patch appointment status to cancelled
       await fetch(`${APPT_API}/${target.doctorAuthId}/bookings/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs,
         body: JSON.stringify({ status: 'cancelled' }),
       }).catch(() => {});
 
       // Notify doctor
       await fetch(NOTIF_API, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs,
         body: JSON.stringify({
           portalType: 'doctor',
           recipientId: target.doctorAuthId,
@@ -277,22 +279,26 @@ export default function AppointmentsPage() {
     setRescheduleSaving(true);
     const oldDate = b.date;
     const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
+    // Helper to get patient auth token
+    const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+    const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
+
     // Patch API for API-sourced bookings
     if (b.fromAPI && b.doctorAuthId && b.id) {
       await fetch(`${APPT_API}/${b.doctorAuthId}/bookings/${b.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
+        headers: authHeaders(),
+        body: JSON.stringify({ appointment_date: newDate, status: 'pending', notes: updatedNotes }),
       }).catch(() => {});
       // Notify doctor
       await fetch(NOTIF_API, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           portalType: 'doctor',
           recipientId: b.doctorAuthId,
           senderName: b.patientName || 'المريض',
-          message: `📅 طلب تغيير موعد\nالمريض: ${b.patientName}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}`,
+          message: `📅 طلب تغيير موعد\nالمريض: ${b.patientName || 'المريض'}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة المواعيد وتأكيد الموعد الجديد.`,
         }),
       }).catch(() => {});
     }
