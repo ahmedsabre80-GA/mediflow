@@ -485,7 +485,7 @@ function AppointmentsContent() {
             portalType: 'pharmacy',
             recipientId: pharmRecipientId,
             senderName: rxDrProfile.name ? `د. ${rxDrProfile.name}` : 'الطبيب',
-            message: `💊 وصفة طبية جديدة\nالمريض: ${rxBooking.patient_name || '—'}\nمن الدكتور: ${rxDrProfile.name || 'الطبيب'}\n\n${rxText.split('\n').filter(l => !l.startsWith('موعد المراجعة')).join('\n').trimEnd()}`,
+            message: `💊 وصفة طبية جديدة\nالمريض: ${rxBooking.patient_name || '—'}\nمن الدكتور: ${rxDrProfile.name || 'الطبيب'}\n\n${rxText.split('\n').filter(l => !l.startsWith('موعد المراجعة')).join('\n').trimEnd()}[prescription_id:${rxId}][patient_id:${patientId}][delivery:pickup]`,
           }),
         });
         showToast(`✅ تم إرسال الوصفة إلى ${pharm?.name_ar || pharm?.name || 'الصيدلية'} وحفظها`);
