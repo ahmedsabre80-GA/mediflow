@@ -215,6 +215,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => { clearInterval(iv); window.removeEventListener('mediflow-rx-update', onRxUpdate); };
   }, [router, refresh]);
 
+  // Auto-logout after 30 minutes of inactivity
+  useEffect(() => {
+    const IDLE_MS = 30 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        ['pharmacy-token','pharmacy-refresh','pharmacy-id','pharmacy-name','pharmacy-role','pharmacy-permissions','pharmacy-staff-id','pharmacy-opening-hours']
+          .forEach(k => localStorage.removeItem(k));
+        router.push('/auth/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
+  }, [router]);
+
   // When a prescription notification is opened: fetch image + check claim status
   useEffect(() => {
     if (!selectedNotif) { setRxImage(null); setRxClaimedBy(null); return; }
@@ -223,7 +241,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // Fetch image
     setRxImage(null);
     setRxImageLoading(true);
-    fetch(`${PHARMACY_API}/prescriptions/${rx.id}/image`)
+    fetch(`${PHARMACY_API}/prescriptions/${rx.id}/image`, { headers: pharmAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         if (d?.data?.image_base64) {
@@ -245,7 +263,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     } catch {}
     setRxClaimedBy(null);
     setCheckingRxClaim(true);
-    fetch(`${PHARMACY_API}/prescriptions/${rx.id}`)
+    fetch(`${PHARMACY_API}/prescriptions/${rx.id}`, { headers: pharmAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         if (d?.data?.status === 'claimed') {

@@ -125,7 +125,7 @@ export default function OrdersPage() {
       const patientId = state?.user?.id;
       if (!patientId) { setLoading(false); return; }
 
-      const notifsRes = await fetch(`${PHARMACY_API}/portal-notifications?portalType=patient&recipientId=${patientId}`).then(r => r.json());
+      const notifsRes = await fetch(`${PHARMACY_API}/portal-notifications?portalType=patient&recipientId=${patientId}`, { headers: patientH() }).then(r => r.json());
       const cancelled = new Set(JSON.parse(localStorage.getItem(CANCELLED_KEY) || '[]'));
       const parsed = (notifsRes.data || []).map(parseNotif).filter(Boolean).filter((o: any) => !cancelled.has(o.id)) as Order[];
 

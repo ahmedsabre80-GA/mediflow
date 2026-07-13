@@ -51,9 +51,26 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
     validateToken();
     refresh();
     const iv    = setInterval(refresh, 30000);
-    const ivVal = setInterval(validateToken, 15 * 60 * 1000); // re-validate every 15 min
+    const ivVal = setInterval(validateToken, 15 * 60 * 1000);
     return () => { clearInterval(iv); clearInterval(ivVal); };
   }, [router, refresh, validateToken]);
+
+  // Auto-logout after 30 minutes of inactivity
+  useEffect(() => {
+    const IDLE_MS = 30 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        ['doctor-token','doctor-name','doctor-id','doctor-user-id'].forEach(k => localStorage.removeItem(k));
+        router.push('/auth/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
+  }, [router]);
 
   const unread = notifs.filter(n => !n.isRead).length;
 

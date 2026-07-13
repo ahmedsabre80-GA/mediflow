@@ -56,7 +56,7 @@ export default function ApprovalsPage() {
   const loadRequests = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/admin-requests`);
+      const r = await fetch(`${API}/admin-requests`, { headers: adminAuthHeaders() });
       const d = await r.json();
       if (d.success && Array.isArray(d.data)) {
         setRequests(d.data.map((req: any) => ({
@@ -89,7 +89,7 @@ export default function ApprovalsPage() {
     try {
       await fetch(`${API}/admin-requests/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminAuthHeaders(),
         body: JSON.stringify({ status: decision }),
       });
     } catch {}
@@ -105,13 +105,13 @@ export default function ApprovalsPage() {
 
   const deleteOne = async (id: string) => {
     setRequests(prev => prev.filter(r => r.id !== id));
-    try { await fetch(`${API}/admin-requests/${id}`, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${API}/admin-requests/${id}`, { method: 'DELETE', headers: adminAuthHeaders() }); } catch {}
   };
 
   const clearDecided = async () => {
     setRequests(prev => prev.filter(r => r.status === 'pending'));
     setClearConfirm(false);
-    try { await fetch(`${API}/admin-requests`, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${API}/admin-requests`, { method: 'DELETE', headers: adminAuthHeaders() }); } catch {}
     showToast('🗑️ تم مسح جميع القرارات المنجزة');
   };
 
@@ -140,7 +140,7 @@ export default function ApprovalsPage() {
       // Look up the pharmacy by email to get the correct DB ID
       const entityPortalType = resetTarget.portalType || 'pharmacy';
       if (entityPortalType === 'pharmacy') {
-        const allPh = await fetch(`${API}/pharmacies/admin/all`).then(r => r.json()).catch(() => ({ data: [] }));
+        const allPh = await fetch(`${API}/admin/all`, { headers: adminAuthHeaders() }).then(r => r.json()).catch(() => ({ data: [] }));
         const phList: any[] = allPh.data || allPh.pharmacies || [];
         const emailLower = resetEmail.trim().toLowerCase();
         const nameLower  = (resetTarget.requesterName || '').toLowerCase();
@@ -150,9 +150,9 @@ export default function ApprovalsPage() {
         );
         const pharmacyId = match?.id || resetTarget.requesterEntity;
         if (pharmacyId && pharmacyId !== '—') {
-          const patchRes = await fetch(`${API}/pharmacies/admin/${pharmacyId}/status`, {
+          const patchRes = await fetch(`${API}/admin/${pharmacyId}/status`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: adminAuthHeaders(),
             body: JSON.stringify({ status: 'active' }),
           });
           if (!patchRes.ok) showToast('⚠️ تم إعادة تعيين كلمة المرور لكن فشل تفعيل الحساب — فعّله يدوياً');
@@ -178,7 +178,7 @@ export default function ApprovalsPage() {
       // Mark request as done
       await fetch(`${API}/admin-requests/${resetTarget.id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminAuthHeaders(),
         body: JSON.stringify({ status: 'approved' }),
       }).catch(() => {});
       setRequests(prev => prev.map(r => r.id === resetTarget.id ? { ...r, status: 'approved' } : r));

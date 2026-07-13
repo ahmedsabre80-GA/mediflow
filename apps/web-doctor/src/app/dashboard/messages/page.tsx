@@ -46,11 +46,12 @@ export default function DoctorMessagesPage() {
 
   const loadSent = () => {
     setSentLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    const doctorId = typeof window !== 'undefined' ? localStorage.getItem('doctor-id') || '' : '';
+    fetch(`${PHARMACY_API}/portal-notifications?portalType=doctor-internal&recipientId=${doctorId}`, { headers: drH() })
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];
-        setSentMessages(all.filter(m => m.sender_name === senderName && m.portal_type === 'doctor-internal'));
+        setSentMessages(all.filter(m => m.sender_name === senderName));
       })
       .catch(() => {})
       .finally(() => setSentLoading(false));

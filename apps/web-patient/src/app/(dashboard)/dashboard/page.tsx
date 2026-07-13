@@ -52,28 +52,35 @@ export default function PatientDashboard() {
   const mapObj  = useRef<any>(null);
   const mapMark = useRef<any>(null);
 
-  // Load cached location on mount
+  // Load location on mount — cached first, GPS only if nothing saved
   useEffect(() => {
     const cachedLat = localStorage.getItem(LAT_KEY);
     const cachedLng = localStorage.getItem(LNG_KEY);
     if (cachedLat && cachedLng) {
-      setLat(Number(cachedLat)); setLng(Number(cachedLng)); setGpsReady(true);
+      // Use saved location immediately — no GPS auto-fire
+      setLat(Number(cachedLat));
+      setLng(Number(cachedLng));
+      setGpsReady(true);
     } else {
+      // No saved location at all — get GPS once and save it
       navigator.geolocation?.getCurrentPosition(
         pos => {
-          setLat(pos.coords.latitude); setLng(pos.coords.longitude); setGpsReady(true);
+          setLat(pos.coords.latitude);
+          setLng(pos.coords.longitude);
+          setGpsReady(true);
           saveCoords(pos.coords.latitude, pos.coords.longitude);
         },
-        () => {}
+        () => { setGpsReady(true); } // fall through with defaults
       );
     }
   }, []);
 
-  // Fetch nearby pharmacies when coords change
+  // Fetch nearby pharmacies — only after location is resolved (gpsReady)
   useEffect(() => {
+    if (!gpsReady) return;
     fetch(`${PHARMACY_API}/pharmacies/nearby?lat=${lat}&lng=${lng}&radiusKm=15&limit=3`)
       .then(r => r.json()).then(d => setPharmacies(d.data || [])).catch(() => {});
-  }, [lat, lng]);
+  }, [lat, lng, gpsReady]);
 
   // Fetch loyalty points once
   useEffect(() => {

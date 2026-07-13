@@ -572,41 +572,42 @@ function InventoryPage() {
   }, []);
 
   useEffect(() => {
+    // Build drug→warehouse map directly from purchase invoices (no batches needed)
     const buildMap = (purchases: any[]) => {
-      try {
-        const batches: any[] = JSON.parse(localStorage.getItem('pharmacy-stock-batches') || '[]');
-        const purMap: Record<string, string> = {};
-        purchases.forEach((p: any) => { purMap[p.id] = p.warehouseName; });
-        const map: Record<string, string> = {};
-        [...batches].reverse().forEach((b: any) => {
-          if (b.drugName && b.purchaseId && purMap[b.purchaseId] && !map[b.drugName.toLowerCase()]) {
-            map[b.drugName.toLowerCase()] = purMap[b.purchaseId];
-          }
+      const map: Record<string, string> = {};
+      [...purchases].reverse().forEach((p: any) => {
+        (p.invoices || []).forEach((inv: any) => {
+          (inv.items || []).forEach((item: any) => {
+            const key = (item.drugName || '').toLowerCase().trim();
+            if (key && p.warehouseName && !map[key]) map[key] = p.warehouseName;
+          });
         });
-        setDrugWarehouseMap(map);
-      } catch {}
+      });
+      setDrugWarehouseMap(map);
     };
 
-    try {
-      const purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
-      if (purchases.length > 0) {
-        buildMap(purchases);
-      } else {
-        // localStorage empty — pull from backend
-        const token = localStorage.getItem('pharmacy-token');
-        const pharmacyId = localStorage.getItem('pharmacy-id');
-        if (token && pharmacyId) {
-          fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/state/wh-purchases`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }).then(r => r.json()).then(d => {
+    const run = async () => {
+      try {
+        let purchases: any[] = JSON.parse(localStorage.getItem('pharmacy-wh-purchases') || '[]');
+        if (purchases.length === 0) {
+          // Pull from backend
+          const token = localStorage.getItem('pharmacy-token');
+          const pharmacyId = localStorage.getItem('pharmacy-id');
+          if (token && pharmacyId) {
+            const r = await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/state/wh-purchases`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const d = await r.json();
             if (d.success && Array.isArray(d.data) && d.data.length > 0) {
-              localStorage.setItem('pharmacy-wh-purchases', JSON.stringify(d.data));
-              buildMap(d.data);
+              purchases = d.data;
+              localStorage.setItem('pharmacy-wh-purchases', JSON.stringify(purchases));
             }
-          }).catch(() => {});
+          }
         }
-      }
-    } catch {}
+        buildMap(purchases);
+      } catch {}
+    };
+    run();
   }, [mainTab]);
 
   // ────────────────────────────────────────────────────────────────────────────

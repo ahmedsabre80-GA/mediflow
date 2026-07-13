@@ -53,8 +53,10 @@ export default function WarehouseEmployeesPage() {
   const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('warehouse-id') || 'warehouse-owner' : 'warehouse-owner');
   const [requesterName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('warehouse-name') || 'مدير المستودع' : 'مدير المستودع');
 
+  const whAuthH = () => { try { const t = localStorage.getItem('warehouse-token') || ''; return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }; } catch { return { 'Content-Type': 'application/json' }; } };
+
   useEffect(() => {
-    fetch(`${API}/admin-requests?requester_id=${requesterId}`)
+    fetch(`${API}/admin-requests?requester_id=${requesterId}`, { headers: whAuthH() })
       .then(r => r.json())
       .then(d => {
         if (d.success && Array.isArray(d.data)) {
@@ -70,7 +72,7 @@ export default function WarehouseEmployeesPage() {
   const consumePermission = async () => {
     if (!approvedRequestId) return;
     await fetch(`${API}/admin-requests/${approvedRequestId}/status`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: whAuthH(),
       body: JSON.stringify({ status: 'used' }),
     }).catch(() => {});
     setApprovedRequestId(null);
@@ -81,7 +83,7 @@ export default function WarehouseEmployeesPage() {
     setReqLoading(true);
     try {
       const res = await fetch(`${API}/admin-requests`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: whAuthH(),
         body: JSON.stringify({ portalType: 'warehouse', requesterId, requesterName, requesterEntity: requesterName, actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
       });
       const d = await res.json();

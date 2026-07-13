@@ -58,7 +58,7 @@ export default function WarehousesPage() {
     try {
       const [usersRes, reqsRes] = await Promise.all([
         fetch(`${AUTH_API}/auth/admin/users?role=warehouse_owner`, { headers: adminAuthHeaders() }),
-        fetch(`${PHARM_API}/admin-requests?portal_type=warehouse`),
+        fetch(`${PHARM_API}/admin-requests?portal_type=warehouse`, { headers: adminAuthHeaders() }),
       ]);
       const usersData = await usersRes.json();
       const reqsData  = await reqsRes.json();

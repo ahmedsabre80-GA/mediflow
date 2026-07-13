@@ -69,12 +69,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const token = localStorage.getItem('admin-token');
-    if (!token) router.push('/auth/login');
+    if (!token) { router.push('/auth/login'); return; }
+
+    // Validate token is still accepted by the backend
+    fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/admin/users?role=pharmacy&limit=1', {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => {
+      if (r.status === 401) {
+        localStorage.removeItem('admin-token');
+        router.push('/auth/login');
+      }
+    }).catch(() => {});
+
     // Open sidebar by default on large screens
     const handleResize = () => setSidebarOpen(window.innerWidth >= 1024);
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, [router]);
+
+  // Auto-logout after 30 minutes of inactivity
+  useEffect(() => {
+    const IDLE_MS = 30 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        endSession(false);
+        localStorage.removeItem('admin-token');
+        router.push('/auth/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
   }, [router]);
 
   const logout = () => {

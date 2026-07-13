@@ -34,7 +34,21 @@ export default function WarehouseDashboardLayout({ children }: { children: React
     if (!localStorage.getItem('warehouse-token')) { router.push('/auth/login'); return; }
     refresh();
     const iv = setInterval(refresh, 30000);
-    return () => clearInterval(iv);
+
+    const IDLE_MS = 30 * 60 * 1000;
+    let idleTimer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        localStorage.removeItem('warehouse-token');
+        router.push('/auth/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+
+    return () => { clearInterval(iv); clearTimeout(idleTimer); events.forEach(e => window.removeEventListener(e, reset)); };
   }, [router, refresh]);
 
   const unread = notifs.filter(n => !n.isRead).length;

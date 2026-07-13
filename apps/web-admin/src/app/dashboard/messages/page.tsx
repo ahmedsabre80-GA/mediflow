@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Send, Mail, MessageCircle, Bell, Mic, Users, Building2, Stethoscope, Package, FlaskConical, ExternalLink, Search, X, CheckCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { Send, Mail, MessageCircle, Bell, Mic, Users, Building2, Stethoscope, Package, FlaskConical, ExternalLink, Search, X, CheckCircle, RefreshCw, Trash2, Lock, AlertTriangle } from 'lucide-react';
 import { logAction } from '@/lib/auditSystem';
 
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
@@ -37,6 +37,98 @@ interface User    { id: string; owner_id?: string; name: string; type: string; s
 interface SentMsg { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
 
 const portalTypeLabel = (t: string) => ({ pharmacy: 'صيدلية', doctor: 'طبيب', warehouse: 'مخزن', pharmacist: 'صيدلاني', patient: 'مريض' }[t] || t);
+
+function PasswordConfirmModal({
+  title,
+  warning,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  warning: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const [step, setStep]       = useState<'confirm' | 'password'>('confirm');
+  const [password, setPassword] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [error, setError]     = useState('');
+
+  const handlePasswordSubmit = async () => {
+    setChecking(true);
+    setError('');
+    try {
+      const email = localStorage.getItem('admin-email') || '';
+      const res = await fetch(`${AUTH_API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.title || 'كلمة المرور غير صحيحة');
+      onConfirm();
+    } catch (e: any) {
+      setError(e.message || 'كلمة المرور غير صحيحة');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl" dir="rtl">
+        {step === 'confirm' ? (
+          <>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-6 leading-relaxed">{warning}</p>
+            <div className="flex gap-3">
+              <button onClick={onCancel} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                إلغاء
+              </button>
+              <button onClick={() => setStep('password')} className="flex-1 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 rounded-xl text-sm transition-colors">
+                نعم، متأكد
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <Lock className="w-5 h-5 text-amber-600" />
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">تأكيد الهوية</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">أدخل كلمة مرور حساب الإدارة للمتابعة</p>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !checking && password && handlePasswordSubmit()}
+              placeholder="كلمة المرور"
+              autoFocus
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 mb-2"
+            />
+            {error && <p className="text-xs text-red-500 mb-3">{error}</p>}
+            <div className="flex gap-3 mt-4">
+              <button onClick={onCancel} className="flex-1 border border-gray-300 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                إلغاء
+              </button>
+              <button onClick={handlePasswordSubmit} disabled={!password || checking}
+                className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                {checking ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> جاري التحقق...</> : 'تأكيد الحذف'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function MsgCard({ msg, onDelete }: { msg: SentMsg; onDelete: (id: string) => void }) {
   const [confirming, setConfirming] = useState(false);
@@ -113,11 +205,14 @@ export default function MessagesPage() {
   const [portalLoading,    setPortalLoading]    = useState(false);
   const [deletingPortal,   setDeletingPortal]   = useState(false);
 
+  // Password-confirm modal state
+  const [pendingDelete, setPendingDelete] = useState<null | { title: string; warning: string; action: () => Promise<void> }>(null);
+
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000); };
 
   useEffect(() => {
     Promise.all([
-      fetch(`${PHARMACY_API}/admin/all`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${PHARMACY_API}/admin/all`, { headers: adminH() }).then(r => r.json()).catch(() => ({ data: [] })),
       fetch(`${AUTH_API}/auth/admin/users`, { headers: adminH() }).then(r => r.json()).catch(() => ({ data: [] })),
     ]).then(([pharmData, authData]) => {
       const pharmacies: User[] = (pharmData.data || []).map((p: any) => ({
@@ -141,7 +236,7 @@ export default function MessagesPage() {
 
   const loadSentMessages = () => {
     setSentLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    fetch(`${PHARMACY_API}/portal-notifications/admin-log`, { headers: adminH() })
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];
@@ -154,7 +249,7 @@ export default function MessagesPage() {
 
   const loadReceivedMessages = () => {
     setReceivedLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    fetch(`${PHARMACY_API}/portal-notifications/admin-log`, { headers: adminH() })
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];
@@ -167,21 +262,26 @@ export default function MessagesPage() {
 
   const loadPortalNotifs = (type = portalFilter) => {
     setPortalLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    fetch(`${PHARMACY_API}/portal-notifications/admin-log`, { headers: adminH() })
       .then(r => r.json())
       .then(d => setPortalNotifs((d.data || []).filter((m: SentMsg) => m.portal_type === type)))
       .catch(() => {})
       .finally(() => setPortalLoading(false));
   };
 
-  const handleDeletePortalAll = async () => {
-    if (!confirm(`حذف جميع إشعارات بوابة "${portalTypeLabel(portalFilter)}"؟`)) return;
-    setDeletingPortal(true);
-    await Promise.all(
-      portalNotifs.map(m => fetch(`${PHARMACY_API}/portal-notifications/${m.id}`, { method: 'DELETE' }).catch(() => {}))
-    );
-    setPortalNotifs([]);
-    setDeletingPortal(false);
+  const handleDeletePortalAll = () => {
+    setPendingDelete({
+      title: `حذف إشعارات بوابة "${portalTypeLabel(portalFilter)}"`,
+      warning: `سيتم حذف جميع الإشعارات (${portalNotifs.length}) الموجودة في بوابة "${portalTypeLabel(portalFilter)}" بشكل نهائي. هذا الإجراء لا يمكن التراجع عنه.`,
+      action: async () => {
+        setDeletingPortal(true);
+        await Promise.all(
+          portalNotifs.map(m => fetch(`${PHARMACY_API}/portal-notifications/${m.id}`, { method: 'DELETE' }).catch(() => {}))
+        );
+        setPortalNotifs([]);
+        setDeletingPortal(false);
+      },
+    });
   };
 
   useEffect(() => {
@@ -263,16 +363,21 @@ export default function MessagesPage() {
     showToast('🗑️ تم حذف الرسالة من الطرفين');
   };
 
-  const handleDeleteAll = async () => {
-    if (!confirm('هل تريد حذف جميع رسائلك المرسلة من الطرفين؟')) return;
-    setDeletingAll(true);
-    try {
-      await fetch(`${PHARMACY_API}/portal-notifications?sender_name=${encodeURIComponent(ADMIN_SENDER)}`, { method: 'DELETE' });
-      setSentMessages([]);
-      setReceivedMessages([]);
-      showToast('🗑️ تم حذف جميع الرسائل');
-    } catch { showToast('❌ فشل الحذف'); }
-    finally { setDeletingAll(false); }
+  const handleDeleteAll = () => {
+    setPendingDelete({
+      title: 'حذف جميع الرسائل المرسلة',
+      warning: 'سيتم حذف جميع الرسائل التي أرسلتها بشكل نهائي من الطرفين، بما فيها ما يظهر في إشعارات البوابات. هذا الإجراء لا يمكن التراجع عنه.',
+      action: async () => {
+        setDeletingAll(true);
+        try {
+          await fetch(`${PHARMACY_API}/portal-notifications?sender_name=${encodeURIComponent(ADMIN_SENDER)}`, { method: 'DELETE' });
+          setSentMessages([]);
+          setReceivedMessages([]);
+          showToast('🗑️ تم حذف جميع الرسائل');
+        } catch { showToast('❌ فشل الحذف'); }
+        finally { setDeletingAll(false); }
+      },
+    });
   };
 
   const whatsappText = encodeURIComponent(`${title}\n\n${body}`);
@@ -282,6 +387,19 @@ export default function MessagesPage() {
   return (
     <div className="space-y-6" dir="rtl">
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm font-medium max-w-md text-center">{toast}</div>}
+
+      {/* Password-confirm modal */}
+      {pendingDelete && (
+        <PasswordConfirmModal
+          title={pendingDelete.title}
+          warning={pendingDelete.warning}
+          onConfirm={async () => {
+            setPendingDelete(null);
+            await pendingDelete.action();
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
 
       {/* WhatsApp Modal */}
       {showWhatsApp && (

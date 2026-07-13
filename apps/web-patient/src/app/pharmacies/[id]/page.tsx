@@ -52,11 +52,13 @@ function PharmacyDetailContent() {
       const drug = focusedDrug;
       const drugName = drug?.generic_name || drug?.brand_name || 'دواء';
       const pharmName = pharmacy?.name_ar || pharmacy?.name || 'صيدلية';
+      const _tok = (() => { try { return JSON.parse(localStorage.getItem('mediflow-auth') || '{}').state?.accessToken; } catch { return null; } })();
+      const _authH: Record<string, string> = { 'Content-Type': 'application/json', ...(_tok ? { Authorization: `Bearer ${_tok}` } : {}) };
 
       // 1. Notify pharmacy with patient details
-      await fetch(`${PHARMACY_API}/pharmacies/portal-notifications`, {
+      const r1 = await fetch(`${PHARMACY_API}/pharmacies/portal-notifications`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: _authH,
         body: JSON.stringify({
           portalType: 'pharmacy',
           recipientId: pharmacy.owner_id,
@@ -64,12 +66,13 @@ function PharmacyDetailContent() {
           message: `🔔 طلب حجز جديد\nالدواء: ${drugName}\nالمريض: ${patientName}\nالهاتف: ${phone.trim()}\nالكمية المطلوبة: ${orderQty}\nطريقة الاستلام: ${deliveryChoice === 'delivery' ? '🚚 توصيل للمنزل' : '🏪 استلام من الصيدلية'}\n[patient_id:${patientId}][pharmacy_phone:${pharmacy.phone || ''}][price:${drug.selling_price || 0}][currency:${drug.currency || 'IQD'}][drug_id:${drug.drug_id || ''}][delivery:${deliveryChoice}]`,
         }),
       });
+      if (!r1.ok) throw new Error(`notification failed: ${r1.status}`);
 
       // 2. Notify patient with confirmation
       if (patientId) {
         await fetch(`${PHARMACY_API}/pharmacies/portal-notifications`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: _authH,
           body: JSON.stringify({
             portalType: 'patient',
             recipientId: patientId,

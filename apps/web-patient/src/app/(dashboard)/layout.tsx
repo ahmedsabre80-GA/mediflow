@@ -240,6 +240,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login');
   };
 
+  // Auto-logout after 30 minutes of inactivity
+  useEffect(() => {
+    const IDLE_MS = 30 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        localStorage.removeItem('mediflow-auth');
+        router.push('/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
+  }, [router]);
+
   return (
     <div className="min-h-screen bg-gray-50 pb-20" dir="rtl">
 

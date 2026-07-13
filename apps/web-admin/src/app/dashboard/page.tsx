@@ -6,6 +6,13 @@ import { Users, Building2, ShoppingCart, TrendingUp, AlertTriangle, CheckCircle,
 const AUTH_API = 'https://mediflowauth-service-production.up.railway.app/api/v1';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
 
+function adminH(): Record<string, string> {
+  try {
+    const t = typeof window !== 'undefined' ? localStorage.getItem('admin-token') || '' : '';
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  } catch { return { 'Content-Type': 'application/json' }; }
+}
+
 function StatCard({ title, value, icon: Icon, color, subtitle }: any) {
   return (
     <div className="bg-white rounded-2xl p-6 shadow-sm">
@@ -41,7 +48,7 @@ export default function AdminDashboard() {
       .finally(() => setLoading(false));
 
     // Load patient stats
-    fetch(`${PHARMACY_API}/pharmacies/admin-requests?portal_type=patient`)
+    fetch(`${PHARMACY_API}/pharmacies/admin-requests?portal_type=patient`, { headers: adminH() })
       .then(r => r.json())
       .then(d => {
         const all = d.data || [];

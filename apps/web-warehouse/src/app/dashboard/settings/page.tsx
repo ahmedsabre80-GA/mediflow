@@ -43,9 +43,11 @@ export default function WarehouseSettingsPage() {
     try {
       const token = localStorage.getItem('warehouse-token');
       const userId = localStorage.getItem('warehouse-user-id');
+      const whH = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
       if (userId) {
         const reqsRes = await fetch(
-          `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests?portal_type=warehouse&requester_id=${userId}`
+          `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests?portal_type=warehouse&requester_id=${userId}`,
+          { headers: whH }
         );
         const reqsData = await reqsRes.json();
         const record = reqsData.data?.[0];
@@ -54,7 +56,7 @@ export default function WarehouseSettingsPage() {
             `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests/${record.id}`,
             {
               method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
+              headers: whH,
               body: JSON.stringify({ requester_entity: config.name }),
             }
           );

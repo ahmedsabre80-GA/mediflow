@@ -161,7 +161,11 @@ function SearchContent() {
     );
   };
 
-  useEffect(() => { if (!gpsReady) requestGPS(); }, []);
+  // Only auto-request GPS if there is truly no saved location
+  useEffect(() => {
+    const hasSaved = !!(localStorage.getItem('patient-saved-lat'));
+    if (!hasSaved) requestGPS();
+  }, []);
 
   useEffect(() => {
     if (!showMapPicker || !mapPickerRef.current) return;

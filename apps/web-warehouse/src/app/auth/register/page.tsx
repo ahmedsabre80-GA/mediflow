@@ -68,9 +68,10 @@ export default function WarehouseRegisterPage() {
 
       if (data.data?.requiresApproval) {
         // Insert into admin_requests so the admin portal can see this registration
-        await fetch(`${PHARMACY_API}/pharmacies/admin-requests`, {
+        const regToken = data.data.accessToken || '';
+        await fetch(`${PHARMACY_API}/admin-requests`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(regToken ? { Authorization: `Bearer ${regToken}` } : {}) },
           body: JSON.stringify({
             portalType: 'warehouse',
             requesterId: data.data.userId,

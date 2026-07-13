@@ -91,7 +91,7 @@ export default function DoctorsPage() {
     setLoading(true);
     try {
       const [reqRes, authRes] = await Promise.all([
-        fetch(`${PHARMACY_API}/admin-requests?portal_type=doctor`).then(r => r.json()),
+        fetch(`${PHARMACY_API}/admin-requests?portal_type=doctor`, { headers: adminAuthHeaders() }).then(r => r.json()),
         fetch(`${AUTH_API}/auth/admin/users?role=doctor`, { headers: adminAuthHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const authUsers: any[] = authRes.data || [];
@@ -110,7 +110,7 @@ export default function DoctorsPage() {
     const doc = doctors.find(d => d.id === id);
     await fetch(`${PHARMACY_API}/admin-requests/${id}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminAuthHeaders(),
       body: JSON.stringify({ status }),
     }).catch(() => {});
     if (status === 'approved' && doc?.employee_email) {

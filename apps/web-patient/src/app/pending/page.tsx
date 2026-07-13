@@ -29,7 +29,10 @@ export default function PendingPage() {
       if (!stored) return;
       const parsed = JSON.parse(stored);
       const userId = parsed.state?.user?.id;
-      const res = await fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&requester_id=${userId}`);
+      const token = parsed.state?.accessToken || '';
+      const res = await fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&requester_id=${userId}`, {
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
       const data = await res.json();
       const record = data.data?.[0];
       if (record?.status === 'approved') {

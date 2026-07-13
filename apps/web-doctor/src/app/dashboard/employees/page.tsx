@@ -53,9 +53,11 @@ export default function DoctorEmployeesPage() {
   const [requesterId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('doctor-id') || 'doctor-owner' : 'doctor-owner');
   const [requesterName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('doctor-name') || 'الطبيب' : 'الطبيب');
 
+  const drAuthH = () => { try { const t = localStorage.getItem('doctor-token') || ''; return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }; } catch { return { 'Content-Type': 'application/json' }; } };
+
   useEffect(() => {
     // Filter strictly by portal_type AND action_type to avoid matching unrelated records
-    fetch(`${API}/admin-requests?portal_type=doctor&requester_id=${requesterId}`)
+    fetch(`${API}/admin-requests?portal_type=doctor&requester_id=${requesterId}`, { headers: drAuthH() })
       .then(r => r.json())
       .then(d => {
         if (d.success && Array.isArray(d.data)) {
@@ -72,7 +74,7 @@ export default function DoctorEmployeesPage() {
   const consumePermission = async () => {
     if (!approvedRequestId) return;
     await fetch(`${API}/admin-requests/${approvedRequestId}/status`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: drAuthH(),
       body: JSON.stringify({ status: 'used' }),
     }).catch(() => {});
     setApprovedRequestId(null);
@@ -83,7 +85,7 @@ export default function DoctorEmployeesPage() {
     setReqLoading(true);
     try {
       const res = await fetch(`${API}/admin-requests`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: drAuthH(),
         body: JSON.stringify({ portalType: 'doctor', requesterId, requesterName, requesterEntity: requesterName, actionType: reqType === 'add' ? 'add_employee' : 'remove_employee', employeeName: reqName, employeeEmail: reqEmail, employeeRole: reqRole, reason: reqReason }),
       });
       const d = await res.json();

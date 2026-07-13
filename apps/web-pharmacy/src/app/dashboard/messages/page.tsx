@@ -46,7 +46,7 @@ export default function PharmacyMessagesPage() {
 
   const loadSent = () => {
     setSentLoading(true);
-    fetch(`${PHARMACY_API}/portal-notifications/admin-log`)
+    fetch(`${PHARMACY_API}/portal-notifications?portalType=pharmacy-internal&recipientId=${pharmacyId}`, { headers: pharmH() })
       .then(r => r.json())
       .then(d => {
         const all: SentMsg[] = d.data || [];

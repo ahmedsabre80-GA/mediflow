@@ -32,6 +32,10 @@ export default function PatientsPage() {
   const [selected,     setSelected]     = useState<Patient | null>(null);
 
   const getAdminToken = () => localStorage.getItem('admin-token') || '';
+  const adminH = (extra: Record<string,string> = {}): Record<string,string> => {
+    try { const t = getAdminToken(); return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra }; }
+    catch { return { 'Content-Type': 'application/json', ...extra }; }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +46,7 @@ export default function PatientsPage() {
         fetch(`${AUTH_API}/auth/admin/users`, {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         }),
-        fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&action_type=register`),
+        fetch(`${PHARMACY_API}/admin-requests?portal_type=patient&action_type=register`, { headers: adminH() }),
       ]);
 
       // Parse auth users
@@ -110,7 +114,7 @@ export default function PatientsPage() {
     // Create an admin_request record for this patient (they registered before the system existed)
     const res = await fetch(`${PHARMACY_API}/admin-requests`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminH(),
       body: JSON.stringify({
         portalType: 'patient',
         requesterId: patient.requester_id,
@@ -145,7 +149,7 @@ export default function PatientsPage() {
       // Update admin_requests status
       await fetch(`${PHARMACY_API}/admin-requests/${reqId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminH(),
         body: JSON.stringify({ status }),
       });
 
