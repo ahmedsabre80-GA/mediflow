@@ -250,8 +250,8 @@ export default function AppointmentsPage() {
 
     if (!target) return;
 
-    // For API-sourced bookings: patch the backend + notify doctor
-    if (target.fromAPI && target.doctorAuthId) {
+    // Patch backend + notify doctor whenever we have the doctor auth ID
+    if (target.doctorAuthId) {
       const tok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
       const hdrs = { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
       // Patch appointment status to cancelled
@@ -301,8 +301,8 @@ export default function AppointmentsPage() {
     const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.state?.token || s.accessToken || s.token || ''; } catch { return ''; } })();
     const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
 
-    // Patch API for API-sourced bookings
-    if (b.fromAPI && b.doctorAuthId && b.id) {
+    // PATCH and notify doctor whenever we have the booking ID and doctor auth ID
+    if (b.doctorAuthId && b.id) {
       await fetch(`${APPT_API}/${b.doctorAuthId}/bookings/${b.id}`, {
         method: 'PATCH',
         headers: authHeaders(),
