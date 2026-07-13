@@ -1,6 +1,6 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
-import { Save, Calendar, Upload, X, User, ArrowLeft, FileText, Plus, Lock, Eye } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Save, Calendar, Upload, X, User, ArrowLeft, FileText, Plus, Lock, Eye, MapPin, Navigation } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { PrescriptionPreview } from '@/components/PrescriptionPreview';
 
@@ -12,7 +12,12 @@ export default function DoctorSettingsPage() {
   const [logoImage, setLogoImage] = useState('');
   const [saved, setSaved] = useState(false);
   const [profile, setProfile] = useState({ name: '', specialty: '', phone: '', clinic: '' });
+  const [location, setLocation] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [showMap, setShowMap] = useState(false);
+  const [mapPin, setMapPin] = useState<{ lat: number; lng: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
 
   // ── Prescription tab state ──
   const [rxProfile, setRxProfile] = useState({
@@ -55,6 +60,10 @@ export default function DoctorSettingsPage() {
     const clinic    = localStorage.getItem('doctor-clinic') || '';
     setProfile({ name, specialty, phone, clinic });
 
+    // Load saved location
+    const locRaw = localStorage.getItem('doctor-location');
+    if (locRaw) { try { setLocation(JSON.parse(locRaw)); } catch {} }
+
     // Load prescription profile
     const rxRaw = localStorage.getItem('doctor-rx-profile');
     if (rxRaw) {
@@ -92,6 +101,66 @@ export default function DoctorSettingsPage() {
     };
     reader.readAsDataURL(file);
   };
+
+  const useCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) { alert('المتصفح لا يدعم تحديد الموقع'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        let label = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ar`);
+          const d = await r.json();
+          if (d.display_name) label = d.display_name.split(',').slice(0, 3).join('،');
+        } catch {}
+        const loc = { lat, lng, label };
+        setLocation(loc);
+        localStorage.setItem('doctor-location', JSON.stringify(loc));
+        // Sync to backend so patients can see distance
+        const token = localStorage.getItem('doctor-token');
+        const specialty = localStorage.getItem('doctor-specialty') || '';
+        const clinic    = localStorage.getItem('doctor-clinic') || '';
+        if (token) {
+          fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/users/me/location', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ lat, lng, specialty, clinic }),
+          }).catch(() => {});
+        }
+        setLocating(false);
+      },
+      () => { alert('تعذّر تحديد موقعك — تأكد من السماح للمتصفح بالوصول إلى الموقع'); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
+
+  const confirmMapPin = useCallback(async () => {
+    if (!mapPin) return;
+    const { lat, lng } = mapPin;
+    let label = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ar`);
+      const d = await r.json();
+      if (d.display_name) label = d.display_name.split(',').slice(0, 3).join('،');
+    } catch {}
+    const loc = { lat, lng, label };
+    setLocation(loc);
+    localStorage.setItem('doctor-location', JSON.stringify(loc));
+    // Sync to backend
+    const token2    = localStorage.getItem('doctor-token');
+    const specialty2 = localStorage.getItem('doctor-specialty') || '';
+    const clinic2    = localStorage.getItem('doctor-clinic') || '';
+    if (token2) {
+      fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/users/me/location', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token2}` },
+        body: JSON.stringify({ lat, lng, specialty: specialty2, clinic: clinic2 }),
+      }).catch(() => {});
+    }
+    setShowMap(false);
+    setMapPin(null);
+  }, [mapPin]);
 
   const handleSave = () => {
     localStorage.setItem('doctor-name', profile.name);
@@ -221,6 +290,89 @@ export default function DoctorSettingsPage() {
               </div>
             ))}
           </div>
+
+          {/* Location */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2"><MapPin className="w-5 h-5 text-teal-500" /> موقع العيادة</h3>
+
+            {location && (
+              <div className="flex items-start gap-3 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3">
+                <MapPin className="w-4 h-4 text-teal-600 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-teal-800 font-medium leading-snug">{location.label}</p>
+                  <p className="text-xs text-teal-500 mt-0.5 font-mono">{location.lat.toFixed(5)}, {location.lng.toFixed(5)}</p>
+                </div>
+                <button onClick={() => { setLocation(null); localStorage.removeItem('doctor-location'); }}
+                  className="text-red-400 hover:text-red-600 shrink-0"><X className="w-4 h-4" /></button>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={useCurrentLocation} disabled={locating}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border-2 border-teal-300 text-teal-700 hover:bg-teal-50 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
+                <Navigation className="w-4 h-4" />
+                {locating ? 'جاري التحديد...' : 'استخدام موقعي الحالي'}
+              </button>
+              <button onClick={() => setShowMap(true)}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border-2 border-gray-300 text-gray-700 hover:bg-gray-50 rounded-xl text-sm font-medium transition-colors">
+                <MapPin className="w-4 h-4" />
+                اختيار من الخريطة
+              </button>
+            </div>
+          </div>
+
+          {/* Map modal */}
+          {showMap && (
+            <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b">
+                  <button onClick={() => { setShowMap(false); setMapPin(null); }}><X className="w-5 h-5 text-gray-400" /></button>
+                  <h2 className="font-bold text-gray-900">اختر موقع العيادة</h2>
+                </div>
+                <div className="p-4 space-y-3">
+                  <p className="text-sm text-gray-500 text-right">انقر على الخريطة لتحديد الموقع</p>
+                  <iframe
+                    title="map-picker"
+                    src={`https://www.openstreetmap.org/export/embed.html?bbox=43.5,32.8,45.5,34.2&layer=mapnik`}
+                    className="w-full rounded-xl border border-gray-200 pointer-events-none"
+                    style={{ height: 300 }}
+                  />
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-500 text-right">أدخل الإحداثيات يدوياً أو استخدم الزر أدناه:</p>
+                    <div className="flex gap-2">
+                      <input
+                        placeholder="خط العرض (Lat) مثال: 33.3152"
+                        className="flex-1 px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        value={mapPin?.lat ?? ''}
+                        onChange={e => setMapPin(p => ({ lat: parseFloat(e.target.value) || 0, lng: p?.lng ?? 44.3661 }))}
+                      />
+                      <input
+                        placeholder="خط الطول (Lng) مثال: 44.3661"
+                        className="flex-1 px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        value={mapPin?.lng ?? ''}
+                        onChange={e => setMapPin(p => ({ lat: p?.lat ?? 33.3152, lng: parseFloat(e.target.value) || 0 }))}
+                      />
+                    </div>
+                    <button onClick={useCurrentLocation} disabled={locating}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 border border-teal-300 text-teal-700 hover:bg-teal-50 rounded-xl text-sm font-medium">
+                      <Navigation className="w-4 h-4" />
+                      {locating ? 'جاري التحديد...' : 'استخدام موقعي الحالي بدلاً من ذلك'}
+                    </button>
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button onClick={() => { setShowMap(false); setMapPin(null); }}
+                      className="flex-1 border border-gray-300 text-gray-600 py-3 rounded-xl text-sm font-medium hover:bg-gray-50">
+                      إلغاء
+                    </button>
+                    <button onClick={confirmMapPin} disabled={!mapPin || !mapPin.lat || !mapPin.lng}
+                      className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+                      تأكيد الموقع
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Appointments shortcut */}
           <button onClick={() => router.push('/dashboard/appointments')}
@@ -499,6 +651,7 @@ export default function DoctorSettingsPage() {
                 rxProfile={rxProfile}
                 certificates={certificates}
                 clinicLogo={clinicLogo}
+                doctorImage={logoImage}
                 patientName="اسم المريض"
                 patientAge="—"
                 drugs={[{ name: 'اسم الدواء', dose: 'الجرعة', times: 'التكرار', duration: 'المدة', notes: 'ملاحظات' }]}
