@@ -642,6 +642,7 @@ function AppointmentsContent() {
     const { b, newDate, reason, customReason } = rescheduleFor;
     const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
     if (!newDate || !finalReason) return;
+    if (new Date(newDate + 'T00:00:00').getDay() === 5) { showToast('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
     setRescheduleSaving(true);
     const oldDate = b.appointment_date || selectedDate;
     const updatedNotes = [
@@ -696,6 +697,11 @@ function AppointmentsContent() {
     e.preventDefault();
     setAddError('');
     setAddSaving(true);
+
+    // Block Friday (day 5)
+    if (new Date(addForm.appointment_date + 'T00:00:00').getDay() === 5) {
+      setAddError('لا يمكن حجز موعد يوم الجمعة'); setAddSaving(false); return;
+    }
 
     // Prevent duplicate: fetch live bookings for that date from API
     if (addForm.patient_email && addForm.appointment_date) {
@@ -809,7 +815,7 @@ function AppointmentsContent() {
     if (!doctorId) return;
     setAllLoading(true);
     const today = new Date();
-    const dates = Array.from({ length:30 }, (_,i) => { const d=new Date(today); d.setDate(today.getDate()+i); return fmt(d); });
+    const dates = Array.from({ length:90 }, (_,i) => { const d=new Date(today); d.setDate(today.getDate()+i); return fmt(d); });
     const results = await Promise.all(
       dates.map(date =>
         fetch(`${API}/${doctorId}/bookings?date=${date}`)
@@ -1119,7 +1125,7 @@ function AppointmentsContent() {
       {tab === 'all' && (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b flex items-center justify-between">
-            <h2 className="font-bold text-gray-900">جميع المواعيد القادمة (30 يوم)</h2>
+            <h2 className="font-bold text-gray-900">جميع المواعيد القادمة (90 يوم)</h2>
             <div className="flex items-center gap-2">
               <button onClick={() => setShowCancelled(v => !v)}
                 className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${showCancelled ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
@@ -1134,7 +1140,7 @@ function AppointmentsContent() {
           {allLoading ? (
             <div className="p-12 text-center text-gray-400">جاري التحميل...</div>
           ) : allBookings.filter(b => showCancelled || b.status !== 'cancelled').length === 0 ? (
-            <div className="p-12 text-center text-gray-400"><Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد مواعيد خلال الـ 30 يوم القادمة</div>
+            <div className="p-12 text-center text-gray-400"><Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد مواعيد خلال الـ 90 يوم القادمة</div>
           ) : (
             <div className="divide-y">
               {allBookings.filter(b => showCancelled || b.status !== 'cancelled').map((b,i) => {

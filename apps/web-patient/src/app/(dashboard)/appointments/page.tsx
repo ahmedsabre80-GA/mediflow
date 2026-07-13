@@ -294,6 +294,7 @@ export default function AppointmentsPage() {
     const { b, newDate, reason, customReason } = rescheduleFor;
     const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
     if (!newDate || !finalReason) return;
+    if (new Date(newDate + 'T00:00:00').getDay() === 5) { alert('لا يمكن تحديد موعد يوم الجمعة'); return; }
     setRescheduleSaving(true);
     const oldDate = b.date;
     const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
