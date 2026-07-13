@@ -1,14 +1,11 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { Search, Star, ChevronLeft, Navigation, Map, Check, Stethoscope } from 'lucide-react';
+import { Search, Star, ChevronLeft, Navigation, Map, Check } from 'lucide-react';
 import { DEFAULT_LAT, DEFAULT_LNG } from '@/lib/usePatientLocation';
 
 const NOTIF_API   = 'https://mediflow-production-d815.up.railway.app/api/v1/notifications';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
-const AUTH_API    = 'https://mediflowauth-service-production.up.railway.app/api/v1';
-
-
 
 const LAT_KEY = 'patient-saved-lat';
 const LNG_KEY = 'patient-saved-lng';
@@ -44,7 +41,6 @@ function saveCoords(lat: number, lng: number) {
 
 export default function PatientDashboard() {
   const [pharmacies,    setPharmacies]    = useState<any[]>([]);
-  const [doctors,       setDoctors]       = useState<any[]>([]);
   const [loyaltyPoints, setLoyaltyPoints] = useState<number>(0);
   const [lat,           setLat]           = useState(DEFAULT_LAT);
   const [lng,           setLng]           = useState(DEFAULT_LNG);
@@ -79,27 +75,9 @@ export default function PatientDashboard() {
       .then(r => r.json()).then(d => setPharmacies(d.data || [])).catch(() => {});
   }, [lat, lng]);
 
-  // Fetch doctors sorted by distance
-  useEffect(() => {
-    fetch(`${AUTH_API}/auth/users/doctors?lat=${lat}&lng=${lng}&radiusKm=50`)
-      .then(r => r.json())
-      .then(d => {
-        const all: any[] = d.data || [];
-        // Also fetch without radius filter (doctors with no location set)
-        fetch(`${AUTH_API}/auth/users/doctors`)
-          .then(r2 => r2.json())
-          .then(d2 => {
-            const noLoc = (d2.data || []).filter((doc: any) => !doc.lat && !doc.lng);
-            const merged = [...all, ...noLoc.filter((doc: any) => !all.find((a: any) => a.id === doc.id))];
-            setDoctors(merged.slice(0, 3));
-          }).catch(() => setDoctors(all.slice(0, 3)));
-      }).catch(() => {});
-  }, [lat, lng]);
-
   // Fetch loyalty points once
   useEffect(() => {
-    const _uid = (() => { try { return JSON.parse(localStorage.getItem('mediflow-auth') || '{}').state?.user?.id || ''; } catch { return ''; } })();
-    fetch(`${PHARMACY_API}/pharmacies/portal-notifications?portalType=patient&recipientId=${_uid}`, { headers: patientAuthHeaders() })
+    fetch(`${NOTIF_API}/my`, { headers: patientAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         const notifs: any[] = d.data || d.notifications || d || [];
@@ -251,40 +229,6 @@ export default function PatientDashboard() {
               <div className="flex items-center gap-1">
                 <span className="text-xs font-medium">{parseFloat(p.rating).toFixed(1)}</span>
                 <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {/* Nearby Doctors */}
-      <div className="px-4 pb-5">
-        <div className="flex items-center justify-between mb-3">
-          <Link href="/doctors" className="text-sky-600 text-sm flex items-center gap-1">
-            عرض الكل <ChevronLeft className="w-4 h-4" />
-          </Link>
-          <h2 className="font-bold text-gray-900">أطباء قريبون</h2>
-        </div>
-        <div className="space-y-3">
-          {doctors.length === 0 ? (
-            <div className="bg-white rounded-xl p-4 text-center text-gray-400 text-sm">جاري التحميل...</div>
-          ) : doctors.map((doc: any) => (
-            <Link href="/doctors" key={doc.id || doc.userId}
-              className="bg-white rounded-xl p-3 flex items-center gap-3 shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
-                {doc.profileImage
-                  ? <img src={doc.profileImage} alt={doc.name} className="w-full h-full object-cover rounded-xl" />
-                  : <Stethoscope className="w-6 h-6 text-indigo-500" />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-gray-900 text-sm truncate">{doc.name || doc.fullName || 'طبيب'}</p>
-                <p className="text-xs text-gray-500 truncate">{doc.specialty || doc.specialization || 'طب عام'}</p>
-                {doc.clinic && <p className="text-xs text-gray-400 truncate">{doc.clinic}</p>}
-              </div>
-              <div className="shrink-0 text-left">
-                {doc.distance_km != null
-                  ? <p className="text-xs text-sky-600 font-medium">{Number(doc.distance_km).toFixed(1)} كم</p>
-                  : <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">متاح</span>}
               </div>
             </Link>
           ))}

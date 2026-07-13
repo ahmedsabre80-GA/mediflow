@@ -389,82 +389,17 @@ app.delete('/api/v1/auth/admin/delete-user', requireAdmin, async (req, res) => {
 // ─── PUBLIC: list active doctors (for patient portal) ────────────────────────
 app.get('/api/v1/auth/users/doctors', async (req, res) => {
   try {
-    // Add location columns if they don't exist yet
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS specialty TEXT`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS clinic TEXT`).catch(() => {});
-
-    const { lat, lng, radiusKm } = req.query;
-    let q = `
+    const r = await pool.query(`
       SELECT u.id, u.email, u.phone, u.role, u.status, u.created_at,
-             p.first_name, p.last_name, p.lat, p.lng, p.specialty, p.clinic
+             p.first_name, p.last_name
       FROM auth.users u
       LEFT JOIN users.profiles p ON p.id = u.id
       WHERE u.role = 'doctor' AND u.status = 'active' AND u.deleted_at IS NULL
-    `;
-    // If patient provides their coordinates, filter + sort by distance
-    if (lat && lng) {
-      const radius = Number(radiusKm) || 50;
-      q += `
-        AND p.lat IS NOT NULL AND p.lng IS NOT NULL
-        AND (6371 * acos(
-          cos(radians(${Number(lat)})) * cos(radians(p.lat)) *
-          cos(radians(p.lng) - radians(${Number(lng)})) +
-          sin(radians(${Number(lat)})) * sin(radians(p.lat))
-        )) <= ${radius}
-        ORDER BY (6371 * acos(
-          cos(radians(${Number(lat)})) * cos(radians(p.lat)) *
-          cos(radians(p.lng) - radians(${Number(lng)})) +
-          sin(radians(${Number(lat)})) * sin(radians(p.lat))
-        )) ASC
-      `;
-    } else {
-      q += ' ORDER BY p.first_name, p.last_name';
-    }
-    const r = await pool.query(q);
-    const rows = r.rows.map(row => ({
-      ...row,
-      name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
-      distance_km: (lat && lng && row.lat && row.lng)
-        ? +(6371 * Math.acos(
-            Math.cos(Number(lat)*Math.PI/180) * Math.cos(row.lat*Math.PI/180) *
-            Math.cos(row.lng*Math.PI/180 - Number(lng)*Math.PI/180) +
-            Math.sin(Number(lat)*Math.PI/180) * Math.sin(row.lat*Math.PI/180)
-          )).toFixed(2)
-        : null,
-    }));
-    res.json({ success: true, data: rows });
+      ORDER BY p.first_name, p.last_name
+    `);
+    res.json({ success: true, data: r.rows });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, error: { title: 'Internal server error', status: 500 } });
-  }
-});
-
-// ─── DOCTOR: update location/profile ─────────────────────────────────────────
-app.patch('/api/v1/auth/users/me/location', async (req, res) => {
-  const auth = req.headers.authorization;
-  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ success: false });
-  try {
-    const payload = verifyToken(auth.slice(7));
-    const { lat, lng, specialty, clinic } = req.body;
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS specialty TEXT`).catch(() => {});
-    await pool.query(`ALTER TABLE users.profiles ADD COLUMN IF NOT EXISTS clinic TEXT`).catch(() => {});
-    await pool.query(
-      `INSERT INTO users.profiles (id, lat, lng, specialty, clinic)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (id) DO UPDATE SET
-         lat       = COALESCE($2, users.profiles.lat),
-         lng       = COALESCE($3, users.profiles.lng),
-         specialty = COALESCE($4, users.profiles.specialty),
-         clinic    = COALESCE($5, users.profiles.clinic)`,
-      [payload.sub, lat ?? null, lng ?? null, specialty ?? null, clinic ?? null]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(401).json({ success: false, error: { title: 'Unauthorized' } });
   }
 });
 
