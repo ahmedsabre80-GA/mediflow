@@ -125,7 +125,8 @@ function AppointmentsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const initTab = (searchParams.get('tab') as any) || 'calendar';
+  const dateParam = searchParams.get('date');
+  const initTab = dateParam ? 'calendar' : ((searchParams.get('tab') as any) || 'calendar');
   const [doctorId, setDoctorId]   = useState('');
   const [tab, setTab]             = useState<'calendar'|'all'|'schedule'|'patients'|'expected'>(initTab);
   const [allBookings, setAllBookings] = useState<any[]>([]);
@@ -133,8 +134,15 @@ function AppointmentsContent() {
   const [showCancelled, setShowCancelled] = useState(false);
   // email → patient auth user ID — built from bookings that have patient_id
   const [patientIdMap, setPatientIdMap] = useState<Record<string, string>>({});
-  const [weekOffset, setWeekOffset]   = useState(0);
-  const [selectedDate, setSelectedDate] = useState(() => searchParams.get('date') || fmt(new Date()));
+  const [weekOffset, setWeekOffset]   = useState(() => {
+    if (!dateParam) return 0;
+    const target = new Date(dateParam + 'T00:00:00');
+    const today  = new Date();
+    today.setHours(0,0,0,0);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+    return Math.floor(diffDays / 7);
+  });
+  const [selectedDate, setSelectedDate] = useState(() => dateParam || fmt(new Date()));
   const [bookings, setBookings]   = useState<any[]>([]);
   const [schedule, setSchedule]   = useState<any[]>([]);
   const [availability, setAvailability] = useState<any>(null);
