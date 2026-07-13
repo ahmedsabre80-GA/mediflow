@@ -134,7 +134,7 @@ function AppointmentsContent() {
   // email → patient auth user ID — built from bookings that have patient_id
   const [patientIdMap, setPatientIdMap] = useState<Record<string, string>>({});
   const [weekOffset, setWeekOffset]   = useState(0);
-  const [selectedDate, setSelectedDate] = useState(fmt(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => searchParams.get('date') || fmt(new Date()));
   const [bookings, setBookings]   = useState<any[]>([]);
   const [schedule, setSchedule]   = useState<any[]>([]);
   const [availability, setAvailability] = useState<any>(null);

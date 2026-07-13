@@ -217,7 +217,11 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
             </div>
             <div className="mt-5 flex gap-2">
               {(selectedNotif.message.includes('موعد') || selectedNotif.message.includes('حجز') || selectedNotif.message.includes('تأكيد') || selectedNotif.message.includes('إلغاء') || selectedNotif.message.includes('تغيير')) && (
-                <button onClick={() => { setSelectedNotif(null); router.push('/dashboard/appointments'); }}
+                <button onClick={() => {
+                  const dateMatch = selectedNotif.message.match(/إلى:\s*(\d{4}-\d{2}-\d{2})/);
+                  const dest = dateMatch ? `/dashboard/appointments?date=${dateMatch[1]}` : '/dashboard/appointments';
+                  setSelectedNotif(null); router.push(dest);
+                }}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
                   فتح المواعيد
                 </button>
