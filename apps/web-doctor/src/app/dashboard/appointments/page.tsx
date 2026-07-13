@@ -687,7 +687,7 @@ function AppointmentsContent() {
     }
     setRescheduleSaving(false);
     setRescheduleFor(null);
-    loadBookings();
+    setSelectedDate(newDate); // navigate to new date so booking stays visible
     if (tab === 'all') loadAllBookings();
     showToast(`✅ تم تغيير الموعد إلى ${newDate}`);
   };
