@@ -126,7 +126,7 @@ function AppointmentsContent() {
   const router = useRouter();
 
   const dateParam = searchParams.get('date');
-  const initTab = dateParam ? 'calendar' : ((searchParams.get('tab') as any) || 'calendar');
+  const initTab = dateParam ? 'calendar' : ((searchParams.get('tab') as any) || 'all');
   const [doctorId, setDoctorId]   = useState('');
   const [tab, setTab]             = useState<'calendar'|'all'|'schedule'|'patients'|'expected'>(initTab);
   const [allBookings, setAllBookings] = useState<any[]>([]);
@@ -1021,14 +1021,13 @@ function AppointmentsContent() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1 flex-wrap">
           {([
-            ['calendar','اليوم',<Calendar key="c" className="w-4 h-4 inline ml-1.5" />],
             ['all','كل المواعيد',<Users key="a" className="w-4 h-4 inline ml-1.5" />],
             ['patients','المرضى',<Stethoscope key="p" className="w-4 h-4 inline ml-1.5" />],
             ['expected','المتوقعون',<CalendarPlus key="e" className="w-4 h-4 inline ml-1.5" />],
             ['schedule','جدول الدوام',<Clock key="s" className="w-4 h-4 inline ml-1.5" />],
           ] as const).map(([key, label, icon]) => (
             <button key={key}
-              onClick={() => { setTab(key as any); if (key==='all') loadAllBookings(); if (key==='calendar') { setSelectedDate(fmt(new Date())); setWeekOffset(0); } }}
+              onClick={() => { setTab(key as any); if (key==='all') loadAllBookings(); }}
               className={`relative px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===key ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
               {icon}{label}
               {key==='expected' && pendingCalls > 0 && (
