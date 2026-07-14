@@ -658,6 +658,19 @@ function AppointmentsContent() {
     const schedEntry = schedule.find(s => s.day_of_week === chosenDow);
     if (schedule.length > 0 && (!schedEntry || !schedEntry.is_active)) { setRescheduleError('⛔ الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
     if (schedule.length === 0 && chosenDow === 5) { setRescheduleError('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
+    // Block if this patient already has another booking on the target date
+    const patNameKey = (b.patient_name || '').toLowerCase().trim();
+    const patPhoneKey = (b.patient_phone || '').trim();
+    const conflictOnTarget = [...allBookings, ...bookings].find(x =>
+      String(x.id) !== String(b.id) &&
+      (x.appointment_date || '').slice(0, 10) === newDate &&
+      x.status !== 'cancelled' &&
+      (
+        (patNameKey && (x.patient_name || '').toLowerCase().trim() === patNameKey) ||
+        (patPhoneKey && (x.patient_phone || '').trim() === patPhoneKey)
+      )
+    );
+    if (conflictOnTarget) { setRescheduleError('⛔ هذا المريض لديه موعد آخر في نفس التاريخ المختار، اختر تاريخاً مختلفاً'); return; }
     setRescheduleError('');
     setRescheduleSaving(true);
     const updatedNotes = [
@@ -754,13 +767,17 @@ function AppointmentsContent() {
     }
 
     // Prevent duplicate: fetch live bookings for that date from API
-    if (addForm.patient_email && addForm.appointment_date) {
-      const emailL = addForm.patient_email.toLowerCase();
+    if (addForm.appointment_date) {
+      const emailL  = (addForm.patient_email || '').toLowerCase();
+      const phoneL  = (addForm.patient_phone || '').trim();
+      const nameL   = (addForm.patient_name  || '').toLowerCase().trim();
       const liveRes = await fetch(`${API}/${doctorId}/bookings?date=${addForm.appointment_date}`, { headers: notifHeaders() }).then(r => r.json()).catch(() => ({ data: [] }));
       const liveBks: any[] = liveRes.data || [];
-      const dup = liveBks.find(b =>
-        (b.patient_email || '').toLowerCase() === emailL && b.status !== 'cancelled'
-      );
+      const dup = liveBks.find(b => b.status !== 'cancelled' && (
+        (emailL && (b.patient_email || '').toLowerCase() === emailL) ||
+        (phoneL && (b.patient_phone || '').trim() === phoneL) ||
+        (nameL  && (b.patient_name  || '').toLowerCase().trim() === nameL)
+      ));
       if (dup) { setAddError('يوجد موعد مسبق لهذا المريض في نفس التاريخ'); setAddSaving(false); return; }
     }
 
