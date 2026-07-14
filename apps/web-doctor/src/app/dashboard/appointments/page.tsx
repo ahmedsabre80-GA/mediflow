@@ -131,6 +131,7 @@ function AppointmentsContent() {
   const [tab, setTab]             = useState<'calendar'|'all'|'schedule'|'patients'|'expected'>(initTab);
   const [allBookings, setAllBookings] = useState<any[]>([]);
   const [allLoading, setAllLoading]   = useState(false);
+  const [allRange, setAllRange]       = useState<'today'|'30'|'90'|'all'>('90');
   const [showCancelled, setShowCancelled] = useState(false);
   // email → patient auth user ID — built from bookings that have patient_id
   const [patientIdMap, setPatientIdMap] = useState<Record<string, string>>({});
@@ -819,11 +820,20 @@ function AppointmentsContent() {
 
   const getScheduleForDay = (dow: number) => schedule.find(s => s.day_of_week === dow);
 
-  const loadAllBookings = useCallback(async () => {
+  const loadAllBookings = useCallback(async (range?: 'today'|'30'|'90'|'all') => {
     if (!doctorId) return;
     setAllLoading(true);
-    const today = new Date();
-    const dates = Array.from({ length:90 }, (_,i) => { const d=new Date(today); d.setDate(today.getDate()+i); return fmt(d); });
+    const r = range ?? allRange;
+    const today = new Date(); today.setHours(0,0,0,0);
+    let dates: string[];
+    if (r === 'today') {
+      dates = [fmt(today)];
+    } else if (r === 'all') {
+      dates = Array.from({ length:365*2 }, (_,i) => { const d=new Date(today); d.setDate(today.getDate()+i); return fmt(d); });
+    } else {
+      const n = r === '30' ? 30 : 90;
+      dates = Array.from({ length:n }, (_,i) => { const d=new Date(today); d.setDate(today.getDate()+i); return fmt(d); });
+    }
     const results = await Promise.all(
       dates.map(date =>
         fetch(`${API}/${doctorId}/bookings?date=${date}`)
@@ -836,7 +846,8 @@ function AppointmentsContent() {
     setAllBookings(flat);
     buildPatientIdMap(flat);
     setAllLoading(false);
-  }, [doctorId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctorId, allRange]);
 
   // Count expected visitors for a given date (for revisit date picker hint)
   const evCountForDate = (date: string) => expectedVisitors.filter(v => v.revisitDate === date && !v.booked).length;
@@ -1017,7 +1028,7 @@ function AppointmentsContent() {
             ['schedule','جدول الدوام',<Clock key="s" className="w-4 h-4 inline ml-1.5" />],
           ] as const).map(([key, label, icon]) => (
             <button key={key}
-              onClick={() => { setTab(key as any); if (key==='all') loadAllBookings(); }}
+              onClick={() => { setTab(key as any); if (key==='all') loadAllBookings(); if (key==='calendar') { setSelectedDate(fmt(new Date())); setWeekOffset(0); } }}
               className={`relative px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===key ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
               {icon}{label}
               {key==='expected' && pendingCalls > 0 && (
@@ -1132,23 +1143,39 @@ function AppointmentsContent() {
       {/* ── ALL BOOKINGS TAB ── */}
       {tab === 'all' && (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b flex items-center justify-between">
-            <h2 className="font-bold text-gray-900">جميع المواعيد القادمة (90 يوم)</h2>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowCancelled(v => !v)}
-                className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${showCancelled ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                {showCancelled ? 'إخفاء الملغية' : 'عرض الملغية'}
-              </button>
-              <button onClick={loadAllBookings} disabled={allLoading}
-                className="p-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                <RefreshCw className={`w-4 h-4 ${allLoading?'animate-spin':''}`} />
-              </button>
+          <div className="px-6 py-4 border-b space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-900">جميع المواعيد القادمة</h2>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowCancelled(v => !v)}
+                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors ${showCancelled ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  {showCancelled ? 'إخفاء الملغية' : 'عرض الملغية'}
+                </button>
+                <button onClick={() => loadAllBookings()} disabled={allLoading}
+                  className="p-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  <RefreshCw className={`w-4 h-4 ${allLoading?'animate-spin':''}`} />
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {([
+                ['today','اليوم فقط'],
+                ['30','30 يوم'],
+                ['90','90 يوم'],
+                ['all','الكل'],
+              ] as const).map(([r,label]) => (
+                <button key={r}
+                  onClick={() => { setAllRange(r); loadAllBookings(r); }}
+                  className={`text-xs px-3 py-1.5 rounded-xl border font-medium transition-colors ${allRange===r ? 'bg-teal-500 text-white border-teal-500' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
           {allLoading ? (
             <div className="p-12 text-center text-gray-400">جاري التحميل...</div>
           ) : allBookings.filter(b => showCancelled || b.status !== 'cancelled').length === 0 ? (
-            <div className="p-12 text-center text-gray-400"><Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد مواعيد خلال الـ 90 يوم القادمة</div>
+            <div className="p-12 text-center text-gray-400"><Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />لا توجد مواعيد في هذه الفترة</div>
           ) : (
             <div className="divide-y">
               {allBookings.filter(b => showCancelled || b.status !== 'cancelled').map((b,i) => {
