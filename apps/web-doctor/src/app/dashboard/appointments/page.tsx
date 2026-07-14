@@ -662,8 +662,9 @@ function AppointmentsContent() {
     setRescheduleSaving(true);
     const updatedNotes = [
       // Strip old reschedule notes, keep original patient notes only
-      (b.notes || '').replace(/\[تم تغيير الموعد[^\]]*\]/g, '').trim(),
+      (b.notes || '').replace(/\[تم تغيير الموعد[^\]]*\]/g, '').replace(/\[dr_reschedule:true\]/g, '').trim(),
       `[تم تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`,
+      `[dr_reschedule:true]`,
     ].filter(Boolean).join('\n');
 
     const patchRes = await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
@@ -905,13 +906,20 @@ function AppointmentsContent() {
   // ── Booking action buttons (shared between calendar and all-bookings tabs) ──
   const BookingActions = ({ b, onStatusChange }: { b: any; onStatusChange?: (id:string,s:string)=>void }) => {
     const doStatus = (status: string) => { updateStatus(b.id, status); onStatusChange?.(b.id, status); };
+    const awaitingPatient = b.status === 'pending' && String(b.notes || '').includes('[dr_reschedule:true]');
     return (
       <div className="flex items-center gap-2 flex-wrap">
         {b.status === 'pending' && (
-          <>
-            <button onClick={() => doStatus('confirmed')} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg" title="تأكيد"><CheckCircle className="w-4 h-4" /></button>
-            <button onClick={() => doStatus('cancelled')} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="إلغاء"><XCircle className="w-4 h-4" /></button>
-          </>
+          awaitingPatient ? (
+            <span className="text-xs text-amber-600 font-medium bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
+              ⏳ بانتظار قبول المريض
+            </span>
+          ) : (
+            <>
+              <button onClick={() => doStatus('confirmed')} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg" title="تأكيد"><CheckCircle className="w-4 h-4" /></button>
+              <button onClick={() => doStatus('cancelled')} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="إلغاء"><XCircle className="w-4 h-4" /></button>
+            </>
+          )
         )}
         {b.status === 'confirmed' && !savedRx[b.id] && (() => {
           const arrived  = !!arrivedMap[b.id];

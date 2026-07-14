@@ -604,20 +604,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </>
                   ) : (
                     <>
-                      <p className="text-sm font-semibold text-sky-700 text-right mb-2">📅 اختر ما تريد فعله بالموعد الجديد:</p>
-                      <button
-                        onClick={() => handleDrRescheduleAction('accept')}
-                        disabled={drRescheduleActing}
-                        className="w-full bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
-                        {drRescheduleActing ? 'جاري...' : '✅ قبول الموعد الجديد'}
-                      </button>
-                      <button
-                        onClick={() => handleDrRescheduleAction('cancel')}
-                        disabled={drRescheduleActing}
-                        className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
-                        {drRescheduleActing ? 'جاري...' : '❌ إلغاء الحجز'}
-                      </button>
-                      <button onClick={closeModal} disabled={drRescheduleActing} className="w-full border border-gray-300 text-gray-500 disabled:opacity-50 py-2.5 rounded-xl text-sm">لاحقاً</button>
+                      <p className="text-sm font-semibold text-sky-700 text-right mb-3">📅 اختر ما تريد فعله بالموعد الجديد:</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleDrRescheduleAction('accept')}
+                          disabled={drRescheduleActing}
+                          className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                          {drRescheduleActing ? '...' : '✅ قبول'}
+                        </button>
+                        <button
+                          onClick={() => handleDrRescheduleAction('cancel')}
+                          disabled={drRescheduleActing}
+                          className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                          {drRescheduleActing ? '...' : '❌ إلغاء'}
+                        </button>
+                        <button onClick={closeModal} disabled={drRescheduleActing} className="flex-1 border border-gray-300 text-gray-500 disabled:opacity-50 py-3 rounded-xl text-sm font-medium">
+                          لاحقاً
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
