@@ -308,6 +308,13 @@ export default function AppointmentsPage() {
     if (!newDate || !finalReason) return;
     // Block same-date change
     if (newDate === b.date) { alert('لا يمكن تغيير الموعد إلى نفس التاريخ الحالي'); return; }
+    // Block if patient already has another active booking on the target date
+    const conflict = bookings.find((x: any) =>
+      String(x.id) !== String(b.id) &&
+      (x.date || '').slice(0, 10) === newDate &&
+      x.status !== 'cancelled'
+    );
+    if (conflict) { alert(`لديك موعد آخر بالفعل بتاريخ ${newDate}، اختر تاريخاً مختلفاً`); return; }
     // Check doctor's actual schedule for the chosen day
     const chosenDow = new Date(newDate + 'T00:00:00').getDay();
     if (b.doctorAuthId) {
@@ -315,11 +322,9 @@ export default function AppointmentsPage() {
         const sched = await fetch(`${APPT_API}/${b.doctorAuthId}/schedule`).then(r => r.json()).catch(() => null);
         const dayEntry = (sched?.data || []).find((s: any) => s.day_of_week === chosenDow);
         if (dayEntry && !dayEntry.is_active) { alert('الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
-        // If schedule exists but no entry for this day → treat as unavailable
         if ((sched?.data || []).length > 0 && !dayEntry) { alert('الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
       } catch {}
     } else if (chosenDow === 5) {
-      // Fallback when doctorAuthId is unknown: block Friday
       alert('لا يمكن تحديد موعد يوم الجمعة'); return;
     }
     setRescheduleSaving(true);
