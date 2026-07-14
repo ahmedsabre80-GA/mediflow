@@ -21,6 +21,14 @@ const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const DEFAULT_LAT = 33.3152;
 const DEFAULT_LNG = 44.3661;
 
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 interface Drug {
   id: string;
   generic_name: string;
@@ -73,7 +81,7 @@ function SearchContent() {
         .filter((d: any) => ['approved','used'].includes(d.status) && d.portal_type === 'doctor')
         .map((d: any) => {
           const au = authUsers.find((u: any) => u.email?.toLowerCase() === d.employee_email?.toLowerCase());
-          return { id: d.id, name: d.employee_name, email: d.employee_email, specialization: d.employee_role || 'طب عام', authId: au?.id || null };
+          return { id: d.id, name: d.employee_name, email: d.employee_email, specialization: d.employee_role || 'طب عام', authId: au?.id || null, latitude: d.latitude ?? null, longitude: d.longitude ?? null };
         }));
     }).finally(() => setDocsLoading(false));
   }, [activeTab]);
@@ -556,10 +564,23 @@ function SearchContent() {
           {docsLoading ? (
             [...Array(3)].map((_, i) => <div key={i} className="bg-white rounded-2xl p-4 animate-pulse h-20" />)
           ) : (() => {
-            const filtered = doctors.filter(d =>
-              (!docSearch || (d.name || '').toLowerCase().includes(docSearch.toLowerCase()) || (d.specialization || '').includes(docSearch)) &&
-              (docSpec === 'الكل' || (d.specialization || '').includes(docSpec))
-            );
+            const filtered = doctors
+              .filter(d =>
+                (!docSearch || (d.name || '').toLowerCase().includes(docSearch.toLowerCase()) || (d.specialization || '').includes(docSearch)) &&
+                (docSpec === 'الكل' || (d.specialization || '').includes(docSpec))
+              )
+              .map(d => ({
+                ...d,
+                distKm: (d.latitude != null && d.longitude != null)
+                  ? haversineKm(coords.lat, coords.lng, d.latitude, d.longitude)
+                  : null,
+              }))
+              .sort((a, b) => {
+                if (a.distKm == null && b.distKm == null) return 0;
+                if (a.distKm == null) return 1;
+                if (b.distKm == null) return -1;
+                return a.distKm - b.distKm;
+              });
             return filtered.length === 0 ? (
               <div className="pt-10 text-center text-gray-400">
                 <Stethoscope className="w-10 h-10 mx-auto mb-2 text-gray-300" />
@@ -574,6 +595,11 @@ function SearchContent() {
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900 text-sm">{doc.name}</p>
                   <p className="text-xs text-sky-600 mt-0.5">{doc.specialization}</p>
+                  {doc.distKm != null && (
+                    <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-0.5">
+                      <MapPin className="w-3 h-3" />{doc.distKm < 1 ? `${Math.round(doc.distKm * 1000)} م` : `${doc.distKm.toFixed(1)} كم`}
+                    </p>
+                  )}
                 </div>
                 <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-700 shrink-0">حجز</span>
               </button>

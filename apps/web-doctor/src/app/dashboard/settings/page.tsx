@@ -1,8 +1,10 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Save, Calendar, Upload, X, User, ArrowLeft, FileText, Plus, Lock, Eye } from 'lucide-react';
+import { Save, Calendar, Upload, X, User, ArrowLeft, FileText, Plus, Lock, Eye, MapPin } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { PrescriptionPreview } from '@/components/PrescriptionPreview';
+
+const PHARM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export default function DoctorSettingsPage() {
   const router = useRouter();
@@ -12,6 +14,9 @@ export default function DoctorSettingsPage() {
   const [logoImage, setLogoImage] = useState('');
   const [saved, setSaved] = useState(false);
   const [profile, setProfile] = useState({ name: '', specialty: '', phone: '', clinic: '' });
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locLoading, setLocLoading] = useState(false);
+  const [locSaved, setLocSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Prescription tab state ──
@@ -54,6 +59,9 @@ export default function DoctorSettingsPage() {
     const phone     = localStorage.getItem('doctor-phone') || '';
     const clinic    = localStorage.getItem('doctor-clinic') || '';
     setProfile({ name, specialty, phone, clinic });
+    const lat = localStorage.getItem('doctor-lat');
+    const lng = localStorage.getItem('doctor-lng');
+    if (lat && lng) setLocation({ lat: Number(lat), lng: Number(lng) });
 
     // Load prescription profile
     const rxRaw = localStorage.getItem('doctor-rx-profile');
@@ -100,6 +108,35 @@ export default function DoctorSettingsPage() {
     localStorage.setItem('doctor-clinic', profile.clinic);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const requestMyLocation = () => {
+    setLocLoading(true);
+    navigator.geolocation?.getCurrentPosition(
+      pos => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setLocation(loc);
+        setLocLoading(false);
+      },
+      () => { setLocLoading(false); alert('تعذر الحصول على موقعك. تأكد من منح الإذن من إعدادات المتصفح.'); }
+    );
+  };
+
+  const saveLocation = async () => {
+    if (!location) return;
+    localStorage.setItem('doctor-lat', String(location.lat));
+    localStorage.setItem('doctor-lng', String(location.lng));
+    const adminReqId = localStorage.getItem('doctor-id');
+    const token = localStorage.getItem('doctor-token') || '';
+    if (adminReqId) {
+      await fetch(`${PHARM_API}/admin-requests/${adminReqId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ latitude: location.lat, longitude: location.lng }),
+      }).catch(() => {});
+    }
+    setLocSaved(true);
+    setTimeout(() => setLocSaved(false), 2000);
   };
 
   const handleCertUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -220,6 +257,34 @@ export default function DoctorSettingsPage() {
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
               </div>
             ))}
+          </div>
+
+          {/* Clinic Location */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2"><MapPin className="w-5 h-5 text-teal-500" /> موقع العيادة</h3>
+            {location ? (
+              <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 flex items-center justify-between">
+                <span>📍 {location.lat.toFixed(5)}, {location.lng.toFixed(5)}</span>
+                <button onClick={() => setLocation(null)} className="text-red-400 hover:text-red-600 text-xs">حذف</button>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">لم يتم تحديد موقع العيادة بعد. اضغط الزر أدناه لتحديد موقعك الحالي.</p>
+            )}
+            <div className="flex gap-3">
+              <button onClick={requestMyLocation} disabled={locLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-teal-400 text-teal-600 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 rounded-xl text-sm font-medium transition-colors">
+                {locLoading ? <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /> : <MapPin className="w-4 h-4" />}
+                {locLoading ? 'جاري التحديد...' : 'موقعي الحالي'}
+              </button>
+              {location && (
+                <button onClick={saveLocation}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-colors ${locSaved ? 'bg-green-500' : 'bg-teal-500 hover:bg-teal-600'}`}>
+                  <Save className="w-4 h-4" />
+                  {locSaved ? 'تم الحفظ ✓' : 'حفظ الموقع'}
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-400">يُستخدم الموقع لعرض المسافة للمرضى عند البحث عن طبيب قريب</p>
           </div>
 
           {/* Appointments shortcut */}

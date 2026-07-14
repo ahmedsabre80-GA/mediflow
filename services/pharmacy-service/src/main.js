@@ -147,6 +147,8 @@ async function bootstrap() {
       ADD COLUMN IF NOT EXISTS delivery_max_km INTEGER DEFAULT 20
   `).catch(() => {});
   await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS license_holder_name TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE public.admin_requests ADD COLUMN IF NOT EXISTS latitude FLOAT`).catch(() => {});
+  await pool.query(`ALTER TABLE public.admin_requests ADD COLUMN IF NOT EXISTS longitude FLOAT`).catch(() => {});
 
   // Ensure products schema and drugs table with barcode column exist
   await pool.query(`
@@ -1041,10 +1043,12 @@ async function bootstrap() {
 
   router.patch('/admin-requests/:id', authenticate, async (req, res, next) => {
     try {
-      const { requester_entity, requester_name } = req.body;
+      const { requester_entity, requester_name, latitude, longitude } = req.body;
       const sets = []; const params = [];
       if (requester_entity !== undefined) { sets.push(`requester_entity=$${params.length+1}`); params.push(requester_entity); }
       if (requester_name   !== undefined) { sets.push(`requester_name=$${params.length+1}`);   params.push(requester_name); }
+      if (latitude  !== undefined) { sets.push(`latitude=$${params.length+1}`);  params.push(latitude); }
+      if (longitude !== undefined) { sets.push(`longitude=$${params.length+1}`); params.push(longitude); }
       if (!sets.length) return res.status(400).json({ success: false, error: 'nothing to update' });
       params.push(req.params.id);
       const r = await pool.query(`UPDATE public.admin_requests SET ${sets.join(',')} WHERE id=$${params.length} RETURNING *`, params);
