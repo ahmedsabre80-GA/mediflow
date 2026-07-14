@@ -147,6 +147,7 @@ export default function AppointmentsPage() {
       // Get patient identity from auth + localStorage
       const authRaw = localStorage.getItem('mediflow-auth');
       const authState = authRaw ? JSON.parse(authRaw).state : null;
+      const patientAuthId = authState?.user?.id || '';
       const patientEmail = (authState?.user?.email || localStorage.getItem('patient-email') || '').toLowerCase();
       const patientName = (localStorage.getItem('patient-name') || '').toLowerCase();
       const patientPhone = localStorage.getItem('patient-phone') || '';
@@ -180,6 +181,16 @@ export default function AppointmentsPage() {
             const phoneMatch = patientPhone && bPhone && bPhone === patientPhone;
             const nameMatch  = patientName  && bName  && bName.includes(patientName);
             if (!emailMatch && !phoneMatch && !nameMatch) continue;
+          }
+          // Embed patient auth ID in notes so doctor can send notifications
+          const tag = `[patient_user_id:${patientAuthId}]`;
+          if (patientAuthId && !(b.notes || '').includes(tag)) {
+            const patTok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.accessToken||s.accessToken||''; } catch { return ''; } })();
+            fetch(`${APPT_API}/${doc.authId}/bookings/${b.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', ...(patTok ? { Authorization: `Bearer ${patTok}` } : {}) },
+              body: JSON.stringify({ notes: ((b.notes || '') + '\n' + tag).trim() }),
+            }).catch(() => {});
           }
           allApiBookings.push({
             id: b.id,
