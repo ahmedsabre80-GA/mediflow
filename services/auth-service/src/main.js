@@ -1,4 +1,4 @@
-require('dotenv').config(); // v3
+require('dotenv').config(); // v4
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -401,6 +401,22 @@ app.get('/api/v1/auth/users/doctors', async (req, res) => {
     res.json({ success: true, data: r.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: { title: 'Internal server error', status: 500 } });
+  }
+});
+
+// ─── PUBLIC: look up any user by phone (for cross-portal notifications) ──────
+app.get('/api/v1/auth/users/by-phone', async (req, res) => {
+  const { phone } = req.query;
+  if (!phone) return res.status(400).json({ success: false, error: { title: 'phone required' } });
+  try {
+    const r = await pool.query(
+      `SELECT u.id, u.phone, u.role FROM auth.users u WHERE u.phone = $1 AND u.deleted_at IS NULL LIMIT 1`,
+      [String(phone)]
+    );
+    if (!r.rows.length) return res.status(404).json({ success: false, error: { title: 'not found' } });
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { title: 'Internal server error' } });
   }
 });
 

@@ -683,12 +683,22 @@ function AppointmentsContent() {
     const emailKey = (b.patient_email || b.patientEmail || '').toLowerCase();
     const notesMatch = String(updatedNotes).match(/\[patient_user_id:([^\]]+)\]/);
     let patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
-    // Fallback 1: lookup by email
+    // Fallback 1a: lookup by email
     if (!patientId && emailKey) {
       try {
         const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(emailKey)}`);
         if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
       } catch {}
+    }
+    // Fallback 1b: lookup by phone (most bookings have phone but not email)
+    if (!patientId) {
+      const phoneKey = (b.patient_phone || b.patientPhone || '').replace(/\s+/g, '');
+      if (phoneKey) {
+        try {
+          const r = await fetch(`${AUTH_API}/auth/users/by-phone?phone=${encodeURIComponent(phoneKey)}`);
+          if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
+        } catch {}
+      }
     }
     // Fallback 2: scan all bookings for this doctor to find a known patient_id for this patient_name
     if (!patientId) {

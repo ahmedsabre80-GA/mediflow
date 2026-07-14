@@ -493,8 +493,12 @@ export default function AppointmentsPage() {
                             )}
                             {(() => {
                               const cleanNotes = (b.notes || '')
+                                .replace(/\[patient_user_id:[^\]]*\]/g, '')
+                                .replace(/\[dr_reschedule:[^\]]*\]/g, '')
+                                .replace(/\[تم تغيير الموعد[^\]]*\]/g, '')
+                                .replace(/\[طلب المريض تغيير الموعد[^\]]*\]/g, '')
                                 .split('\n')
-                                .filter((l: string) => !l.startsWith('الوقت المفضل') && !l.startsWith('وقت الانتهاء') && !l.startsWith('نوع الزيارة') && !l.startsWith('التشخيص') && !l.startsWith('رقم الوصفة') && !l.startsWith('عمر المريض') && !l.startsWith('جنس المريض') && !l.startsWith('رقم الملف'))
+                                .filter((l: string) => !l.startsWith('الوقت المفضل') && !l.startsWith('وقت الانتهاء') && !l.startsWith('نوع الزيارة') && !l.startsWith('التشخيص') && !l.startsWith('رقم الوصفة') && !l.startsWith('عمر المريض') && !l.startsWith('جنس المريض') && !l.startsWith('رقم الملف') && l.trim() !== '')
                                 .join('\n').trim();
                               return cleanNotes ? (
                                 <p className="text-xs text-gray-400 mt-1 line-clamp-2">{cleanNotes}</p>
