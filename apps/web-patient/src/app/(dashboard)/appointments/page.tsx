@@ -306,7 +306,22 @@ export default function AppointmentsPage() {
     const { b, newDate, reason, customReason } = rescheduleFor;
     const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
     if (!newDate || !finalReason) return;
-    if (new Date(newDate + 'T00:00:00').getDay() === 5) { alert('لا يمكن تحديد موعد يوم الجمعة'); return; }
+    // Block same-date change
+    if (newDate === b.date) { alert('لا يمكن تغيير الموعد إلى نفس التاريخ الحالي'); return; }
+    // Check doctor's actual schedule for the chosen day
+    const chosenDow = new Date(newDate + 'T00:00:00').getDay();
+    if (b.doctorAuthId) {
+      try {
+        const sched = await fetch(`${APPT_API}/${b.doctorAuthId}/schedule`).then(r => r.json()).catch(() => null);
+        const dayEntry = (sched?.data || []).find((s: any) => s.day_of_week === chosenDow);
+        if (dayEntry && !dayEntry.is_active) { alert('الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
+        // If schedule exists but no entry for this day → treat as unavailable
+        if ((sched?.data || []).length > 0 && !dayEntry) { alert('الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
+      } catch {}
+    } else if (chosenDow === 5) {
+      // Fallback when doctorAuthId is unknown: block Friday
+      alert('لا يمكن تحديد موعد يوم الجمعة'); return;
+    }
     setRescheduleSaving(true);
     const oldDate = b.date;
     const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');

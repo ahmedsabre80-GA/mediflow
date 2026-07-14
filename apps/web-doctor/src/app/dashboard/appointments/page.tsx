@@ -653,7 +653,10 @@ function AppointmentsContent() {
     if (!newDate || !finalReason) return;
     const oldDate = b.appointment_date || selectedDate;
     if (newDate === oldDate) { showToast('⚠️ الموعد الجديد هو نفس الموعد الحالي'); return; }
-    if (new Date(newDate + 'T00:00:00').getDay() === 5) { showToast('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
+    const chosenDow = new Date(newDate + 'T00:00:00').getDay();
+    const schedEntry = schedule.find(s => s.day_of_week === chosenDow);
+    if (schedule.length > 0 && (!schedEntry || !schedEntry.is_active)) { showToast('⛔ الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
+    if (schedule.length === 0 && chosenDow === 5) { showToast('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
     setRescheduleSaving(true);
     const updatedNotes = [
       // Strip old reschedule notes, keep original patient notes only
@@ -727,8 +730,13 @@ function AppointmentsContent() {
     setAddError('');
     setAddSaving(true);
 
-    // Block Friday (day 5)
-    if (new Date(addForm.appointment_date + 'T00:00:00').getDay() === 5) {
+    // Block unavailable days per schedule (fallback: Friday when no schedule loaded)
+    const addDow = new Date(addForm.appointment_date + 'T00:00:00').getDay();
+    const addEntry = schedule.find(s => s.day_of_week === addDow);
+    if (schedule.length > 0 && (!addEntry || !addEntry.is_active)) {
+      setAddError('الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); setAddSaving(false); return;
+    }
+    if (schedule.length === 0 && addDow === 5) {
       setAddError('لا يمكن حجز موعد يوم الجمعة'); setAddSaving(false); return;
     }
 
