@@ -82,22 +82,27 @@ export default function PatientDashboard() {
       .then(r => r.json()).then(d => setPharmacies(d.data || [])).catch(() => {});
   }, [lat, lng, gpsReady]);
 
-  // Fetch loyalty points once
+  // Fetch loyalty points from patient notifications
   useEffect(() => {
-    fetch(`${NOTIF_API}/my`, { headers: patientAuthHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        const notifs: any[] = d.data || d.notifications || d || [];
-        let totalSpent = 0;
-        notifs.forEach((n: any) => {
-          const msg: string = n.message || '';
-          if (msg.includes('إيصال استلام')) {
-            const totalStr = msg.match(/الإجمالي:\s*([\d,]+)/)?.[1]?.replace(/,/g, '') || '0';
-            totalSpent += Number(totalStr);
-          }
-        });
-        setLoyaltyPoints(Math.floor(totalSpent / 1000));
-      }).catch(() => {});
+    try {
+      const raw = localStorage.getItem('mediflow-auth');
+      const uid = raw ? (JSON.parse(raw).state?.user?.id || '') : '';
+      if (!uid) return;
+      fetch(`${PHARMACY_API}/pharmacies/portal-notifications?portalType=patient&recipientId=${encodeURIComponent(uid)}`, { headers: patientAuthHeaders() })
+        .then(r => r.json())
+        .then(d => {
+          const notifs: any[] = d.data || [];
+          let totalSpent = 0;
+          notifs.forEach((n: any) => {
+            const msg: string = n.message || '';
+            if (msg.includes('إيصال استلام')) {
+              const totalStr = msg.match(/الإجمالي:\s*([\d,]+)/)?.[1]?.replace(/,/g, '') || '0';
+              totalSpent += Number(totalStr);
+            }
+          });
+          setLoyaltyPoints(Math.floor(totalSpent / 1000));
+        }).catch(() => {});
+    } catch {}
   }, []);
 
   const requestGPS = () => {

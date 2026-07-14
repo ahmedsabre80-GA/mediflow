@@ -165,7 +165,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const token = parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
       const validateToken = () => {
         if (!token) { localStorage.removeItem('mediflow-auth'); router.push('/login'); return; }
-        fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/profile', {
+        fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/verify', {
           headers: { Authorization: `Bearer ${token}` },
         }).then(r => {
           if (r.status === 401) {
