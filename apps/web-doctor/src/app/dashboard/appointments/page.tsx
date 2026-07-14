@@ -607,18 +607,31 @@ function AppointmentsContent() {
       const bkEmailKey = (booking?.patient_email || '').toLowerCase();
       const bkNotesMatch = String(booking?.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
       let patientId = booking?.patient_id || booking?.patientId || bkNotesMatch?.[1] || patientIdMap[bkEmailKey] || '';
-      // Fallback: look up by email from auth service
+      // Fallback 1: look up by email from auth service
       if (!patientId && bkEmailKey) {
         try {
           const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(bkEmailKey)}`);
           if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
         } catch {}
       }
+      // Fallback 2: look up by phone (most bookings have phone but not email)
+      if (!patientId) {
+        const phoneKey = (booking?.patient_phone || '').replace(/\s+/g, '');
+        if (phoneKey) {
+          try {
+            const r = await fetch(`${AUTH_API}/auth/users/by-phone?phone=${encodeURIComponent(phoneKey)}`);
+            if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
+          } catch {}
+        }
+      }
       if (patientId) {
         const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
         const drName = `د. ${doctorName}`;
         const date = booking?.appointment_date || '';
+        const isPatientReschedule = String(booking?.notes || '').includes('[طلب المريض تغيير الموعد');
         const msg =
+          status === 'confirmed' && isPatientReschedule ? `✅ قَبِل الطبيب تغيير موعدك\nالتاريخ الجديد: ${date}\nمع ${drName}\n\nيمكنك مراجعة تفاصيل موعدك من قسم "مواعيدي".` :
+          status === 'cancelled' && isPatientReschedule ? `❌ رفض الطبيب طلب تغيير الموعد\nالتاريخ: ${date}\nمع ${drName}\n\nيمكنك التواصل مع الطبيب أو حجز موعد جديد.` :
           status === 'confirmed'  ? `✅ تم تأكيد موعدك\nالتاريخ: ${date}\nمع ${drName}\n\nيمكنك مراجعة تفاصيل موعدك من قسم "مواعيدي".` :
           status === 'cancelled'  ? `❌ تم إلغاء موعدك\nالتاريخ: ${date}\nمع ${drName}\n\nيرجى التواصل معنا لإعادة الحجز.` :
           /* completed */           `✅ تم إنهاء زيارتك بنجاح\nالتاريخ: ${date}\nمع ${drName}\n\n⭐ نرجو تقييم زيارتك من قسم "مواعيدي".`;
@@ -950,10 +963,17 @@ function AppointmentsContent() {
               ⏳ بانتظار قبول المريض
             </span>
           ) : (
-            <>
-              <button onClick={() => doStatus('confirmed')} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg" title="تأكيد"><CheckCircle className="w-4 h-4" /></button>
-              <button onClick={() => doStatus('cancelled')} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="إلغاء"><XCircle className="w-4 h-4" /></button>
-            </>
+            <div className="flex flex-col gap-1.5 w-full">
+              {String(b.notes || '').includes('[طلب المريض تغيير الموعد') && (
+                <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg">
+                  📅 طلب المريض تغيير الموعد — قبول أو رفض؟
+                </span>
+              )}
+              <div className="flex items-center gap-2">
+                <button onClick={() => doStatus('confirmed')} className="flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-300 px-2.5 py-1.5 rounded-lg" title="قبول"><CheckCircle className="w-3.5 h-3.5" /> قبول</button>
+                <button onClick={() => doStatus('cancelled')} className="flex items-center gap-1 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1.5 rounded-lg" title="رفض"><XCircle className="w-3.5 h-3.5" /> رفض</button>
+              </div>
+            </div>
           )
         )}
         {b.status === 'confirmed' && !savedRx[b.id] && (() => {

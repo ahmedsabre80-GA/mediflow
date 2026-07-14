@@ -54,6 +54,8 @@ export default function AppointmentsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [rescheduleFor, setRescheduleFor] = useState<{ b: any; newDate: string; reason: string; customReason: string } | null>(null);
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
+  const [drRescheduleActing, setDrRescheduleActing] = useState<string | null>(null);
+  const [drRescheduleActed, setDrRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
   const [reminderMap, setReminderMap] = useState<Record<string, { h24: boolean; h6: boolean; custom: boolean }>>({});
   // customMin per booking id (default 30 min)
   const [customMin, setCustomMin] = useState<Record<string, number>>({});
@@ -301,6 +303,42 @@ export default function AppointmentsPage() {
     localStorage.setItem('mediflow-appt-reminders', JSON.stringify(reminders.filter((r: any) => r.id !== id)));
   };
 
+  // ── Accept or cancel a doctor-initiated reschedule from the appointment card ──
+  const handleDrReschedule = async (b: any, action: 'accept' | 'cancel') => {
+    setDrRescheduleActing(String(b.id));
+    const tok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+    const hdrs = { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
+    const doctorAuthId = b.doctorAuthId || '';
+    const newStatus = action === 'accept' ? 'confirmed' : 'cancelled';
+
+    // PATCH booking status
+    await fetch(`${APPT_API}/${doctorAuthId}/bookings/${b.id}`, {
+      method: 'PATCH', headers: hdrs,
+      body: JSON.stringify({ status: newStatus }),
+    }).catch(() => {});
+
+    // Notify doctor of patient decision
+    if (doctorAuthId) {
+      const patientName = localStorage.getItem('patient-name') || 'المريض';
+      const msg = action === 'accept'
+        ? `✅ قبل المريض تغيير الموعد\nالمريض: ${patientName}\nالتاريخ الجديد: ${b.date}`
+        : `❌ رفض المريض تغيير الموعد\nالمريض: ${patientName}\nتم إلغاء الحجز.`;
+      await fetch(NOTIF_API, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ portalType: 'doctor', recipientId: doctorAuthId, senderName: patientName, message: msg }),
+      }).catch(() => {});
+    }
+
+    // Update local state immediately
+    const all = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
+    const updated = all.map((item: any) => item.id === b.id ? { ...item, status: newStatus } : item);
+    localStorage.setItem('mediflow-my-bookings', JSON.stringify(updated));
+    setBookings(updated);
+    setDrRescheduleActed(prev => ({ ...prev, [String(b.id)]: action === 'accept' ? 'accepted' : 'cancelled' }));
+    setDrRescheduleActing(null);
+    setTimeout(() => syncFromAPI(), 800);
+  };
+
   const doReschedule = async () => {
     if (!rescheduleFor) return;
     const { b, newDate, reason, customReason } = rescheduleFor;
@@ -329,7 +367,12 @@ export default function AppointmentsPage() {
     }
     setRescheduleSaving(true);
     const oldDate = b.date;
-    const updatedNotes = [b.notes, `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`].filter(Boolean).join('\n');
+    const patientAuthId = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.user?.id||''; } catch { return ''; } })();
+    const updatedNotes = [
+      (b.notes || '').replace(/\[patient_user_id:[^\]]*\]/g, '').trim(),
+      `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`,
+      patientAuthId ? `[patient_user_id:${patientAuthId}]` : '',
+    ].filter(Boolean).join('\n');
     // Helper to get patient auth token
     const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.state?.token || s.accessToken || s.token || ''; } catch { return ''; } })();
     const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
@@ -513,6 +556,31 @@ export default function AppointmentsPage() {
 
                           {/* Actions */}
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
+                            {/* Doctor-initiated reschedule: show Accept/Cancel instead of normal actions */}
+                            {!isPast && b.status === 'pending' && String(b.notes || '').includes('[dr_reschedule:true]') ? (
+                              drRescheduleActed[String(b.id)] ? (
+                                <span className={`text-xs font-medium px-2.5 py-1.5 rounded-lg ${drRescheduleActed[String(b.id)] === 'accepted' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+                                  {drRescheduleActed[String(b.id)] === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم إلغاء الحجز'}
+                                </span>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg w-full mb-1">📅 الطبيب طلب تغيير موعدك — يرجى الرد:</span>
+                                  <button
+                                    disabled={drRescheduleActing === String(b.id)}
+                                    onClick={(e) => { e.stopPropagation(); handleDrReschedule(b, 'accept'); }}
+                                    className="text-xs font-bold bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-xl disabled:opacity-50 transition-colors">
+                                    ✅ قبول الموعد الجديد
+                                  </button>
+                                  <button
+                                    disabled={drRescheduleActing === String(b.id)}
+                                    onClick={(e) => { e.stopPropagation(); handleDrReschedule(b, 'cancel'); }}
+                                    className="text-xs font-bold bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-xl disabled:opacity-50 transition-colors">
+                                    ❌ إلغاء الحجز
+                                  </button>
+                                </>
+                              )
+                            ) : (
+                            <>
                             {!isPast && (b.status === 'pending' || b.status === 'confirmed') && (
                               <button onClick={(e) => { e.stopPropagation(); const nextDay = new Date(b.date + 'T00:00:00'); nextDay.setDate(nextDay.getDate() + 1); const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); const defaultDate = fmt(nextDay > tomorrow ? nextDay : tomorrow); setRescheduleFor({ b, newDate: defaultDate, reason: PT_RESCHEDULE_REASONS[0], customReason: '' }); }}
                                 className="text-xs font-semibold border border-amber-300 text-amber-600 px-3 py-1.5 rounded-xl hover:bg-amber-50 transition-colors flex items-center gap-1">
@@ -524,6 +592,8 @@ export default function AppointmentsPage() {
                                 className="text-xs text-red-500 font-medium border border-red-200 px-3 py-1.5 rounded-xl hover:bg-red-50 transition-colors">
                                 إلغاء الموعد
                               </button>
+                            )}
+                            </>
                             )}
                             {b.status === 'completed' && !getRated().includes(b.id) && (
                               <button onClick={(e) => { e.stopPropagation(); openRating(b); }}
