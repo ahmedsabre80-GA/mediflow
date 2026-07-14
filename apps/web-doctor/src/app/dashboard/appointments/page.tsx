@@ -651,9 +651,10 @@ function AppointmentsContent() {
     const { b, newDate, reason, customReason } = rescheduleFor;
     const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
     if (!newDate || !finalReason) return;
+    const oldDate = b.appointment_date || selectedDate;
+    if (newDate === oldDate) { showToast('⚠️ الموعد الجديد هو نفس الموعد الحالي'); return; }
     if (new Date(newDate + 'T00:00:00').getDay() === 5) { showToast('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
     setRescheduleSaving(true);
-    const oldDate = b.appointment_date || selectedDate;
     const updatedNotes = [
       // Strip old reschedule notes, keep original patient notes only
       (b.notes || '').replace(/\[تم تغيير الموعد[^\]]*\]/g, '').trim(),
@@ -674,13 +675,30 @@ function AppointmentsContent() {
 
     // Notify patient — resolve their auth ID by all available methods
     const emailKey = (b.patient_email || b.patientEmail || '').toLowerCase();
-    const notesMatch = String(b.notes || '').match(/\[patient_user_id:([^\]]+)\]/);
+    const notesMatch = String(updatedNotes).match(/\[patient_user_id:([^\]]+)\]/);
     let patientId = b.patient_id || b.patientId || notesMatch?.[1] || patientIdMap[emailKey] || '';
+    // Fallback 1: lookup by email
     if (!patientId && emailKey) {
       try {
         const r = await fetch(`${AUTH_API}/auth/users/by-email?email=${encodeURIComponent(emailKey)}`);
         if (r.ok) { const j = await r.json(); patientId = j.data?.id || ''; }
       } catch {}
+    }
+    // Fallback 2: scan all bookings for this doctor to find a known patient_id for this patient_name
+    if (!patientId) {
+      const nameKey = (b.patient_name || b.patientName || '').toLowerCase();
+      if (nameKey) {
+        for (const [, pid] of Object.entries(patientIdMap)) {
+          // patientIdMap is email→id; also check all stored bookings by name
+          if (pid) { /* can't match by name here, skip */ }
+        }
+        // Try scanning recent allBookings
+        const match = [...allBookings, ...bookings].find(x =>
+          (x.patient_name || '').toLowerCase() === nameKey &&
+          (x.patient_id || x.patientId || String(x.notes || '').match(/\[patient_user_id:([^\]]+)\]/)?.[1])
+        );
+        if (match) patientId = match.patient_id || match.patientId || String(match.notes || '').match(/\[patient_user_id:([^\]]+)\]/)?.[1] || '';
+      }
     }
     const doctorName = localStorage.getItem('doctor-name') || 'الطبيب';
     if (patientId) {
@@ -694,12 +712,14 @@ function AppointmentsContent() {
           message: `📅 تم تغيير موعدك\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة مواعيدك للتأكيد.`,
         }),
       }).catch(() => {});
+    } else {
+      showToast('✅ تم تغيير الموعد — تعذر إشعار المريض (لم يُربط بحساب)');
     }
     setRescheduleSaving(false);
     setRescheduleFor(null);
     setSelectedDate(newDate); // navigate to new date so booking stays visible
     if (tab === 'all') loadAllBookings();
-    showToast(`✅ تم تغيير الموعد إلى ${newDate}`);
+    if (patientId) showToast(`✅ تم تغيير الموعد إلى ${newDate} وإشعار المريض`);
   };
 
   const addBooking = async (e: React.FormEvent) => {

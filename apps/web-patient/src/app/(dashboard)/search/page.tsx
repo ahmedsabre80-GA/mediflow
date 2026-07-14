@@ -595,11 +595,10 @@ function SearchContent() {
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900 text-sm">{doc.name}</p>
                   <p className="text-xs text-sky-600 mt-0.5">{doc.specialization}</p>
-                  {doc.distKm != null && (
-                    <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-0.5">
-                      <MapPin className="w-3 h-3" />{doc.distKm < 1 ? `${Math.round(doc.distKm * 1000)} م` : `${doc.distKm.toFixed(1)} كم`}
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-0.5">
+                    <MapPin className="w-3 h-3" />
+                    {doc.distKm != null ? (doc.distKm < 1 ? `${Math.round(doc.distKm * 1000)} م` : `${doc.distKm.toFixed(1)} كم`) : 'موقع غير محدد'}
+                  </p>
                 </div>
                 <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-700 shrink-0">حجز</span>
               </button>
