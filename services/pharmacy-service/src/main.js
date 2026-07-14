@@ -383,6 +383,7 @@ async function bootstrap() {
       if (!origin) return cb(null, true);
       if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
       if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
+      if (/^https:\/\/[a-z0-9-]+\.railway\.app$/.test(origin)) return cb(null, true);
       cb(new Error('CORS: origin not allowed'));
     },
     credentials: true,
