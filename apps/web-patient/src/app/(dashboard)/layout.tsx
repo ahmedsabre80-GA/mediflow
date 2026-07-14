@@ -6,7 +6,7 @@ import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronL
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
-const APPT_API      = 'https://mediflow-appointment-service.up.railway.app/api/v1/doctors';
+const APPT_API      = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
 const CANCELLED_KEY = 'mediflow-cancelled-orders';
 const REMINDERS_KEY = 'mediflow-appt-reminders';
 
