@@ -6,6 +6,7 @@ import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronL
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+const APPT_API      = 'https://mediflow-appointment-service.up.railway.app/api/v1/doctors';
 const CANCELLED_KEY = 'mediflow-cancelled-orders';
 const REMINDERS_KEY = 'mediflow-appt-reminders';
 
@@ -53,6 +54,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [pendingRxBase64, setPendingRxBase64] = useState('');
   const [resendingRx,     setResendingRx]     = useState(false);
   const [resendingPartial, setResendingPartial] = useState(false);
+  const [drRescheduleActing, setDrRescheduleActing] = useState(false);
+  const [drRescheduleActed, setDrRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
   const [resentRxNotifIds, setResentRxNotifIds] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('mediflow-resent-rx-notifs') || '[]')); } catch { return new Set(); }
   });
@@ -432,6 +435,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {selected && (() => {
         const isReservation = isReservationNotif(selected);
         const isPartialAccept = selected.message.includes('قبول جزئي للوصفة') || selected.message.includes('جميع الأدوية متوفرة');
+        const isDrReschedule = selected.message.includes('📅 طلب تغيير موعد من الطبيب');
+        const drBookingId = selected.message.match(/\[booking_id:([^\]]+)\]/)?.[1] || '';
+        const drDoctorId  = selected.message.match(/\[doctor_id:([^\]]+)\]/)?.[1]  || '';
+        const drNewDate   = selected.message.match(/\[new_date:([^\]]+)\]/)?.[1]   || '';
         const partialPharmacyOwnerId = selected.message.match(/\[pharmacy_owner_id:([^\]]+)\]/)?.[1] || selected.senderId || '';
         const partialPrescriptionId  = selected.message.match(/\[prescription_id:([^\]]+)\]/)?.[1]  || '';
         const displayMessage = selected.message
@@ -440,7 +447,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           .replace(/\[delivery:[^\]]*\]/g, '')
           .replace(/\[price:[^\]]*\]/g, '')
           .replace(/\[currency:[^\]]*\]/g, '')
+          .replace(/\[booking_id:[^\]]*\]/g, '')
+          .replace(/\[doctor_id:[^\]]*\]/g, '')
+          .replace(/\[new_date:[^\]]*\]/g, '')
           .trim();
+
+        const handleDrRescheduleAction = async (action: 'accept' | 'cancel') => {
+          if (!drBookingId || !drDoctorId) { alert('بيانات الحجز غير مكتملة'); return; }
+          setDrRescheduleActing(true);
+          try {
+            const newStatus = action === 'accept' ? 'confirmed' : 'cancelled';
+            await fetch(`${APPT_API}/${drDoctorId}/bookings/${drBookingId}`, {
+              method: 'PATCH',
+              headers: patientAuthHeaders(),
+              body: JSON.stringify({ status: newStatus }),
+            });
+            // Notify doctor
+            const raw = localStorage.getItem('mediflow-auth');
+            const patientName = raw ? (JSON.parse(raw).state?.user?.name || JSON.parse(raw).state?.user?.email || '') : '';
+            const actionAr = action === 'accept' ? 'قبل' : 'رفض';
+            await fetch(`${PHARMACY_API.replace('/pharmacies', '')}/pharmacies/portal-notifications`, {
+              method: 'POST',
+              headers: patientAuthHeaders(),
+              body: JSON.stringify({
+                portalType: 'doctor',
+                recipientId: drDoctorId,
+                senderName: patientName,
+                message: action === 'accept'
+                  ? `✅ المريض ${patientName} ${actionAr} الموعد الجديد بتاريخ ${drNewDate}`
+                  : `❌ المريض ${patientName} ${actionAr} الموعد الجديد وألغى الحجز`,
+              }),
+            }).catch(() => {});
+            setDrRescheduleActed(prev => ({ ...prev, [selected.id]: action === 'accept' ? 'accepted' : 'cancelled' }));
+          } catch { alert('حدث خطأ، حاول مجدداً'); }
+          setDrRescheduleActing(false);
+        };
 
         const handleResendToSamePharmacy = async () => {
           setResendingPartial(true);
@@ -551,6 +592,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
               </div>
 
+              {/* Doctor reschedule accept/cancel */}
+              {isDrReschedule && (
+                <div className="space-y-2 mb-3">
+                  {drRescheduleActed[selected.id] ? (
+                    <>
+                      <p className={`text-sm font-semibold text-center py-2 ${drRescheduleActed[selected.id] === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
+                        {drRescheduleActed[selected.id] === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم إلغاء الحجز'}
+                      </p>
+                      <button onClick={closeModal} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-sky-700 text-right mb-2">📅 اختر ما تريد فعله بالموعد الجديد:</p>
+                      <button
+                        onClick={() => handleDrRescheduleAction('accept')}
+                        disabled={drRescheduleActing}
+                        className="w-full bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {drRescheduleActing ? 'جاري...' : '✅ قبول الموعد الجديد'}
+                      </button>
+                      <button
+                        onClick={() => handleDrRescheduleAction('cancel')}
+                        disabled={drRescheduleActing}
+                        className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {drRescheduleActing ? 'جاري...' : '❌ إلغاء الحجز'}
+                      </button>
+                      <button onClick={closeModal} disabled={drRescheduleActing} className="w-full border border-gray-300 text-gray-500 disabled:opacity-50 py-2.5 rounded-xl text-sm">لاحقاً</button>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Partial accept response buttons */}
               {isPartialAccept && !showCancelForm && (
                 <div className="space-y-2 mb-3">
@@ -585,7 +657,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               )}
 
               {/* Cancel reasons — only for pending reservations */}
-              {!isPartialAccept && (isReservation && showCancelForm ? (
+              {!isPartialAccept && !isDrReschedule && (isReservation && showCancelForm ? (
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-gray-700 text-right">سبب الإلغاء:</p>
                   {CANCEL_REASONS.map(reason => (

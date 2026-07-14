@@ -197,6 +197,7 @@ function AppointmentsContent() {
   // Reschedule modal
   const [rescheduleFor, setRescheduleFor] = useState<{ b: any; newDate: string; reason: string; customReason: string } | null>(null);
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState('');
 
   // Booking open time setting
   const [bookingOpenMode, setBookingOpenMode] = useState<'general'|'per-day'|'always'>('general');
@@ -652,11 +653,12 @@ function AppointmentsContent() {
     const finalReason = reason === 'أخرى' ? customReason.trim() : reason;
     if (!newDate || !finalReason) return;
     const oldDate = b.appointment_date || selectedDate;
-    if (newDate === oldDate) { showToast('⚠️ الموعد الجديد هو نفس الموعد الحالي'); return; }
+    if (newDate === oldDate) { setRescheduleError('⚠️ الموعد الجديد هو نفس الموعد الحالي، اختر تاريخاً مختلفاً'); return; }
     const chosenDow = new Date(newDate + 'T00:00:00').getDay();
     const schedEntry = schedule.find(s => s.day_of_week === chosenDow);
-    if (schedule.length > 0 && (!schedEntry || !schedEntry.is_active)) { showToast('⛔ الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
-    if (schedule.length === 0 && chosenDow === 5) { showToast('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
+    if (schedule.length > 0 && (!schedEntry || !schedEntry.is_active)) { setRescheduleError('⛔ الطبيب غير متاح في هذا اليوم، اختر يوماً آخر'); return; }
+    if (schedule.length === 0 && chosenDow === 5) { setRescheduleError('⛔ لا يمكن تحديد موعد يوم الجمعة'); return; }
+    setRescheduleError('');
     setRescheduleSaving(true);
     const updatedNotes = [
       // Strip old reschedule notes, keep original patient notes only
@@ -667,7 +669,7 @@ function AppointmentsContent() {
     const patchRes = await fetch(`${API}/${doctorId}/bookings/${b.id}`, {
       method: 'PATCH',
       headers: notifHeaders(),
-      body: JSON.stringify({ appointment_date: newDate, notes: updatedNotes }),
+      body: JSON.stringify({ appointment_date: newDate, status: 'pending', notes: updatedNotes }),
     }).catch(() => null);
 
     if (!patchRes?.ok) {
@@ -712,7 +714,7 @@ function AppointmentsContent() {
           portalType: 'patient',
           recipientId: patientId,
           senderName: `د. ${doctorName}`,
-          message: `📅 تم تغيير موعدك\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة مواعيدك للتأكيد.`,
+          message: `📅 طلب تغيير موعد من الطبيب\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى قبول الموعد الجديد أو إلغاء الحجز.\n[booking_id:${b.id}][doctor_id:${doctorId}][new_date:${newDate}]`,
         }),
       }).catch(() => {});
     } else {
@@ -1030,7 +1032,7 @@ function AppointmentsContent() {
         )}
         {(b.status === 'pending' || b.status === 'confirmed') && (
           <button
-            onClick={() => setRescheduleFor({ b, newDate: b.appointment_date || selectedDate, reason: DR_RESCHEDULE_REASONS[0], customReason: '' })}
+            onClick={() => { setRescheduleError(''); setRescheduleFor({ b, newDate: b.appointment_date || selectedDate, reason: DR_RESCHEDULE_REASONS[0], customReason: '' }); }}
             title="تغيير الموعد"
             className="p-1.5 text-amber-500 hover:bg-amber-50 rounded-lg">
             <CalendarClock className="w-4 h-4" />
@@ -1936,8 +1938,11 @@ function AppointmentsContent() {
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">التاريخ الجديد</label>
                 <input type="date" value={rescheduleFor.newDate} min={fmt(new Date())}
-                  onChange={e => setRescheduleFor(r => r ? { ...r, newDate: e.target.value } : r)}
-                  className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  onChange={e => { setRescheduleFor(r => r ? { ...r, newDate: e.target.value } : r); setRescheduleError(''); }}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${rescheduleError ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+                {rescheduleError && (
+                  <p className="mt-1.5 text-xs text-red-600 font-medium">{rescheduleError}</p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">سبب التغيير</label>

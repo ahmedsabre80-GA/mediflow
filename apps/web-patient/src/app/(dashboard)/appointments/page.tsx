@@ -329,24 +329,34 @@ export default function AppointmentsPage() {
     const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.state?.token || s.accessToken || s.token || ''; } catch { return ''; } })();
     const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
 
+    // Resolve doctorAuthId — use direct field, or scan bookings for same doctor name
+    let doctorAuthId = b.doctorAuthId || '';
+    if (!doctorAuthId && b.doctorName) {
+      const match = bookings.find((bk: any) => bk.doctorAuthId && bk.doctorName === b.doctorName);
+      doctorAuthId = match?.doctorAuthId || '';
+    }
+
     // PATCH and notify doctor whenever we have the booking ID and doctor auth ID
-    if (b.doctorAuthId && b.id) {
-      await fetch(`${APPT_API}/${b.doctorAuthId}/bookings/${b.id}`, {
+    if (doctorAuthId && b.id) {
+      await fetch(`${APPT_API}/${doctorAuthId}/bookings/${b.id}`, {
         method: 'PATCH',
         headers: authHeaders(),
         body: JSON.stringify({ appointment_date: newDate, status: 'pending', notes: updatedNotes }),
       }).catch(() => {});
       // Notify doctor
-      await fetch(NOTIF_API, {
+      const notifRes = await fetch(NOTIF_API, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
           portalType: 'doctor',
-          recipientId: b.doctorAuthId,
+          recipientId: doctorAuthId,
           senderName: b.patientName || 'المريض',
           message: `📅 طلب تغيير موعد\nالمريض: ${b.patientName || 'المريض'}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة المواعيد وتأكيد الموعد الجديد.`,
         }),
-      }).catch(() => {});
+      }).catch(() => null);
+      if (!notifRes?.ok) {
+        console.warn('Patient reschedule: failed to notify doctor', doctorAuthId, notifRes?.status);
+      }
     }
     // Update localStorage immediately for instant feedback
     const all = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
