@@ -4,7 +4,7 @@ const LOCAL_KEY = 'doctor-notifications';
 const TOKEN_KEY = 'doctor-token';
 
 export interface PortalNotif {
-  id: string; message: string; senderName: string; isRead: boolean; createdAt: string;
+  id: string; message: string; senderName: string; senderId: string; isRead: boolean; createdAt: string;
 }
 
 function getToken(): string {
@@ -23,7 +23,7 @@ export async function fetchNotifications(recipientId: string): Promise<PortalNot
       { headers: authHeaders() }
     );
     const d = await r.json();
-    return (d.data || []).map((n: any) => ({ id: n.id, message: n.message, senderName: n.sender_name || '', isRead: n.is_read, createdAt: n.created_at }));
+    return (d.data || []).map((n: any) => ({ id: n.id, message: n.message, senderName: n.sender_name || '', senderId: n.sender_id || '', isRead: n.is_read, createdAt: n.created_at }));
   } catch { return getLocalNotifications(); }
 }
 
@@ -39,6 +39,6 @@ export function getLocalNotifications(): PortalNotif[] {
 
 export function addLocalNotification(msg: string, sender = 'النظام') {
   const notifs = getLocalNotifications();
-  notifs.unshift({ id: Date.now().toString(), message: msg, senderName: sender, isRead: false, createdAt: new Date().toISOString() });
+  notifs.unshift({ id: Date.now().toString(), message: msg, senderName: sender, senderId: '', isRead: false, createdAt: new Date().toISOString() });
   localStorage.setItem(LOCAL_KEY, JSON.stringify(notifs.slice(0, 50)));
 }

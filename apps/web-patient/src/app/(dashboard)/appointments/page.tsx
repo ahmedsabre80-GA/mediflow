@@ -351,7 +351,7 @@ export default function AppointmentsPage() {
           portalType: 'doctor',
           recipientId: doctorAuthId,
           senderName: b.patientName || 'المريض',
-          message: `📅 طلب تغيير موعد\nالمريض: ${b.patientName || 'المريض'}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى مراجعة المواعيد وتأكيد الموعد الجديد.`,
+          message: `📅 طلب تغيير موعد من المريض\nالمريض: ${b.patientName || 'المريض'}\nمن: ${oldDate}\nإلى: ${newDate}\nالسبب: ${finalReason}\n\nيرجى قبول الموعد الجديد أو إلغاء الحجز.\n[booking_id:${b.id}][doctor_id:${doctorAuthId}][new_date:${newDate}][patient_id:${(() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.user?.id||''; } catch { return ''; } })()}]`,
         }),
       }).catch(() => null);
       if (!notifRes?.ok) {

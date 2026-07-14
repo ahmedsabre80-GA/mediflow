@@ -22,6 +22,16 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<PortalNotif[]>([]);
   const [selectedNotif, setSelectedNotif] = useState<PortalNotif | null>(null);
+  const [ptRescheduleActing, setPtRescheduleActing] = useState(false);
+  const [ptRescheduleActed, setPtRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
+
+  const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
+  const NOTIF_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
+
+  function drAuthHeaders(): Record<string, string> {
+    const token = localStorage.getItem('doctor-token') || '';
+    return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  }
 
   const refresh = useCallback(async () => {
     const userId = localStorage.getItem('doctor-user-id') || '';
@@ -191,49 +201,126 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
       </div>
 
       {/* Notification detail modal */}
-      {selectedNotif && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-              <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
-            </div>
-            <div className="bg-teal-50 rounded-xl p-4 mb-4 max-h-64 overflow-y-auto">
-              <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
-            </div>
-            <div className="space-y-1.5 text-sm text-gray-500">
-              {selectedNotif.senderName && (
+      {selectedNotif && (() => {
+        const isPtReschedule = selectedNotif.message.includes('📅 طلب تغيير موعد من المريض');
+        const ptBookingId = selectedNotif.message.match(/\[booking_id:([^\]]+)\]/)?.[1] || '';
+        const ptDoctorId  = selectedNotif.message.match(/\[doctor_id:([^\]]+)\]/)?.[1]  || '';
+        const ptNewDate   = selectedNotif.message.match(/\[new_date:([^\]]+)\]/)?.[1]   || '';
+        const ptPatientId = selectedNotif.message.match(/\[patient_id:([^\]]+)\]/)?.[1] || selectedNotif.senderId || '';
+        const displayMsg  = selectedNotif.message
+          .replace(/\[booking_id:[^\]]*\]/g, '')
+          .replace(/\[doctor_id:[^\]]*\]/g, '')
+          .replace(/\[new_date:[^\]]*\]/g, '')
+          .replace(/\[patient_id:[^\]]*\]/g, '')
+          .trim();
+
+        const handlePtRescheduleAction = async (action: 'accept' | 'cancel') => {
+          if (!ptBookingId || !ptDoctorId) { alert('بيانات الحجز غير مكتملة'); return; }
+          setPtRescheduleActing(true);
+          try {
+            const newStatus = action === 'accept' ? 'confirmed' : 'cancelled';
+            await fetch(`${APPT_API}/${ptDoctorId}/bookings/${ptBookingId}`, {
+              method: 'PATCH',
+              headers: drAuthHeaders(),
+              body: JSON.stringify({ status: newStatus }),
+            });
+            // Notify patient
+            const patientName = selectedNotif.senderName || 'المريض';
+            const doctorName  = localStorage.getItem('doctor-name') || 'الطبيب';
+            await fetch(NOTIF_API, {
+              method: 'POST',
+              headers: drAuthHeaders(),
+              body: JSON.stringify({
+                portalType: 'patient',
+                recipientId: ptPatientId,
+                senderName: doctorName,
+                message: action === 'accept'
+                  ? `✅ قبل الطبيب طلب تغيير موعدك إلى ${ptNewDate}`
+                  : `❌ رفض الطبيب طلب تغيير موعدك — الموعد القديم لا يزال سارياً`,
+              }),
+            }).catch(() => {});
+            setPtRescheduleActed(prev => ({ ...prev, [selectedNotif.id]: action === 'accept' ? 'accepted' : 'cancelled' }));
+          } catch { alert('حدث خطأ، حاول مجدداً'); }
+          setPtRescheduleActing(false);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelectedNotif(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" dir="rtl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={() => setSelectedNotif(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+                <h2 className="font-bold text-gray-900">تفاصيل الإشعار</h2>
+              </div>
+              <div className="bg-teal-50 rounded-xl p-4 mb-4 max-h-64 overflow-y-auto">
+                <p className="text-gray-900 text-sm leading-relaxed whitespace-pre-wrap">{displayMsg}</p>
+              </div>
+              <div className="space-y-1.5 text-sm text-gray-500 mb-5">
+                {selectedNotif.senderName && (
+                  <div className="flex justify-between">
+                    <span>{selectedNotif.senderName}</span>
+                    <span className="font-medium text-gray-700">المرسل</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span>{selectedNotif.senderName}</span>
-                  <span className="font-medium text-gray-700">المرسل</span>
+                  <span>{new Date(selectedNotif.createdAt).toLocaleString('ar-IQ')}</span>
+                  <span className="font-medium text-gray-700">التاريخ</span>
+                </div>
+              </div>
+
+              {/* Patient reschedule: Accept / Cancel */}
+              {isPtReschedule && (
+                ptRescheduleActed[selectedNotif.id] ? (
+                  <div className="space-y-2">
+                    <p className={`text-sm font-semibold text-center py-2 ${ptRescheduleActed[selectedNotif.id] === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
+                      {ptRescheduleActed[selectedNotif.id] === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم رفض الطلب'}
+                    </p>
+                    <button onClick={() => setSelectedNotif(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-sm font-semibold text-teal-700 text-right mb-3">📅 اختر ما تريد فعله بطلب المريض:</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => handlePtRescheduleAction('accept')} disabled={ptRescheduleActing}
+                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {ptRescheduleActing ? '...' : '✅ قبول'}
+                      </button>
+                      <button onClick={() => handlePtRescheduleAction('cancel')} disabled={ptRescheduleActing}
+                        className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {ptRescheduleActing ? '...' : '❌ رفض'}
+                      </button>
+                      <button onClick={() => setSelectedNotif(null)} disabled={ptRescheduleActing}
+                        className="flex-1 border border-gray-300 text-gray-500 disabled:opacity-50 py-3 rounded-xl text-sm font-medium">
+                        لاحقاً
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* Regular actions */}
+              {!isPtReschedule && (
+                <div className="flex gap-2">
+                  {(selectedNotif.message.includes('موعد') || selectedNotif.message.includes('حجز') || selectedNotif.message.includes('تأكيد') || selectedNotif.message.includes('إلغاء') || selectedNotif.message.includes('تغيير')) && (
+                    <button onClick={() => {
+                      const dateMatch = selectedNotif.message.match(/إلى:\s*(\d{4}-\d{2}-\d{2})/);
+                      const dest = dateMatch ? `/dashboard/appointments?date=${dateMatch[1]}` : '/dashboard/appointments';
+                      setSelectedNotif(null); router.push(dest);
+                    }} className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
+                      فتح المواعيد
+                    </button>
+                  )}
+                  <button onClick={() => setSelectedNotif(null)}
+                    className="flex-1 border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2.5 rounded-xl transition-colors text-sm">
+                    إغلاق
+                  </button>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span>{new Date(selectedNotif.createdAt).toLocaleString('ar-IQ')}</span>
-                <span className="font-medium text-gray-700">التاريخ</span>
-              </div>
-            </div>
-            <div className="mt-5 flex gap-2">
-              {(selectedNotif.message.includes('موعد') || selectedNotif.message.includes('حجز') || selectedNotif.message.includes('تأكيد') || selectedNotif.message.includes('إلغاء') || selectedNotif.message.includes('تغيير')) && (
-                <button onClick={() => {
-                  const dateMatch = selectedNotif.message.match(/إلى:\s*(\d{4}-\d{2}-\d{2})/);
-                  const dest = dateMatch ? `/dashboard/appointments?date=${dateMatch[1]}` : '/dashboard/appointments';
-                  setSelectedNotif(null); router.push(dest);
-                }}
-                  className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
-                  فتح المواعيد
-                </button>
-              )}
-              <button onClick={() => setSelectedNotif(null)}
-                className="flex-1 border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2.5 rounded-xl transition-colors text-sm">
-                إغلاق
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
