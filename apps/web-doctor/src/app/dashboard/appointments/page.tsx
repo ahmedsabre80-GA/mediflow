@@ -873,7 +873,15 @@ function AppointmentsContent() {
           .catch(()=>[])
       )
     );
-    const flat = results.flat().sort((a,b) => a.appointment_date.localeCompare(b.appointment_date));
+    // Dedup by booking ID — keep the entry at the latest appointment_date (= rescheduled date)
+    const seenIds = new Map<string, any>();
+    for (const b of results.flat()) {
+      const existing = seenIds.get(String(b.id));
+      if (!existing || b.appointment_date > existing.appointment_date) {
+        seenIds.set(String(b.id), b);
+      }
+    }
+    const flat = Array.from(seenIds.values()).sort((a, b) => a.appointment_date.localeCompare(b.appointment_date));
     setAllBookings(flat);
     buildPatientIdMap(flat);
     setAllLoading(false);
