@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter, Noto_Sans_Arabic } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
@@ -6,11 +6,18 @@ import { Providers } from './providers';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const arabic = Noto_Sans_Arabic({ subsets: ['arabic'], variable: '--font-arabic' });
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: '#0ea5e9',
+};
+
 export const metadata: Metadata = {
   title: 'MediFlow — Your Digital Pharmacy',
   description: 'Find medications, compare prices, and get them delivered.',
   manifest: '/manifest.json',
-  themeColor: '#0ea5e9',
   openGraph: {
     title: 'MediFlow',
     description: 'Your Digital Pharmacy',
