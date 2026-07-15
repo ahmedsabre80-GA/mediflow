@@ -510,11 +510,30 @@ async function bootstrap() {
       const allowed = ['confirmed', 'dispatched', 'delivered', 'cancelled'];
       if (!allowed.includes(status)) return res.status(422).json({ success: false, error: { title: 'Invalid status' } });
       const r = await pool.query(
-        `UPDATE warehouses.b2b_orders SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *`,
+        `UPDATE warehouses.b2b_orders SET status=$1, updated_at=NOW() WHERE id=$2
+         RETURNING *, (SELECT name FROM warehouses.warehouses WHERE id=warehouse_id) AS warehouse_name`,
         [status, req.params.orderId]
       );
       if (!r.rows.length) return res.status(404).json({ success: false });
-      res.json({ success: true, data: r.rows[0] });
+      const ord = r.rows[0];
+
+      // Notify pharmacy on key status changes
+      if ((status === 'confirmed' || status === 'dispatched' || status === 'delivered') && ord.pharmacy_id) {
+        try {
+          const msgs = {
+            confirmed:  `📦 تم تأكيد طلبك\nالمستودع: ${ord.warehouse_name}\nجارٍ التحضير والشحن.\n[order_id:${ord.id}]`,
+            dispatched: `🚚 طلبك في الطريق\nالمستودع: ${ord.warehouse_name}\nتم الإرسال، يرجى الاستعداد للاستلام.\n[order_id:${ord.id}]`,
+            delivered:  `✅ تم تسليم طلبك\nالمستودع: ${ord.warehouse_name}\nالإجمالي: ${Number(ord.total).toLocaleString()} د.ع\n\nيمكنك الآن مراجعة الأصناف وقبولها في المخزون من قسم "طلبيات معلقة".\n[order_id:${ord.id}][warehouse_name:${ord.warehouse_name}]`,
+          };
+          await pool.query(
+            `INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+             VALUES ($1,$2,$3,$4)`,
+            ['pharmacy', ord.pharmacy_id, ord.warehouse_name, msgs[status]]
+          );
+        } catch (_) {}
+      }
+
+      res.json({ success: true, data: ord });
     } catch (err) { next(err); }
   });
 
@@ -575,7 +594,58 @@ async function bootstrap() {
           [orderId, it.inventory_id || null, it.name, it.quantity, it.unit_price]
         );
       }
+
+      // Notify the warehouse owner about the new order
+      try {
+        const whRow = await pool.query(
+          'SELECT owner_id, name FROM warehouses.warehouses WHERE id=$1', [warehouse_id]
+        );
+        if (whRow.rows.length) {
+          const summary = items.slice(0, 3).map(it => `• ${it.name} (${it.quantity})`).join('\n');
+          const extra   = items.length > 3 ? `\n... و ${items.length - 3} أصناف أخرى` : '';
+          await pool.query(
+            `INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+             VALUES ($1,$2,$3,$4)`,
+            ['warehouse', whRow.rows[0].owner_id, pharmacy_name || 'صيدلية',
+             `🛒 طلب B2B جديد\nالصيدلية: ${pharmacy_name || 'صيدلية'}\nعدد الأصناف: ${items.length}\nالإجمالي: ${total.toLocaleString()} د.ع\n\n${summary}${extra}\n[order_id:${orderId}]`]
+          );
+        }
+      } catch (_) {}
+
       res.status(201).json({ success: true, data: order.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // ── Pharmacy: list active warehouses ─────────────────────────────────────
+  app.get('/api/v1/warehouses/list', authenticate, async (req, res, next) => {
+    try {
+      const r = await pool.query(`
+        SELECT w.id, w.name, w.name_ar, w.city, w.phone, w.address,
+          COUNT(DISTINCT i.id)::int AS drug_count
+        FROM warehouses.warehouses w
+        LEFT JOIN warehouses.inventory i ON i.warehouse_id = w.id AND i.quantity > 0
+        WHERE w.status = 'active'
+        GROUP BY w.id ORDER BY w.name
+      `);
+      res.json({ success: true, data: r.rows });
+    } catch (err) { next(err); }
+  });
+
+  // ── Pharmacy: view my own B2B orders ─────────────────────────────────────
+  app.get('/api/v1/warehouses/my-b2b-orders', authenticate, async (req, res, next) => {
+    try {
+      const orders = await pool.query(`
+        SELECT o.*, w.name AS warehouse_name,
+          COALESCE(json_agg(json_build_object(
+            'id', i.id, 'name', i.name, 'quantity', i.quantity, 'unit_price', i.unit_price
+          )) FILTER (WHERE i.id IS NOT NULL), '[]') AS items
+        FROM warehouses.b2b_orders o
+        JOIN warehouses.warehouses w ON w.id = o.warehouse_id
+        LEFT JOIN warehouses.b2b_order_items i ON i.order_id = o.id
+        WHERE o.pharmacy_id = $1
+        GROUP BY o.id, w.name ORDER BY o.created_at DESC
+      `, [req.user.sub]);
+      res.json({ success: true, data: orders.rows });
     } catch (err) { next(err); }
   });
 

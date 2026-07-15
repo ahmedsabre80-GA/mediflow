@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send, Receipt } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send, Receipt, Warehouse } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 import DraggableModal from '@/components/DraggableModal';
 
@@ -12,8 +12,9 @@ const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const NAV_ITEMS = [
   { href: '/dashboard',            icon: LayoutDashboard, label: 'الرئيسية',  perm: null },
   { href: '/dashboard/orders',     icon: ShoppingBag,     label: 'الطلبات',   perm: 'orders:read' },
-  { href: '/dashboard/inventory',  icon: Package,         label: 'المخزون',   perm: 'inventory:read' },
-  { href: '/dashboard/sales',     icon: Receipt,         label: 'المبيعات',  perm: 'inventory:read' },
+  { href: '/dashboard/inventory',  icon: Package,         label: 'المخزون',    perm: 'inventory:read' },
+  { href: '/dashboard/warehouses', icon: Warehouse,       label: 'المستودعات', perm: 'inventory:read' },
+  { href: '/dashboard/sales',     icon: Receipt,         label: 'المبيعات',   perm: 'inventory:read' },
   { href: '/dashboard/analytics',  icon: BarChart2,       label: 'التحليلات', perm: 'reports:read' },
   { href: '/dashboard/employees',  icon: Users,           label: 'الموظفون',  perm: 'employees:read' },
   { href: '/dashboard/messages',   icon: MessageSquare,   label: 'الرسائل',   perm: 'employees:read' },
@@ -506,7 +507,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           .replace(/\[partial_accept:[^\]]*\]/g, '')
           .replace(/\[dlat:[^\]]*\]/g, '')
           .replace(/\[dlng:[^\]]*\]/g, '')
+          .replace(/\[order_id:[^\]]*\]/g, '')
+          .replace(/\[warehouse_name:[^\]]*\]/g, '')
           .trim();
+
+        const isWarehouseDelivery = selectedNotif.message.includes('[order_id:') &&
+          selectedNotif.message.includes('تم تسليم طلبك');
 
         const handleConfirm = async () => {
           if (!reservation?.patientId) return;
@@ -1048,6 +1054,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                   </div>
                 )
+              ) : isWarehouseDelivery ? (
+                /* ── Warehouse: delivered — prompt pharmacy to receive ── */
+                <div className="space-y-2">
+                  <button
+                    onClick={() => { setSelectedNotif(null); router.push('/dashboard/inventory?tab=pending'); }}
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+                    📦 استلام وإضافة إلى المخزون المعلق
+                  </button>
+                  <button onClick={() => setSelectedNotif(null)}
+                    className="w-full border border-gray-300 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    لاحقاً
+                  </button>
+                </div>
               ) : (
                 <button onClick={() => setSelectedNotif(null)}
                   className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">

@@ -8,6 +8,7 @@ import {
   Sun, Snowflake, ChevronDown, ShoppingCart, RefreshCw, Edit3, QrCode, PenLine, Trash2,
 } from 'lucide-react';
 import WarehouseTab from './WarehouseTab';
+import PendingReceiptsTab from './PendingReceiptsTab';
 
 const BAT_KEY = 'pharmacy-stock-batches';
 const EXPIRY_WARN_KEY = 'pharmacy-expiry-warn-days';
@@ -511,11 +512,14 @@ function InventoryPage() {
     !updateSearch || (i.generic_name||'').toLowerCase().includes(updateSearch.toLowerCase()) || (i.brand_name||'').toLowerCase().includes(updateSearch.toLowerCase())
   );
 
-  const [mainTab, setMainTab] = useState<'inventory' | 'warehouses'>('inventory');
+  const [mainTab, setMainTab] = useState<'inventory' | 'warehouses' | 'pending'>('inventory');
   const [drugWarehouseMap, setDrugWarehouseMap] = useState<Record<string, string>>({});
 
-  // Expiry filter (from dashboard banner links)
+  // Expiry filter (from dashboard banner links) + tab param from notification link
   const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('tab') === 'pending') setMainTab('pending');
+  }, [searchParams]);
   const [expiryFilter, setExpiryFilter] = useState<'expiring' | 'expired' | null>(null);
   const [expiryBatches, setExpiryBatches] = useState<any[]>([]);
 
@@ -677,15 +681,16 @@ function InventoryPage() {
     <div className="space-y-4" dir="rtl">
       {/* Tab bar */}
       <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 w-fit">
-        {([['inventory','📦 المخزون'],['warehouses','🏭 المستودعات']] as const).map(([tab, label]) => (
+        {([['inventory','📦 المخزون'],['warehouses','🏭 مشتريات المستودع'],['pending','⏳ طلبيات معلقة']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setMainTab(tab)}
-            className={`px-5 py-2 rounded-xl text-sm font-bold transition-all ${mainTab === tab ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${mainTab === tab ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
             {label}
           </button>
         ))}
       </div>
 
       {mainTab === 'warehouses' && <WarehouseTab />}
+      {mainTab === 'pending' && <PendingReceiptsTab />}
       {mainTab === 'inventory' && <>
       {alertItems.length > 0 && !orderItem && (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center justify-between">
