@@ -369,7 +369,11 @@ export default function AppointmentsPage() {
     const oldDate = b.date;
     const patientAuthId = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.user?.id||''; } catch { return ''; } })();
     const updatedNotes = [
-      (b.notes || '').replace(/\[patient_user_id:[^\]]*\]/g, '').trim(),
+      // Strip both dr_reschedule tag AND old patient_user_id so ownership is always clear
+      (b.notes || '')
+        .replace(/\[patient_user_id:[^\]]*\]/g, '')
+        .replace(/\[dr_reschedule:true\]/g, '')
+        .trim(),
       `[طلب المريض تغيير الموعد من ${oldDate} إلى ${newDate} — السبب: ${finalReason}]`,
       patientAuthId ? `[patient_user_id:${patientAuthId}]` : '',
     ].filter(Boolean).join('\n');
@@ -556,6 +560,12 @@ export default function AppointmentsPage() {
 
                           {/* Actions */}
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
+                            {/* Patient-initiated reschedule: show waiting label */}
+                            {!isPast && b.status === 'pending' && String(b.notes || '').includes('[طلب المريض تغيير الموعد') && (
+                              <span className="text-xs text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg w-full">
+                                ⏳ بانتظار موافقة الطبيب على تغيير الموعد
+                              </span>
+                            )}
                             {/* Doctor-initiated reschedule: show Accept/Cancel instead of normal actions */}
                             {!isPast && b.status === 'pending' && String(b.notes || '').includes('[dr_reschedule:true]') ? (
                               drRescheduleActed[String(b.id)] ? (
