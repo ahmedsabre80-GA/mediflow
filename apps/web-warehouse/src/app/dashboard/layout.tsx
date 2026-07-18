@@ -2,13 +2,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X, MessageSquare, BookOpen } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const NAV = [
   { href: '/dashboard',           label: 'الرئيسية',       icon: LayoutDashboard },
   { href: '/dashboard/inventory', label: 'المخزون',        icon: Package },
   { href: '/dashboard/orders',    label: 'الطلبات B2B',   icon: ShoppingCart },
+  { href: '/dashboard/directory', label: 'الدليل',         icon: BookOpen },
   { href: '/dashboard/messages',  label: 'الرسائل',        icon: MessageSquare },
   { href: '/dashboard/campaigns', label: 'الحملات',        icon: Megaphone },
   { href: '/dashboard/analytics', label: 'التحليلات',      icon: BarChart3 },
@@ -53,7 +54,18 @@ export default function WarehouseDashboardLayout({ children }: { children: React
 
   const unread = notifs.filter(n => !n.isRead).length;
 
-  const handleRead = (id: string) => { markNotifRead(id); refresh(); };
+  const handleRead = (id: string, message?: string) => {
+    markNotifRead(id);
+    refresh();
+    setShowNotifs(false);
+    if (!message) return;
+    const oidMatch = message.match(/\[oid:([0-9a-f-]{36})\]/i);
+    if (oidMatch) {
+      router.push(`/dashboard/orders?feedback=${oidMatch[1]}`);
+    } else if (message.includes('B2B') || message.includes('طلب') || message.includes('order')) {
+      router.push('/dashboard/orders');
+    }
+  };
 
   return (
     <div className="flex h-screen bg-gray-50" dir="rtl">
@@ -107,7 +119,7 @@ export default function WarehouseDashboardLayout({ children }: { children: React
             {showNotifs && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
-                <div className="absolute left-0 top-10 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
+                <div className="fixed top-16 left-4 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
                   <div className="px-4 py-3 border-b flex items-center justify-between">
                     <button onClick={() => setShowNotifs(false)}><X className="w-4 h-4 text-gray-400" /></button>
                     <h3 className="font-bold text-gray-900 text-sm">
@@ -118,12 +130,16 @@ export default function WarehouseDashboardLayout({ children }: { children: React
                     {notifs.length === 0 ? (
                       <div className="px-4 py-8 text-center text-gray-400 text-sm">لا توجد إشعارات حالياً</div>
                     ) : notifs.map(n => (
-                      <div key={n.id} onClick={() => handleRead(n.id)}
+                      <div key={n.id} onClick={() => handleRead(n.id, n.message)}
                         className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${!n.isRead ? 'bg-amber-50' : ''}`}>
                         <div className="flex items-start gap-2">
                           {!n.isRead && <span className="w-2 h-2 bg-amber-500 rounded-full shrink-0 mt-1.5" />}
                           <div className={!n.isRead ? '' : 'mr-4'}>
-                            <p className="text-sm text-gray-800 font-medium">{n.message}</p>
+                            <p className="text-sm text-gray-800 font-medium">
+                              {n.message.includes('[PHREPORT]')
+                                ? '📋 تقرير استلام من الصيدلية'
+                                : n.message.split('\n')[0].replace(/\[.*?\]/g, '').trim() || n.message.slice(0, 60)}
+                            </p>
                             {n.senderName && <p className="text-xs text-gray-400">من: {n.senderName}</p>}
                             <p className="text-xs text-gray-400">{new Date(n.createdAt).toLocaleString('ar-IQ')}</p>
                           </div>
