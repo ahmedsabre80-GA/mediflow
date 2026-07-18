@@ -68,6 +68,7 @@ function balanceOwed(whId: string, purchases: Purchase[], payments: Payment[]): 
 // Merge duplicate B2B entries: if multiple entries share the same orderId in notes,
 // keep only the one with the highest grandTotal (most-complete delivery record).
 function deduplicatePurchases(list: Purchase[]): Purchase[] {
+  // Phase 1: deduplicate B2B entries by orderId UUID in notes
   const b2bMap = new Map<string, Purchase>();
   const nonB2B: Purchase[] = [];
   for (const p of list) {
@@ -80,7 +81,14 @@ function deduplicatePurchases(list: Purchase[]): Purchase[] {
       nonB2B.push(p);
     }
   }
-  return [...nonB2B, ...Array.from(b2bMap.values())];
+  // Phase 2: deduplicate non-B2B entries by same-day + grandTotal + warehouse
+  const nonB2BMap = new Map<string, Purchase>();
+  for (const p of nonB2B) {
+    const day = p.date ? p.date.slice(0, 10) : '';
+    const key = `${day}|${p.grandTotal}|${p.warehouseId || p.warehouseName}`;
+    if (!nonB2BMap.has(key)) nonB2BMap.set(key, p);
+  }
+  return [...Array.from(nonB2BMap.values()), ...Array.from(b2bMap.values())];
 }
 
 function emptyInvoice(): Invoice {
@@ -508,6 +516,12 @@ export default function WarehouseTab() {
     setSavingPurchase(false);
     setActiveWh(purchase.warehouseId);
     setView('list');
+  };
+
+  const deletePurchase = (id: string) => {
+    const next = purchases.filter(p => p.id !== id);
+    setPurchases(next); save(PUR_KEY, next);
+    pushState('wh-purchases', next);
   };
 
   // ── Payment form ──────────────────────────────────────────────────────────
@@ -1134,7 +1148,7 @@ export default function WarehouseTab() {
       {whPurchases.length > 0 && (
         <div className="space-y-3">
           <h3 className="font-bold text-gray-700 text-sm">فواتير الشراء ({whPurchases.length})</h3>
-          {[...whPurchases].reverse().map(p => <PurchaseCard key={p.id} purchase={p} />)}
+          {[...whPurchases].reverse().map(p => <PurchaseCard key={p.id} purchase={p} onDelete={() => deletePurchase(p.id)} />)}
         </div>
       )}
 
@@ -1159,7 +1173,7 @@ export default function WarehouseTab() {
 }
 
 // ── Purchase card ─────────────────────────────────────────────────────────
-function PurchaseCard({ purchase }: { purchase: Purchase }) {
+function PurchaseCard({ purchase, onDelete }: { purchase: Purchase; onDelete?: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -1173,6 +1187,12 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="font-black text-sky-700">{(purchase.grandTotal ?? 0).toLocaleString('ar-IQ')} IQD</span>
+          {onDelete && (
+            <span role="button" onClick={e => { e.stopPropagation(); if (window.confirm('حذف هذه الفاتورة؟')) onDelete(); }}
+              className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors" title="حذف">
+              ✕
+            </span>
+          )}
           {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
         </div>
       </button>
