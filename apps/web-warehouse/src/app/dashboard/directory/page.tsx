@@ -21,25 +21,20 @@ export default function DirectoryPage() {
     }
     if (tab === 'doctor' && doctors.length === 0) {
       setLoading(true);
-      Promise.all([
-        fetch(`${PHARM_API}/admin-requests`).then(r => r.json()).catch(() => ({ data: [] })),
-        fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
-      ]).then(([reqRes, authRes]) => {
-        const authUsers: any[] = authRes.data || [];
-        const list = (reqRes.data || [])
-          .filter((d: any) => ['approved', 'used'].includes(d.status) && d.portal_type === 'doctor')
-          .map((d: any) => {
-            const au = authUsers.find((u: any) => u.email?.toLowerCase() === d.employee_email?.toLowerCase());
-            return {
-              id: d.id,
-              name: d.employee_name,
-              email: d.employee_email,
-              phone: au?.phone || d.employee_phone || '',
-              specialization: d.employee_role || 'طب عام',
-            };
-          });
-        setDoctors(list);
-      }).finally(() => setLoading(false));
+      fetch(`${AUTH_API}/auth/users/doctors`)
+        .then(r => r.json())
+        .then(d => {
+          const list = (d.data || []).map((u: any) => ({
+            id:             u.id,
+            name:           [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email,
+            email:          u.email,
+            phone:          u.phone || '',
+            specialization: 'طب عام',
+          }));
+          setDoctors(list);
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
     }
     setSearch('');
   }, [tab]);
