@@ -55,7 +55,7 @@ function uid() { return Math.random().toString(36).slice(2) + Date.now().toStrin
 
 function calcInvoiceSubtotal(inv: Invoice): number {
   if (!inv.items?.length) return inv.subtotal ?? 0;
-  const total = (inv.items).reduce((s, it) => s + (it.totalCost ?? (it as any).price * (it as any).qty ?? 0), 0);
+  const total = (inv.items).reduce((s, it) => s + (it.totalCost || (it as any).price * (it as any).qty || 0), 0);
   return inv.discountType === 'total' && inv.totalDiscount > 0
     ? total * (1 - inv.totalDiscount / 100) : total;
 }
