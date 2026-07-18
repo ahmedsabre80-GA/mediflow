@@ -270,6 +270,12 @@ async function bootstrap() {
       unit_price NUMERIC(12,2) NOT NULL
     )
   `).catch(() => {});
+  // Add new warehouse inventory columns (idempotent)
+  await pool.query(`ALTER TABLE warehouses.inventory ADD COLUMN IF NOT EXISTS buying_price NUMERIC(12,2) DEFAULT 0`).catch(() => {});
+  await pool.query(`ALTER TABLE warehouses.inventory ADD COLUMN IF NOT EXISTS discount NUMERIC(5,2) DEFAULT 0`).catch(() => {});
+  await pool.query(`ALTER TABLE warehouses.inventory ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'`).catch(() => {});
+  await pool.query(`ALTER TABLE warehouses.b2b_order_items ADD COLUMN IF NOT EXISTS is_gift BOOLEAN DEFAULT false`).catch(() => {});
+  await pool.query(`ALTER TABLE warehouses.b2b_order_items ADD COLUMN IF NOT EXISTS discount NUMERIC(5,2) DEFAULT 0`).catch(() => {});
 
   // Warehouse roles middleware
   const isWarehouse = (req, res, next) => {
@@ -441,17 +447,18 @@ async function bootstrap() {
 
   app.post('/api/v1/warehouses/:warehouseId/inventory', authenticate, isWarehouse, async (req, res, next) => {
     try {
-      const { name, name_ar, batch_number, quantity, reorder_level, unit_price, expiry_date } = req.body;
+      const { name, name_ar, batch_number, quantity, reorder_level, unit_price, buying_price, discount, expiry_date, extra_data } = req.body;
       if (!name) return res.status(422).json({ success: false, error: { title: 'name required' } });
       const r = await pool.query(
         `INSERT INTO warehouses.inventory
-          (warehouse_id, name, name_ar, batch_number, quantity, reorder_level, unit_price, expiry_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *,
+          (warehouse_id, name, name_ar, batch_number, quantity, reorder_level, unit_price, buying_price, discount, expiry_date, extra_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *,
           CASE WHEN quantity=0 THEN 'out'
                WHEN expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE+INTERVAL '30 days' THEN 'expiring'
                WHEN quantity<reorder_level THEN 'low' ELSE 'good' END AS status`,
         [req.params.warehouseId, name, name_ar||name, batch_number||null,
-         quantity||0, reorder_level||100, unit_price||0, expiry_date||null]
+         quantity||0, reorder_level||100, unit_price||0, buying_price||0, discount||0,
+         expiry_date||null, extra_data ? JSON.stringify(extra_data) : '{}']
       );
       res.status(201).json({ success: true, data: r.rows[0] });
     } catch (err) { next(err); }
@@ -459,19 +466,22 @@ async function bootstrap() {
 
   app.patch('/api/v1/warehouses/:warehouseId/inventory/:stockId', authenticate, isWarehouse, async (req, res, next) => {
     try {
-      const { name, name_ar, batch_number, quantity, reorder_level, unit_price, expiry_date } = req.body;
+      const { name, name_ar, batch_number, quantity, reorder_level, unit_price, buying_price, discount, expiry_date, extra_data } = req.body;
       const r = await pool.query(`
         UPDATE warehouses.inventory SET
           name=COALESCE($1,name), name_ar=COALESCE($2,name_ar),
           batch_number=COALESCE($3,batch_number), quantity=COALESCE($4,quantity),
           reorder_level=COALESCE($5,reorder_level), unit_price=COALESCE($6,unit_price),
-          expiry_date=COALESCE($7,expiry_date), updated_at=NOW()
-        WHERE id=$8 AND warehouse_id=$9
+          buying_price=COALESCE($7,buying_price), discount=COALESCE($8,discount),
+          expiry_date=COALESCE($9,expiry_date),
+          extra_data=COALESCE($10::jsonb, extra_data), updated_at=NOW()
+        WHERE id=$11 AND warehouse_id=$12
         RETURNING *,
           CASE WHEN quantity=0 THEN 'out'
                WHEN expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE+INTERVAL '30 days' THEN 'expiring'
                WHEN quantity<reorder_level THEN 'low' ELSE 'good' END AS status
-      `, [name, name_ar, batch_number, quantity, reorder_level, unit_price, expiry_date,
+      `, [name, name_ar, batch_number, quantity, reorder_level, unit_price, buying_price, discount,
+          expiry_date, extra_data ? JSON.stringify(extra_data) : null,
           req.params.stockId, req.params.warehouseId]);
       if (!r.rows.length) return res.status(404).json({ success: false });
       res.json({ success: true, data: r.rows[0] });
@@ -538,13 +548,18 @@ async function bootstrap() {
   });
 
   // ── Public: warehouse catalog (pharmacies browse) ─────────────────────────
+  // Pharmacy sees: discount % + net_price — NOT buying_price or original unit_price
   app.get('/api/v1/warehouses/catalog', authenticate, async (req, res, next) => {
     try {
       const r = await pool.query(`
-        SELECT i.*, w.name AS warehouse_name, w.city AS warehouse_city,
+        SELECT i.id, i.warehouse_id, i.name, i.name_ar, i.batch_number, i.quantity,
+          i.reorder_level, i.expiry_date, i.extra_data,
+          COALESCE(i.discount, 0) AS discount,
+          ROUND(i.unit_price * (1 - COALESCE(i.discount,0)/100), 2) AS net_price,
           CASE WHEN i.quantity=0 THEN 'out'
                WHEN i.expiry_date IS NOT NULL AND i.expiry_date < CURRENT_DATE+INTERVAL '30 days' THEN 'expiring'
-               WHEN i.quantity<i.reorder_level THEN 'low' ELSE 'good' END AS status
+               WHEN i.quantity<i.reorder_level THEN 'low' ELSE 'good' END AS status,
+          w.name AS warehouse_name, w.city AS warehouse_city
         FROM warehouses.inventory i
         JOIN warehouses.warehouses w ON w.id=i.warehouse_id AND w.status='active'
         WHERE i.quantity > 0
@@ -554,13 +569,14 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ── Public: search warehouse inventory by drug name ──────────────────────
+  // Search for pharmacy — same field filtering as catalog
   app.get('/api/v1/warehouses/drugs/search', async (req, res, next) => {
     try {
       const q = (req.query.q || '').trim();
       if (!q || q.length < 2) return res.json({ success: true, data: [] });
       const r = await pool.query(`
-        SELECT i.id, i.name, i.name_ar, i.batch_number, i.quantity, i.unit_price, i.expiry_date,
+        SELECT i.id, i.name, i.name_ar, i.batch_number, i.quantity, i.expiry_date, i.extra_data,
+          ROUND(i.unit_price * (1 - COALESCE(i.discount,0)/100), 2) AS net_price,
           w.id AS warehouse_id, w.name AS warehouse_name, w.city AS warehouse_city, w.phone AS warehouse_phone
         FROM warehouses.inventory i
         JOIN warehouses.warehouses w ON w.id = i.warehouse_id AND w.status = 'active'
@@ -573,14 +589,42 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ── Pharmacy: place B2B order ─────────────────────────────────────────────
+  // Warehouse: bulk import inventory items from CSV/Excel upload
+  app.post('/api/v1/warehouses/:warehouseId/inventory/bulk', authenticate, isWarehouse, async (req, res, next) => {
+    try {
+      const { items } = req.body; // array of inventory objects
+      if (!Array.isArray(items) || !items.length) {
+        return res.status(422).json({ success: false, error: { title: 'items array required' } });
+      }
+      const inserted = [];
+      for (const it of items) {
+        if (!it.name) continue;
+        const r = await pool.query(
+          `INSERT INTO warehouses.inventory
+            (warehouse_id, name, name_ar, batch_number, quantity, reorder_level, unit_price, buying_price, discount, expiry_date, extra_data)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, name`,
+          [req.params.warehouseId, it.name, it.name_ar||it.name, it.batch_number||null,
+           it.quantity||0, it.reorder_level||100, it.unit_price||0, it.buying_price||0, it.discount||0,
+           it.expiry_date||null, it.extra_data ? JSON.stringify(it.extra_data) : '{}']
+        );
+        inserted.push(r.rows[0]);
+      }
+      res.status(201).json({ success: true, data: inserted, count: inserted.length });
+    } catch (err) { next(err); }
+  });
+
+  // ── Pharmacy: place B2B order — total uses net_price (after warehouse discount) ──
   app.post('/api/v1/warehouses/b2b-orders', authenticate, async (req, res, next) => {
     try {
       const { warehouse_id, pharmacy_id, pharmacy_name, items, notes } = req.body;
       if (!warehouse_id || !items?.length) {
         return res.status(422).json({ success: false, error: { title: 'warehouse_id and items required' } });
       }
-      const total = items.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+      // net_price = unit_price * (1 - discount/100), pre-computed by client or computed here
+      const total = items.reduce((sum, it) => {
+        const net = it.net_price ?? (it.unit_price * (1 - (it.discount || 0) / 100));
+        return sum + it.quantity * net;
+      }, 0);
       const order = await pool.query(
         `INSERT INTO warehouses.b2b_orders (warehouse_id, pharmacy_id, pharmacy_name, total, notes)
          VALUES ($1,$2,$3,$4,$5) RETURNING *`,
@@ -588,10 +632,11 @@ async function bootstrap() {
       );
       const orderId = order.rows[0].id;
       for (const it of items) {
+        const net = it.net_price ?? (it.unit_price * (1 - (it.discount || 0) / 100));
         await pool.query(
-          `INSERT INTO warehouses.b2b_order_items (order_id, inventory_id, name, quantity, unit_price)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [orderId, it.inventory_id || null, it.name, it.quantity, it.unit_price]
+          `INSERT INTO warehouses.b2b_order_items (order_id, inventory_id, name, quantity, unit_price, discount, is_gift)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [orderId, it.inventory_id || null, it.name, it.quantity, net, it.discount || 0, false]
         );
       }
 
@@ -620,7 +665,7 @@ async function bootstrap() {
   app.get('/api/v1/warehouses/list', authenticate, async (req, res, next) => {
     try {
       const r = await pool.query(`
-        SELECT w.id, w.name, w.name_ar, w.city, w.phone, w.address,
+        SELECT w.id, w.owner_id, w.name, w.name_ar, w.city, w.phone, w.address,
           COUNT(DISTINCT i.id)::int AS drug_count
         FROM warehouses.warehouses w
         LEFT JOIN warehouses.inventory i ON i.warehouse_id = w.id AND i.quantity > 0
@@ -631,21 +676,77 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // ── Pharmacy: view my own B2B orders ─────────────────────────────────────
+  // ── Pharmacy: view my own B2B orders — includes gift flag ────────────────
   app.get('/api/v1/warehouses/my-b2b-orders', authenticate, async (req, res, next) => {
     try {
       const orders = await pool.query(`
-        SELECT o.*, w.name AS warehouse_name,
+        SELECT o.*, w.id AS warehouse_db_id, w.name AS warehouse_name,
           COALESCE(json_agg(json_build_object(
-            'id', i.id, 'name', i.name, 'quantity', i.quantity, 'unit_price', i.unit_price
+            'id', i.id, 'name', i.name, 'quantity', i.quantity,
+            'unit_price', i.unit_price, 'discount', i.discount, 'is_gift', i.is_gift
           )) FILTER (WHERE i.id IS NOT NULL), '[]') AS items
         FROM warehouses.b2b_orders o
         JOIN warehouses.warehouses w ON w.id = o.warehouse_id
         LEFT JOIN warehouses.b2b_order_items i ON i.order_id = o.id
         WHERE o.pharmacy_id = $1
-        GROUP BY o.id, w.name ORDER BY o.created_at DESC
+        GROUP BY o.id, w.id, w.name ORDER BY o.created_at DESC
       `, [req.user.sub]);
       res.json({ success: true, data: orders.rows });
+    } catch (err) { next(err); }
+  });
+
+  // ── Warehouse: add gift items to an existing order (before/during dispatch) ──
+  app.post('/api/v1/warehouses/b2b-orders/:orderId/gift-items', authenticate, isWarehouse, async (req, res, next) => {
+    try {
+      const { items } = req.body; // [{ name, quantity }]
+      if (!Array.isArray(items) || !items.length) {
+        return res.status(422).json({ success: false, error: { title: 'items required' } });
+      }
+      const ord = await pool.query('SELECT * FROM warehouses.b2b_orders WHERE id=$1', [req.params.orderId]);
+      if (!ord.rows.length) return res.status(404).json({ success: false });
+      const inserted = [];
+      for (const it of items) {
+        if (!it.name || !it.quantity) continue;
+        const r = await pool.query(
+          `INSERT INTO warehouses.b2b_order_items (order_id, name, quantity, unit_price, discount, is_gift)
+           VALUES ($1,$2,$3,0,0,true) RETURNING *`,
+          [req.params.orderId, it.name, it.quantity]
+        );
+        inserted.push(r.rows[0]);
+      }
+      res.status(201).json({ success: true, data: inserted });
+    } catch (err) { next(err); }
+  });
+
+  // ── Pharmacy: submit return/damage report for an order item ──────────────
+  app.post('/api/v1/warehouses/b2b-orders/:orderId/return-report', authenticate, async (req, res, next) => {
+    try {
+      const { item_name, report_type, actual_qty, notes, image_base64 } = req.body;
+      // report_type: 'broken' | 'not_received' | 'mismatch'
+      const ord = await pool.query(
+        `SELECT o.*, w.owner_id, w.name AS warehouse_name
+         FROM warehouses.b2b_orders o
+         JOIN warehouses.warehouses w ON w.id = o.warehouse_id
+         WHERE o.id=$1`, [req.params.orderId]
+      );
+      if (!ord.rows.length) return res.status(404).json({ success: false });
+      const o = ord.rows[0];
+      const typeLabel = { broken: '📷 مكسور', not_received: '📦 لم يُستلم', mismatch: '🔢 كمية مختلفة' }[report_type] || '⚠️ بلاغ';
+      const msg = [
+        `${typeLabel}: ${item_name}`,
+        `الطلبية: ${req.params.orderId}`,
+        report_type === 'mismatch' ? `الكمية المستلمة: ${actual_qty}` : '',
+        notes ? `ملاحظة: ${notes}` : '',
+        image_base64 ? '[صورة مرفقة]' : '',
+      ].filter(Boolean).join('\n');
+      if (o.owner_id) {
+        await pool.query(
+          `INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
+           VALUES ('warehouse',$1,$2,$3)`,
+          [o.owner_id, o.pharmacy_name || 'صيدلية', msg]
+        ).catch(() => {});
+      }
+      res.json({ success: true });
     } catch (err) { next(err); }
   });
 
@@ -1907,12 +2008,49 @@ async function bootstrap() {
       );
       if (uRes.rows.length === 0) return res.status(404).json({ error: 'User not found in auth.users' });
       const userId = uRes.rows[0].id;
+      const userRole = uRes.rows[0].role;
       // Also activate the pharmacy record if any
       const pRes = await pool.query(
         `UPDATE pharmacies.pharmacies SET status='active', updated_at=NOW() WHERE owner_id=$1 RETURNING id, status`,
         [userId]
       );
-      res.json({ success: true, user: uRes.rows[0], pharmacy: pRes.rows[0] || null });
+      // Auto-create warehouse row for warehouse owners
+      let whRow = null;
+      const warehouseRoles2 = ['warehouse_owner', 'warehouse_manager'];
+      if (warehouseRoles2.includes(userRole)) {
+        const existing = await pool.query('SELECT id FROM warehouses.warehouses WHERE owner_id=$1', [userId]);
+        if (existing.rows.length === 0) {
+          const wInsert = await pool.query(
+            `INSERT INTO warehouses.warehouses (owner_id) VALUES ($1) RETURNING id, name, status`,
+            [userId]
+          );
+          whRow = wInsert.rows[0];
+        } else {
+          whRow = existing.rows[0];
+        }
+      }
+      res.json({ success: true, user: uRes.rows[0], pharmacy: pRes.rows[0] || null, warehouse: whRow });
+    } catch (err) { next(err); }
+  });
+
+  // Admin: update warehouse name by owner email
+  app.post('/api/v1/admin/update-warehouse-name', async (req, res, next) => {
+    try {
+      const secret = req.headers['x-admin-secret'];
+      if (secret !== (process.env.ADMIN_SECRET || 'mediflow-admin-2026'))
+        return res.status(403).json({ error: 'Forbidden' });
+      const { email, name, name_ar } = req.body;
+      if (!email || !name) return res.status(400).json({ error: 'email and name required' });
+      const uRes = await pool.query(`SELECT id FROM auth.users WHERE LOWER(email)=LOWER($1)`, [email]);
+      if (!uRes.rows.length) return res.status(404).json({ error: 'User not found' });
+      const userId = uRes.rows[0].id;
+      const wRes = await pool.query(
+        `UPDATE warehouses.warehouses SET name=$1, name_ar=COALESCE($2,name_ar), updated_at=NOW()
+         WHERE owner_id=$3 RETURNING id, name, name_ar`,
+        [name, name_ar || name, userId]
+      );
+      if (!wRes.rows.length) return res.status(404).json({ error: 'Warehouse row not found — activate first' });
+      res.json({ success: true, data: wRes.rows[0] });
     } catch (err) { next(err); }
   });
 
