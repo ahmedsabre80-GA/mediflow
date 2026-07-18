@@ -170,17 +170,18 @@ export default function WarehouseTab() {
       };
 
       const mergedWh = merge(localWh, remoteWh);
-      const mergedPur = deduplicatePurchases(merge(localPur, remotePur));
+      const rawMergedPur = merge(localPur, remotePur);
+      const mergedPur = deduplicatePurchases(rawMergedPur);
       const mergedPay = merge(localPay, remotePay);
 
       // Save merged back to localStorage
       if (mergedWh.length > localWh.length) { save(WH_KEY, mergedWh); setWarehouses(mergedWh); }
-      if (mergedPur.length !== localPur.length) { save(PUR_KEY, mergedPur); setPurchases(mergedPur); }
+      if (mergedPur.length !== localPur.length || rawMergedPur.length !== mergedPur.length) { save(PUR_KEY, mergedPur); setPurchases(mergedPur); }
       if (mergedPay.length > localPay.length) { save(PAY_KEY, mergedPay); setPayments(mergedPay); }
 
-      // If local has more data than remote, push local up
+      // Push cleaned data to backend whenever dedup removed entries or local has more
       if (localWh.length > remoteWh.length) pushState('wh-warehouses', mergedWh);
-      if (localPur.length > remotePur.length || mergedPur.length < localPur.length) pushState('wh-purchases', mergedPur);
+      if (localPur.length > remotePur.length || rawMergedPur.length > mergedPur.length) pushState('wh-purchases', mergedPur);
       if (localPay.length > remotePay.length) pushState('wh-payments', mergedPay);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
