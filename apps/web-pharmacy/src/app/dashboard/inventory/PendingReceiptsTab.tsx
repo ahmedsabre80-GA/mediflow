@@ -310,7 +310,7 @@ export default function PendingReceiptsTab() {
     return <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${c.cls}`}>{c.label}</span>;
   };
 
-  const isActionable = (s: ItemStatus) => s === 'pending' || s === 'partial';
+  const isActionable = (s?: ItemStatus | string) => !s || s === 'pending' || s === 'partial';
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (

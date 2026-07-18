@@ -12,33 +12,29 @@ export default function DirectoryPage() {
   const [loading,      setLoading]      = useState(false);
   const [search,       setSearch]       = useState('');
 
+  // Fetch both data sets on mount to avoid race conditions between tabs
   useEffect(() => {
-    if (tab === 'pharmacy' && pharmacies.length === 0) {
-      setLoading(true);
-      fetch(`${PHARM_API}/active`)
-        .then(r => r.json()).then(d => setPharmacies(d.data || [])).catch(() => {})
-        .finally(() => setLoading(false));
-    }
-    if (tab === 'doctor' && doctors.length === 0) {
-      setLoading(true);
-      fetch(`${AUTH_API}/auth/users/doctors`)
-        .then(r => r.json())
-        .then(d => {
-          const list = (d.data || []).map((u: any) => ({
-            id:             u.id,
-            name:           [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email,
-            email:          u.email,
-            phone:          u.phone || '',
-            specialization: 'طب عام',
-            status:         u.status,
-          }));
-          setDoctors(list);
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    }
-    setSearch('');
-  }, [tab]);
+    setLoading(true);
+    const p1 = fetch(`${PHARM_API}/active`)
+      .then(r => r.json()).then(d => setPharmacies(d.data || [])).catch(() => {});
+    const p2 = fetch(`${AUTH_API}/auth/users/doctors`)
+      .then(r => r.json())
+      .then(d => {
+        const list = (d.data || []).map((u: any) => ({
+          id:             u.id,
+          name:           [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email,
+          email:          u.email,
+          phone:          u.phone || '',
+          specialization: 'طب عام',
+          status:         u.status,
+        }));
+        setDoctors(list);
+      })
+      .catch(() => {});
+    Promise.all([p1, p2]).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { setSearch(''); }, [tab]);
 
   const filteredPharm = pharmacies.filter(p =>
     !search || p.name_ar?.includes(search) || p.name?.includes(search) || p.city?.includes(search) || p.phone?.includes(search)
