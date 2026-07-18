@@ -30,6 +30,7 @@ export default function DirectoryPage() {
             email:          u.email,
             phone:          u.phone || '',
             specialization: 'طب عام',
+            status:         u.status,
           }));
           setDoctors(list);
         })
@@ -116,7 +117,10 @@ export default function DirectoryPage() {
                   👨‍⚕️
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-bold text-gray-900 truncate mb-1">{d.name}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="font-bold text-gray-900 truncate">{d.name}</p>
+                    {d.status === 'pending_verification' && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-md shrink-0">قيد المراجعة</span>}
+                  </div>
                   <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-lg font-medium">{d.specialization}</span>
                   {d.phone && <p className="text-xs text-gray-500 flex items-center gap-1 mt-2"><Phone className="w-3 h-3" /> {d.phone}</p>}
                   {d.email && <p className="text-xs text-gray-400 mt-0.5 truncate">{d.email}</p>}

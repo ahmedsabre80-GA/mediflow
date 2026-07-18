@@ -395,7 +395,7 @@ app.get('/api/v1/auth/users/doctors', async (req, res) => {
              p.first_name, p.last_name
       FROM auth.users u
       LEFT JOIN users.profiles p ON p.id = u.id
-      WHERE u.role = 'doctor' AND u.status = 'active' AND u.deleted_at IS NULL
+      WHERE u.role = 'doctor' AND u.status IN ('active','pending_verification') AND u.deleted_at IS NULL
       ORDER BY p.first_name, p.last_name
     `);
     res.json({ success: true, data: r.rows });
