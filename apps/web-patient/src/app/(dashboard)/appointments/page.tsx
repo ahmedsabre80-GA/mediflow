@@ -2,6 +2,7 @@
 // v3
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuthStore } from '@/stores/auth.store';
 import { CalendarDays, Clock, Stethoscope, Trash2, CheckCircle, XCircle, AlertCircle, RefreshCw, Star, Bell, BellOff, ChevronDown, ChevronUp, Plus, CalendarClock, X } from 'lucide-react';
 
 const RATING_CATEGORIES = [
@@ -156,7 +157,7 @@ export default function AppointmentsPage() {
 
       // Fetch all approved doctors
       const [reqRes, authRes] = await Promise.all([
-        fetch(`${PHARM_API}/admin-requests`, { headers: (() => { try { const t = JSON.parse(localStorage.getItem('mediflow-auth')||'{}').state?.accessToken||''; return {'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})}; } catch { return {'Content-Type':'application/json'}; } })() }).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${PHARM_API}/admin-requests`, { headers: (() => { try { const t = useAuthStore.getState().accessToken||''; return {'Content-Type':'application/json',...(t?{Authorization:`Bearer ${t}`}:{})}; } catch { return {'Content-Type':'application/json'}; } })() }).then(r => r.json()).catch(() => ({ data: [] })),
         fetch(`${AUTH_API}/auth/users/doctors`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const authUsers: any[] = authRes.data || authRes.users || [];
@@ -187,7 +188,7 @@ export default function AppointmentsPage() {
           // Embed patient auth ID in notes so doctor can send notifications
           const tag = `[patient_user_id:${patientAuthId}]`;
           if (patientAuthId && !(b.notes || '').includes(tag)) {
-            const patTok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth')||'{}'); return s.state?.accessToken||s.accessToken||''; } catch { return ''; } })();
+            const patTok = useAuthStore.getState().accessToken || '';
             fetch(`${APPT_API}/${doc.authId}/bookings/${b.id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', ...(patTok ? { Authorization: `Bearer ${patTok}` } : {}) },
@@ -266,7 +267,7 @@ export default function AppointmentsPage() {
 
     // Patch backend + notify doctor whenever we have the doctor auth ID
     if (target.doctorAuthId) {
-      const tok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+      const tok = useAuthStore.getState().accessToken || '';
       const hdrs = { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
       // Patch appointment status to cancelled
       await fetch(`${APPT_API}/${target.doctorAuthId}/bookings/${id}`, {
@@ -306,7 +307,7 @@ export default function AppointmentsPage() {
   // ── Accept or cancel a doctor-initiated reschedule from the appointment card ──
   const handleDrReschedule = async (b: any, action: 'accept' | 'cancel') => {
     setDrRescheduleActing(String(b.id));
-    const tok = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.accessToken || ''; } catch { return ''; } })();
+    const tok = useAuthStore.getState().accessToken || '';
     const hdrs = { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
     const doctorAuthId = b.doctorAuthId || '';
     const newStatus = action === 'accept' ? 'confirmed' : 'cancelled';
@@ -378,7 +379,7 @@ export default function AppointmentsPage() {
       patientAuthId ? `[patient_user_id:${patientAuthId}]` : '',
     ].filter(Boolean).join('\n');
     // Helper to get patient auth token
-    const patientToken = (() => { try { const s = JSON.parse(localStorage.getItem('mediflow-auth') || '{}'); return s.state?.accessToken || s.state?.token || s.accessToken || s.token || ''; } catch { return ''; } })();
+    const patientToken = useAuthStore.getState().accessToken || '';
     const authHeaders = (extra?: Record<string, string>) => ({ 'Content-Type': 'application/json', ...(patientToken ? { Authorization: `Bearer ${patientToken}` } : {}), ...extra });
 
     // Resolve doctorAuthId — use direct field, or scan bookings for same doctor name

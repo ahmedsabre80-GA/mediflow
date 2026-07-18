@@ -367,7 +367,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {showNotifs && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
-                <div className="absolute left-0 top-10 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
+                <div className="fixed top-16 left-4 w-80 bg-white rounded-2xl shadow-xl border z-50" dir="rtl">
                   <div className="px-4 py-3 border-b flex items-center justify-between">
                     <button onClick={() => setShowNotifs(false)}><X className="w-4 h-4 text-gray-400" /></button>
                     <h3 className="font-bold text-gray-900 text-sm">
@@ -509,6 +509,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           .replace(/\[dlng:[^\]]*\]/g, '')
           .replace(/\[order_id:[^\]]*\]/g, '')
           .replace(/\[warehouse_name:[^\]]*\]/g, '')
+          .replace(/\[PHREPORT\]/g, '')
+          .replace(/\[oid:[^\]]*\]/g, '')
           .trim();
 
         const isWarehouseDelivery = selectedNotif.message.includes('[order_id:') &&

@@ -39,11 +39,20 @@ export default function WarehouseSettingsPage() {
   const handleSave = async () => {
     if (!config) return;
     saveConfig(config);
-    // Sync warehouse name to admin_requests so admin portal stays current
+    // Sync warehouse name to DB + admin_requests
     try {
       const token = localStorage.getItem('warehouse-token');
       const userId = localStorage.getItem('warehouse-user-id');
       const whH = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+      // ── Update warehouse name in DB so pharmacy catalog shows real name ──
+      if (token && config.name) {
+        await fetch('https://mediflow-production-d815.up.railway.app/api/v1/warehouses/me', {
+          method: 'PATCH',
+          headers: whH,
+          body: JSON.stringify({ name: config.name }),
+        }).catch(() => {});
+      }
       if (userId) {
         const reqsRes = await fetch(
           `https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/admin-requests?portal_type=warehouse&requester_id=${userId}`,

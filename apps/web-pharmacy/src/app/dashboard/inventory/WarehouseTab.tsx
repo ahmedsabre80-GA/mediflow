@@ -54,7 +54,8 @@ function save(key: string, val: unknown) { localStorage.setItem(key, JSON.string
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 function calcInvoiceSubtotal(inv: Invoice): number {
-  const total = inv.items.reduce((s, it) => s + it.totalCost, 0);
+  if (!inv.items?.length) return inv.subtotal ?? 0;
+  const total = (inv.items).reduce((s, it) => s + (it.totalCost ?? (it as any).price * (it as any).qty ?? 0), 0);
   return inv.discountType === 'total' && inv.totalDiscount > 0
     ? total * (1 - inv.totalDiscount / 100) : total;
 }
@@ -62,6 +63,24 @@ function calcInvoiceSubtotal(inv: Invoice): number {
 function balanceOwed(whId: string, purchases: Purchase[], payments: Payment[]): number {
   return purchases.filter(p => p.warehouseId === whId).reduce((s, p) => s + p.grandTotal, 0)
        - payments.filter(p => p.warehouseId === whId).reduce((s, p) => s + p.amount, 0);
+}
+
+// Merge duplicate B2B entries: if multiple entries share the same orderId in notes,
+// keep only the one with the highest grandTotal (most-complete delivery record).
+function deduplicatePurchases(list: Purchase[]): Purchase[] {
+  const b2bMap = new Map<string, Purchase>();
+  const nonB2B: Purchase[] = [];
+  for (const p of list) {
+    const match = p.notes?.match(/طلبية B2B رقم ([0-9a-f-]{36})/i);
+    if (match) {
+      const oid = match[1];
+      const existing = b2bMap.get(oid);
+      if (!existing || p.grandTotal > existing.grandTotal) b2bMap.set(oid, p);
+    } else {
+      nonB2B.push(p);
+    }
+  }
+  return [...nonB2B, ...Array.from(b2bMap.values())];
 }
 
 function emptyInvoice(): Invoice {
@@ -120,7 +139,12 @@ async function pullState<T>(key: string, fallback: T): Promise<T> {
 // ════════════════════════════════════════════════════════════════════════════
 export default function WarehouseTab() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() => load(WH_KEY, []));
-  const [purchases,  setPurchases]  = useState<Purchase[]> (() => load(PUR_KEY, []));
+  const [purchases,  setPurchases]  = useState<Purchase[]>(() => {
+    const raw = load<Purchase[]>(PUR_KEY, []);
+    const deduped = deduplicatePurchases(raw);
+    if (deduped.length !== raw.length) save(PUR_KEY, deduped);
+    return deduped;
+  });
   const [payments,   setPayments]   = useState<Payment[]>  (() => load(PAY_KEY, []));
   const [activeWh,   setActiveWh]   = useState('');
 
@@ -146,17 +170,17 @@ export default function WarehouseTab() {
       };
 
       const mergedWh = merge(localWh, remoteWh);
-      const mergedPur = merge(localPur, remotePur);
+      const mergedPur = deduplicatePurchases(merge(localPur, remotePur));
       const mergedPay = merge(localPay, remotePay);
 
       // Save merged back to localStorage
       if (mergedWh.length > localWh.length) { save(WH_KEY, mergedWh); setWarehouses(mergedWh); }
-      if (mergedPur.length > localPur.length) { save(PUR_KEY, mergedPur); setPurchases(mergedPur); }
+      if (mergedPur.length !== localPur.length) { save(PUR_KEY, mergedPur); setPurchases(mergedPur); }
       if (mergedPay.length > localPay.length) { save(PAY_KEY, mergedPay); setPayments(mergedPay); }
 
       // If local has more data than remote, push local up
       if (localWh.length > remoteWh.length) pushState('wh-warehouses', mergedWh);
-      if (localPur.length > remotePur.length) pushState('wh-purchases', mergedPur);
+      if (localPur.length > remotePur.length || mergedPur.length < localPur.length) pushState('wh-purchases', mergedPur);
       if (localPay.length > remotePay.length) pushState('wh-payments', mergedPay);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -925,10 +949,10 @@ export default function WarehouseTab() {
                           <td className="px-2 py-2 text-center font-bold">{it.pkgQty}</td>
                           <td className="px-2 py-2 text-center text-gray-500">{it.sheetsPerPkg || 1}</td>
                           <td className="px-2 py-2 text-center font-bold text-blue-700">{it.qty}</td>
-                          <td className="px-2 py-2 text-center text-orange-600 font-medium">{it.finalUnitCost.toLocaleString('ar-IQ', { maximumFractionDigits: 0 })}</td>
+                          <td className="px-2 py-2 text-center text-orange-600 font-medium">{(it.finalUnitCost ?? 0).toLocaleString('ar-IQ', { maximumFractionDigits: 0 })}</td>
                           {inv.discountType === 'item' && <td className="px-2 py-2 text-center text-amber-600">{it.itemDiscount ? `${it.itemDiscount}%` : '—'}</td>}
                           <td className="px-2 py-2 text-center text-sky-600 font-medium">{it.sellingPrice ? it.sellingPrice.toLocaleString('ar-IQ') : <span className="text-gray-300">—</span>}</td>
-                          <td className="px-2 py-2 text-center font-bold text-gray-800">{it.totalCost.toLocaleString('ar-IQ')}</td>
+                          <td className="px-2 py-2 text-center font-bold text-gray-800">{(it.totalCost ?? 0).toLocaleString('ar-IQ')}</td>
                           <td className="px-2 py-2">
                             {it.category ? <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full text-[10px] font-medium">{it.category}</span> : <span className="text-gray-300">—</span>}
                           </td>
@@ -1147,7 +1171,7 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="font-black text-sky-700">{purchase.grandTotal.toLocaleString('ar-IQ')} IQD</span>
+          <span className="font-black text-sky-700">{(purchase.grandTotal ?? 0).toLocaleString('ar-IQ')} IQD</span>
           {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
         </div>
       </button>
@@ -1184,16 +1208,16 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
                   <tbody>
                     {inv.items.map((it, j) => (
                       <tr key={j} className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 font-medium text-gray-800">{it.drugName}</td>
+                        <td className="px-2 py-1.5 font-medium text-gray-800">{it.drugName || (it as any).name || '—'}</td>
                         <td className="px-2 py-1.5 text-gray-500">{it.brandName || '—'}</td>
                         <td className="px-2 py-1.5 text-center font-mono text-gray-400 text-[10px]">{it.barcode || '—'}</td>
                         <td className="px-2 py-1.5 text-center">{it.pkgQty || it.qty}</td>
                         <td className="px-2 py-1.5 text-center">{it.sheetsPerPkg || 1}</td>
                         <td className="px-2 py-1.5 text-center font-bold text-blue-700">{it.qty}</td>
-                        <td className="px-2 py-1.5 text-center text-orange-600">{it.finalUnitCost.toLocaleString('ar-IQ', { maximumFractionDigits: 0 })}</td>
+                        <td className="px-2 py-1.5 text-center text-orange-600">{(it.finalUnitCost ?? 0).toLocaleString('ar-IQ', { maximumFractionDigits: 0 })}</td>
                         {inv.discountType === 'item' && <td className="px-2 py-1.5 text-center text-amber-600">{it.itemDiscount ? `${it.itemDiscount}%` : '—'}</td>}
                         <td className="px-2 py-1.5 text-center text-sky-700 font-medium">{it.sellingPrice ? it.sellingPrice.toLocaleString('ar-IQ') : '—'}</td>
-                        <td className="px-2 py-1.5 text-center font-bold">{it.totalCost.toLocaleString('ar-IQ')}</td>
+                        <td className="px-2 py-1.5 text-center font-bold">{(it.totalCost ?? 0).toLocaleString('ar-IQ')}</td>
                         <td className="px-2 py-1.5">{it.category || '—'}</td>
                         <td className="px-2 py-1.5 text-center text-gray-500">{it.expiry || '—'}</td>
                         <td className="px-2 py-1.5">{it.originCountry || '—'}</td>
@@ -1205,7 +1229,7 @@ function PurchaseCard({ purchase }: { purchase: Purchase }) {
               </div>
               <div className="flex justify-between text-xs pt-1 border-t border-gray-100">
                 <span className="text-gray-500">إجمالي الفاتورة {i + 1}</span>
-                <span className="font-bold text-sky-700">{calcInvoiceSubtotal(inv).toLocaleString('ar-IQ')} IQD</span>
+                <span className="font-bold text-sky-700">{(calcInvoiceSubtotal(inv) || 0).toLocaleString('ar-IQ')} IQD</span>
               </div>
             </div>
           ))}

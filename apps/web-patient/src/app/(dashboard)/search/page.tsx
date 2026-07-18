@@ -58,9 +58,23 @@ function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const initTab = searchParams.get('tab');
-  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription' | 'doctor'>(
-    initTab === 'doctor' ? 'doctor' : initTab === 'prescription' ? 'prescription' : 'drug'
+  const [activeTab,    setActiveTab]    = useState<'drug' | 'prescription' | 'doctor' | 'pharmacy'>(
+    initTab === 'doctor' ? 'doctor' : initTab === 'prescription' ? 'prescription' : initTab === 'pharmacy' ? 'pharmacy' : 'drug'
   );
+
+  // Pharmacy list state
+  const [pharmacies,     setPharmacies]     = useState<any[]>([]);
+  const [pharmLoading,   setPharmLoading]   = useState(false);
+  const [pharmSearch,    setPharmSearch]    = useState('');
+  useEffect(() => {
+    if (activeTab !== 'pharmacy' || pharmacies.length > 0) return;
+    setPharmLoading(true);
+    fetch(`${PHARM_API_URL}/active`)
+      .then(r => r.json())
+      .then(d => setPharmacies(d.data || []))
+      .catch(() => {})
+      .finally(() => setPharmLoading(false));
+  }, [activeTab]);
 
   // Doctor search state
   const [docSearch,   setDocSearch]   = useState('');
@@ -446,7 +460,7 @@ function SearchContent() {
             <ArrowRight className="w-4 h-4" /> الرئيسية
           </Link>
           <h1 className="text-white font-bold text-lg">
-            {activeTab === 'doctor' ? 'البحث عن طبيب' : 'ابحث عن دواء'}
+            {activeTab === 'doctor' ? 'البحث عن طبيب' : activeTab === 'pharmacy' ? 'الصيدليات' : 'ابحث عن دواء'}
           </h1>
         </div>
         {/* Tab switcher */}
@@ -477,6 +491,15 @@ function SearchContent() {
             }`}>
             <span className="text-2xl">📋</span>
             <span className="text-xs">وصفة</span>
+          </button>
+          <button onClick={() => setActiveTab('pharmacy')}
+            className={`flex-1 py-2.5 rounded-xl font-bold transition-all border-2 flex flex-col items-center gap-0.5 ${
+              activeTab === 'pharmacy'
+                ? 'bg-amber-400 text-white border-amber-300 shadow'
+                : 'bg-white/20 text-white border-transparent'
+            }`}>
+            <span className="text-2xl">🏥</span>
+            <span className="text-xs">صيدليات</span>
           </button>
         </div>
 
@@ -604,6 +627,39 @@ function SearchContent() {
               </button>
             ));
           })()}
+        </div>
+      )}
+
+      {/* ══ PHARMACY LIST ══ */}
+      {activeTab === 'pharmacy' && (
+        <div className="px-4 py-4 space-y-3 pb-24">
+          <div className="flex items-center gap-2 bg-white rounded-xl px-4 py-3 shadow-sm">
+            <Search className="w-5 h-5 text-gray-400 shrink-0" />
+            <input value={pharmSearch} onChange={e => setPharmSearch(e.target.value)}
+              placeholder="ابحث باسم الصيدلية أو المدينة..."
+              className="flex-1 outline-none text-sm" dir="rtl" />
+            {pharmSearch && <button onClick={() => setPharmSearch('')} className="text-gray-400 text-lg">×</button>}
+          </div>
+          {pharmLoading ? (
+            <div className="text-center py-12 text-gray-400">جاري التحميل...</div>
+          ) : pharmacies.filter(p => !pharmSearch || p.name_ar?.includes(pharmSearch) || p.name?.includes(pharmSearch) || p.city?.includes(pharmSearch)).length === 0 ? (
+            <div className="text-center py-12 text-gray-400">لا توجد صيدليات مسجلة</div>
+          ) : pharmacies.filter(p => !pharmSearch || p.name_ar?.includes(pharmSearch) || p.name?.includes(pharmSearch) || p.city?.includes(pharmSearch)).map((p: any) => (
+            <Link href={`/pharmacies/${p.id}`} key={p.id}
+              className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 active:scale-95 transition-transform">
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0 ${p.status === 'active' ? 'bg-green-100' : 'bg-gray-100'}`}>
+                🏥
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900 text-sm truncate">{p.name_ar || p.name}</p>
+                {p.city && <p className="text-xs text-gray-500 mt-0.5">📍 {p.city}</p>}
+                {p.phone && <p className="text-xs text-gray-400 mt-0.5">📞 {p.phone}</p>}
+              </div>
+              <span className={`text-xs font-bold px-2 py-1 rounded-lg shrink-0 ${p.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {p.status === 'active' ? 'مفتوح' : 'مغلق'}
+              </span>
+            </Link>
+          ))}
         </div>
       )}
 

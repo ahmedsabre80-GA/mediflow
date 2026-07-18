@@ -88,6 +88,12 @@ export default function WarehousesPage() {
     setActing(true);
     try {
       await callAuth('activate-user', { email: w.email });
+      // Also ensure warehouse row exists in pharmacy-service DB
+      await fetch('https://mediflow-production-d815.up.railway.app/api/v1/admin/activate-by-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'mediflow-admin-2026' },
+        body: JSON.stringify({ email: w.email }),
+      }).catch(() => {});
       setWarehouses(prev => prev.map(u => u.id === w.id ? { ...u, status: 'active' } : u));
       if (selected?.id === w.id) setSelected(s => s ? { ...s, status: 'active' } : s);
       showToast(`✅ تم قبول ${w.first_name} ${w.last_name}`);

@@ -4,6 +4,15 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { LayoutDashboard, Search, Package, Stethoscope, Clock, Bell, X, ChevronLeft, LogOut, XCircle, CalendarDays, RefreshCw } from 'lucide-react';
 import { fetchPatientNotifications, markPatientNotifRead, type PatientNotif } from '@/lib/portalNotifications';
+import { useAuthStore } from '@/stores/auth.store';
+
+// Check token expiry locally — avoids a network round-trip to the auth service.
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp ? payload.exp * 1000 < Date.now() : false;
+  } catch { return true; }
+}
 
 const PHARMACY_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 const APPT_API      = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
@@ -12,9 +21,9 @@ const REMINDERS_KEY = 'mediflow-appt-reminders';
 
 function patientAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
   try {
-    const raw = localStorage.getItem('mediflow-auth');
-    const parsed = raw ? JSON.parse(raw) : {};
-    const t = parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
+    // accessToken is not persisted to localStorage (partialize excludes it),
+    // so read from the Zustand in-memory store directly.
+    const t = useAuthStore.getState().accessToken || '';
     return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
   } catch { return { 'Content-Type': 'application/json', ...extra }; }
 }
@@ -56,6 +65,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [resendingPartial, setResendingPartial] = useState(false);
   const [drRescheduleActing, setDrRescheduleActing] = useState(false);
   const [drRescheduleActed, setDrRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
+  const [drBookingStatus, setDrBookingStatus] = useState<string | null>(null);
   const [resentRxNotifIds, setResentRxNotifIds] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('mediflow-resent-rx-notifs') || '[]')); } catch { return new Set(); }
   });
@@ -164,18 +174,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setUserId(uid);
       setUserName(user?.name || user?.email?.split('@')[0] || 'مريض');
 
-      // Validate token with backend on mount
-      const token = parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
+      // Validate locally using JWT expiry — no network call, no Railway timeout errors.
       const validateToken = () => {
-        if (!token) { localStorage.removeItem('mediflow-auth'); router.push('/login'); return; }
-        fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/verify', {
-          headers: { Authorization: `Bearer ${token}` },
-        }).then(r => {
-          if (r.status === 401) {
-            localStorage.removeItem('mediflow-auth');
-            router.push('/login');
-          }
-        }).catch(() => {});
+        const token = useAuthStore.getState().accessToken || '';
+        if (!token || isTokenExpired(token)) {
+          localStorage.removeItem('mediflow-auth');
+          useAuthStore.getState().logout();
+          router.push('/login');
+        }
       };
       validateToken();
 
@@ -185,7 +191,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const iv1   = setInterval(() => refresh(uid), 30000);
       const iv2   = setInterval(() => checkReminders(uid), 60000);
       const iv3   = setInterval(() => checkPendingRx(uid), 60000);
-      const ivVal = setInterval(validateToken, 15 * 60 * 1000); // re-validate every 15 min
+      const ivVal = setInterval(validateToken, 15 * 60 * 1000);
       return () => { clearInterval(iv1); clearInterval(iv2); clearInterval(iv3); clearInterval(ivVal); };
     } catch { router.push('/login'); }
   }, [router, refresh, checkReminders, checkPendingRx]);
@@ -197,6 +203,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const closeModal = () => {
     setSelected(null);
+    setDrBookingStatus(null);
     setShowCancelForm(false);
     setCancelReason('');
   };
@@ -229,11 +236,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setCancelling(false);
   };
 
+  // When a dr-reschedule notification modal opens, check the booking status in
+  // localStorage so we can detect if the patient already acted from the card.
+  useEffect(() => {
+    if (!selected) return;
+    if (!selected.message.includes('📅 طلب تغيير موعد من الطبيب')) return;
+    const bookingId = selected.message.match(/\[booking_id:([^\]]+)\]/)?.[1] || '';
+    if (!bookingId) return;
+    try {
+      const all = JSON.parse(localStorage.getItem('mediflow-my-bookings') || '[]');
+      const b = all.find((x: any) => String(x.id) === String(bookingId));
+      if (b && b.status && b.status !== 'pending') setDrBookingStatus(b.status);
+    } catch {}
+  }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const openNotif = (n: PatientNotif) => {
     if (!n.isRead) {
       markPatientNotifRead(n.id);
       setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, isRead: true } : x));
     }
+    setDrBookingStatus(null);
     setSelected(n);
     setShowNotifs(false);
   };
@@ -593,39 +615,45 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Doctor reschedule accept/cancel */}
-              {isDrReschedule && (
-                <div className="space-y-2 mb-3">
-                  {drRescheduleActed[selected.id] ? (
-                    <>
-                      <p className={`text-sm font-semibold text-center py-2 ${drRescheduleActed[selected.id] === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
-                        {drRescheduleActed[selected.id] === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم إلغاء الحجز'}
+              {isDrReschedule && (() => {
+                const actedThisSession = drRescheduleActed[selected.id];
+                const resolvedAs = actedThisSession ||
+                  (drBookingStatus === 'confirmed' ? 'accepted' : drBookingStatus === 'cancelled' ? 'cancelled' : null);
+
+                if (resolvedAs) {
+                  return (
+                    <div className="space-y-2 mb-3">
+                      <p className={`text-sm font-semibold text-center py-2 ${resolvedAs === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
+                        {resolvedAs === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم إلغاء الحجز'}
                       </p>
                       <button onClick={closeModal} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-semibold text-sky-700 text-right mb-3">📅 اختر ما تريد فعله بالموعد الجديد:</p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleDrRescheduleAction('accept')}
-                          disabled={drRescheduleActing}
-                          className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
-                          {drRescheduleActing ? '...' : '✅ قبول'}
-                        </button>
-                        <button
-                          onClick={() => handleDrRescheduleAction('cancel')}
-                          disabled={drRescheduleActing}
-                          className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
-                          {drRescheduleActing ? '...' : '❌ إلغاء'}
-                        </button>
-                        <button onClick={closeModal} disabled={drRescheduleActing} className="flex-1 border border-gray-300 text-gray-500 disabled:opacity-50 py-3 rounded-xl text-sm font-medium">
-                          لاحقاً
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2 mb-3">
+                    <p className="text-sm font-semibold text-sky-700 text-right mb-3">📅 اختر ما تريد فعله بالموعد الجديد:</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleDrRescheduleAction('accept')}
+                        disabled={drRescheduleActing}
+                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {drRescheduleActing ? '...' : '✅ قبول'}
+                      </button>
+                      <button
+                        onClick={() => handleDrRescheduleAction('cancel')}
+                        disabled={drRescheduleActing}
+                        className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm">
+                        {drRescheduleActing ? '...' : '❌ إلغاء'}
+                      </button>
+                      <button onClick={closeModal} disabled={drRescheduleActing} className="flex-1 border border-gray-300 text-gray-500 disabled:opacity-50 py-3 rounded-xl text-sm font-medium">
+                        لاحقاً
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Partial accept response buttons */}
               {isPartialAccept && !showCancelForm && (

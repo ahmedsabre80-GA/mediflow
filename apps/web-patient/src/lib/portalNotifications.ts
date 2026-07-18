@@ -1,3 +1,5 @@
+import { useAuthStore } from '@/stores/auth.store';
+
 const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
 
 export interface PatientNotif {
@@ -10,11 +12,10 @@ export interface PatientNotif {
 }
 
 function getToken(): string {
+  // accessToken is not persisted to localStorage (by design in the Zustand store),
+  // so we must read from the in-memory store state via getState().
   try {
-    const raw = localStorage.getItem('mediflow-auth');
-    if (!raw) return '';
-    const parsed = JSON.parse(raw);
-    return parsed.state?.accessToken || parsed.accessToken || parsed.token || '';
+    return useAuthStore.getState().accessToken || '';
   } catch { return ''; }
 }
 
@@ -29,6 +30,7 @@ export async function fetchPatientNotifications(userId: string): Promise<Patient
       `${API}/portal-notifications?portalType=patient&recipientId=${encodeURIComponent(userId)}`,
       { headers: authHeaders() }
     );
+    if (!r.ok) return [];
     const d = await r.json();
     return (d.data || []).map((n: any) => ({
       id: n.id, message: n.message, senderName: n.sender_name || '',

@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { Search, Star, ChevronLeft, Navigation, Map, Check } from 'lucide-react';
 import { DEFAULT_LAT, DEFAULT_LNG } from '@/lib/usePatientLocation';
+import { useAuthStore } from '@/stores/auth.store';
 
 const NOTIF_API   = 'https://mediflow-production-d815.up.railway.app/api/v1/notifications';
 const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1';
@@ -11,12 +12,8 @@ const LAT_KEY = 'patient-saved-lat';
 const LNG_KEY = 'patient-saved-lng';
 
 function patientAuthHeaders(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem('mediflow-auth');
-    const parsed = raw ? JSON.parse(raw) : {};
-    const t = parsed.state?.accessToken || parsed.accessToken || '';
-    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
-  } catch { return { 'Content-Type': 'application/json' }; }
+  const t = useAuthStore.getState().accessToken || '';
+  return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
 }
 
 function isPharmacyOpen(p: any): boolean {
@@ -85,8 +82,7 @@ export default function PatientDashboard() {
   // Fetch loyalty points from patient notifications
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('mediflow-auth');
-      const uid = raw ? (JSON.parse(raw).state?.user?.id || '') : '';
+      const uid = useAuthStore.getState().user?.id || '';
       if (!uid) return;
       fetch(`${PHARMACY_API}/pharmacies/portal-notifications?portalType=patient&recipientId=${encodeURIComponent(uid)}`, { headers: patientAuthHeaders() })
         .then(r => r.json())

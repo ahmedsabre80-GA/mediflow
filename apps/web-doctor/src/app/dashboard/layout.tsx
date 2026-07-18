@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare, ChevronLeft, Building2 } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 
 const NAV = [
@@ -10,6 +10,7 @@ const NAV = [
   { href: '/dashboard/appointments', label: 'المواعيد', icon: Calendar },
   { href: '/dashboard/prescriptions', label: 'الوصفات الطبية', icon: FileText },
   { href: '/dashboard/patients', label: 'المرضى', icon: Users },
+  { href: '/dashboard/pharmacies', label: 'الصيدليات', icon: Building2 },
   { href: '/dashboard/employees', label: 'الموظفون', icon: UserCog },
   { href: '/dashboard/messages', label: 'الرسائل', icon: MessageSquare },
   { href: '/dashboard/analytics', label: 'الإحصائيات', icon: BarChart3 },
@@ -24,6 +25,7 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const [selectedNotif, setSelectedNotif] = useState<PortalNotif | null>(null);
   const [ptRescheduleActing, setPtRescheduleActing] = useState(false);
   const [ptRescheduleActed, setPtRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
+  const [ptBookingStatus, setPtBookingStatus] = useState<string | null>(null);
 
   const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
   const NOTIF_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
@@ -41,19 +43,20 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
     }
   }, []);
 
+  // Validate locally using JWT expiry — no network call, no Railway timeout errors.
   const validateToken = useCallback(() => {
-    const token    = localStorage.getItem('doctor-token');
-    const doctorId = localStorage.getItem('doctor-id');
-    if (!token || !doctorId) { router.push('/auth/login'); return; }
-    fetch(`https://mediflow-production-d815.up.railway.app/api/v1/doctors/${doctorId}/bookings?limit=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then(r => {
-      if (r.status === 401) {
-        ['doctor-token','doctor-name','doctor-id','doctor-user-id']
-          .forEach(k => localStorage.removeItem(k));
+    const token = localStorage.getItem('doctor-token');
+    if (!token) { router.push('/auth/login'); return; }
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        ['doctor-token','doctor-name','doctor-id','doctor-user-id'].forEach(k => localStorage.removeItem(k));
         router.push('/auth/login');
       }
-    }).catch(() => {});
+    } catch {
+      ['doctor-token','doctor-name','doctor-id','doctor-user-id'].forEach(k => localStorage.removeItem(k));
+      router.push('/auth/login');
+    }
   }, [router]);
 
   useEffect(() => {
@@ -100,9 +103,28 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const handleRead = (notif: PortalNotif) => {
     markNotifRead(notif.id);
     setSelectedNotif(notif);
+    setPtBookingStatus(null);
     setShowNotifs(false);
     refresh();
   };
+
+  // When the modal opens for a patient-reschedule notification, fetch live booking status
+  // so we can detect if the doctor already acted on it from the appointment card.
+  useEffect(() => {
+    if (!selectedNotif) return;
+    const isPtReschedule = selectedNotif.message.includes('📅 طلب تغيير موعد من المريض');
+    if (!isPtReschedule) return;
+    const bookingId = selectedNotif.message.match(/\[booking_id:([^\]]+)\]/)?.[1] || '';
+    const doctorId  = selectedNotif.message.match(/\[doctor_id:([^\]]+)\]/)?.[1] || '';
+    if (!bookingId || !doctorId) return;
+    fetch(`${APPT_API}/${doctorId}/bookings/${bookingId}`, { headers: drAuthHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const status = d?.data?.status || d?.status || null;
+        if (status && status !== 'pending') setPtBookingStatus(status);
+      })
+      .catch(() => {});
+  }, [selectedNotif]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-screen bg-gray-50" dir="rtl">
@@ -270,15 +292,35 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
               </div>
 
               {/* Patient reschedule: Accept / Cancel */}
-              {isPtReschedule && (
-                ptRescheduleActed[selectedNotif.id] ? (
-                  <div className="space-y-2">
-                    <p className={`text-sm font-semibold text-center py-2 ${ptRescheduleActed[selectedNotif.id] === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
-                      {ptRescheduleActed[selectedNotif.id] === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم رفض الطلب'}
-                    </p>
-                    <button onClick={() => setSelectedNotif(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
-                  </div>
-                ) : (
+              {isPtReschedule && (() => {
+                // Resolved via modal action this session
+                const actedThisSession = ptRescheduleActed[selectedNotif.id];
+                // Resolved via appointment card (live booking status)
+                const alreadyHandled = !actedThisSession && ptBookingStatus && ptBookingStatus !== 'pending';
+                const resolvedAs = actedThisSession ||
+                  (ptBookingStatus === 'confirmed' ? 'accepted' : ptBookingStatus === 'cancelled' ? 'cancelled' : null);
+
+                if (resolvedAs) {
+                  return (
+                    <div className="space-y-2">
+                      <p className={`text-sm font-semibold text-center py-2 ${resolvedAs === 'accepted' ? 'text-green-700' : 'text-red-600'}`}>
+                        {resolvedAs === 'accepted' ? '✅ تم قبول الموعد الجديد' : '❌ تم رفض الطلب'}
+                      </p>
+                      <button onClick={() => setSelectedNotif(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
+                    </div>
+                  );
+                }
+
+                if (alreadyHandled) {
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-500 text-center py-2">تم التعامل مع هذا الطلب مسبقاً</p>
+                      <button onClick={() => setSelectedNotif(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إغلاق</button>
+                    </div>
+                  );
+                }
+
+                return (
                   <div>
                     <p className="text-sm font-semibold text-teal-700 text-right mb-3">📅 اختر ما تريد فعله بطلب المريض:</p>
                     <div className="flex gap-2">
@@ -296,8 +338,8 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
                       </button>
                     </div>
                   </div>
-                )
-              )}
+                );
+              })()}
 
               {/* Regular actions */}
               {!isPtReschedule && (
