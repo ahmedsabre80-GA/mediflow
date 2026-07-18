@@ -104,7 +104,7 @@ function calcRealBuyingPrice(receipt: PendingReceipt, item: PendingItem): number
 
 async function addToInventory(item: PendingItem, sellingPrice: number, realBuyingPrice: number, qty: number) {
   try {
-    const pharmacyId = localStorage.getItem('pharmacy-user-id') || '';
+    const pharmacyId = localStorage.getItem('pharmacy-id') || '';
     if (!pharmacyId) return;
     await fetch(`${PHARMACY_API}/pharmacies/${pharmacyId}/inventory`, {
       method: 'POST',
