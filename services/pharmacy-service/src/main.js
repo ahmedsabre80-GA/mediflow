@@ -207,9 +207,13 @@ async function bootstrap() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `).catch(() => {});
-  // Seed default auto-reject timeout if not set
+  // Seed default config values if not set
   await pool.query(`
     INSERT INTO public.platform_config (key, value) VALUES ('auto_reject_minutes', '10')
+    ON CONFLICT (key) DO NOTHING
+  `).catch(() => {});
+  await pool.query(`
+    INSERT INTO public.platform_config (key, value) VALUES ('prescription_reject_minutes', '30')
     ON CONFLICT (key) DO NOTHING
   `).catch(() => {});
 

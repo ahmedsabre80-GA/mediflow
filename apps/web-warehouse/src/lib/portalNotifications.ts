@@ -22,6 +22,11 @@ export async function fetchNotifications(recipientId: string): Promise<PortalNot
       `${API}/portal-notifications?portalType=${PORTAL}&recipientId=${encodeURIComponent(recipientId)}`,
       { headers: authHeaders() }
     );
+    if (r.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      window.location.href = '/auth/login';
+      return [];
+    }
     const d = await r.json();
     return (d.data || []).map((n: any) => ({ id: n.id, message: n.message, senderName: n.sender_name || '', isRead: n.is_read, createdAt: n.created_at }));
   } catch { return getLocalNotifications(); }

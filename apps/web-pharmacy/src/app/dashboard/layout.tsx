@@ -91,7 +91,7 @@ async function syncExpiredStock(pharmacyId: string, token: string) {
         await fetch(`${PHARMACY_API}/${pharmacyId}/inventory/${item.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ totalQty: 0 }),
+          body: JSON.stringify({ quantity: 0 }),
         }).catch(() => {});
       }
     }
