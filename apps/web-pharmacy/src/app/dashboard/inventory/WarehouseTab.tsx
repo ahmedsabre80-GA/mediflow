@@ -65,10 +65,12 @@ function balanceOwed(whId: string, purchases: Purchase[], payments: Payment[]): 
        - payments.filter(p => p.warehouseId === whId).reduce((s, p) => s + p.amount, 0);
 }
 
-// Merge duplicate B2B entries: if multiple entries share the same orderId in notes,
-// keep only the one with the highest grandTotal (most-complete delivery record).
+// Deduplicate purchases:
+// B2B entries: same UUID → keep only the highest-total entry (most accumulated state);
+//              lower-total entries are stale intermediate states from the same order.
+// Non-B2B entries: same day + grandTotal + warehouse = duplicate → keep one.
 function deduplicatePurchases(list: Purchase[]): Purchase[] {
-  // Phase 1: deduplicate B2B entries by orderId UUID in notes
+  // Phase 1: B2B — keep highest grandTotal per UUID
   const b2bMap = new Map<string, Purchase>();
   const nonB2B: Purchase[] = [];
   for (const p of list) {
@@ -81,7 +83,7 @@ function deduplicatePurchases(list: Purchase[]): Purchase[] {
       nonB2B.push(p);
     }
   }
-  // Phase 2: deduplicate non-B2B entries by same-day + grandTotal + warehouse
+  // Phase 2: non-B2B — fingerprint by (day, grandTotal, warehouse)
   const nonB2BMap = new Map<string, Purchase>();
   for (const p of nonB2B) {
     const day = p.date ? p.date.slice(0, 10) : '';

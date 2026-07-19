@@ -13,7 +13,7 @@ function warehouseH(extra: Record<string, string> = {}): Record<string, string> 
 
 type Mode = 'broadcast' | 'specific';
 
-interface Pharmacy { id: string; name: string; name_ar: string; phone: string; city: string; }
+interface Pharmacy { id: string; owner_id?: string; name: string; name_ar: string; phone: string; city: string; }
 interface SentMsg  { id: string; portal_type: string; recipient_id: string; sender_name: string; message: string; created_at: string; is_read: boolean; }
 
 export default function WarehouseMessagesPage() {
@@ -99,7 +99,7 @@ export default function WarehouseMessagesPage() {
           fetch(`${PHARMACY_API}/portal-notifications`, {
             method: 'POST',
             headers: warehouseH(),
-            body: JSON.stringify({ portalType: 'pharmacy', recipientId: p.id, senderName: warehouseName, message: fullMessage }),
+            body: JSON.stringify({ portalType: 'pharmacy', recipientId: p.owner_id || p.id, senderName: warehouseName, message: fullMessage }),
           })
         ));
         showToast(`✅ تم الإرسال إلى ${selectedPharm.length} صيدلية بنجاح`);

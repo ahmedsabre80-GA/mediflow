@@ -531,7 +531,7 @@ async function bootstrap() {
       if (!r.rows.length) return res.status(404).json({ success: false });
       const ord = r.rows[0];
 
-      // Notify pharmacy on key status changes
+      // Notify pharmacy on key status changes (use owner_id so notification reaches pharmacy user)
       if ((status === 'confirmed' || status === 'dispatched' || status === 'delivered') && ord.pharmacy_id) {
         try {
           const msgs = {
@@ -539,10 +539,12 @@ async function bootstrap() {
             dispatched: `🚚 طلبك في الطريق\nالمستودع: ${ord.warehouse_name}\nتم الإرسال، يرجى الاستعداد للاستلام.\n[order_id:${ord.id}]`,
             delivered:  `✅ تم تسليم طلبك\nالمستودع: ${ord.warehouse_name}\nالإجمالي: ${Number(ord.total).toLocaleString()} د.ع\n\nيمكنك الآن مراجعة الأصناف وقبولها في المخزون من قسم "طلبيات معلقة".\n[order_id:${ord.id}][warehouse_name:${ord.warehouse_name}]`,
           };
+          const phRow = await pool.query(`SELECT owner_id FROM pharmacies.pharmacies WHERE id=$1`, [ord.pharmacy_id]);
+          const recipientId = phRow.rows[0]?.owner_id || ord.pharmacy_id;
           await pool.query(
             `INSERT INTO public.portal_notifications (portal_type, recipient_id, sender_name, message)
              VALUES ($1,$2,$3,$4)`,
-            ['pharmacy', ord.pharmacy_id, ord.warehouse_name, msgs[status]]
+            ['pharmacy', recipientId, ord.warehouse_name, msgs[status]]
           );
         } catch (_) {}
       }
