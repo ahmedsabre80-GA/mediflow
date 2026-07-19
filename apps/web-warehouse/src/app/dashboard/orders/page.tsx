@@ -86,7 +86,8 @@ function buildResendMsg(feedback: PharmacyFeedback, order: Order): string {
 
 function WarehouseOrdersPage() {
   const searchParams = useSearchParams();
-  const autoOpenRef = useRef(false);
+  // Track the full search string last used to auto-open so repeat clicks re-open the modal
+  const lastAutoOpenRef = useRef<string | null>(null);
 
   const [orders, setOrders]         = useState<Order[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -107,14 +108,16 @@ function WarehouseOrdersPage() {
     try { return new Set(JSON.parse(localStorage.getItem('warehouse-resent-orders') || '[]')); } catch { return new Set(); }
   });
 
-  // Auto-open feedback modal when navigated from notification
+  // Auto-open feedback modal when navigated from notification; _t param makes each click unique
   useEffect(() => {
     const targetId = searchParams.get('feedback');
-    if (!targetId || autoOpenRef.current) return;
+    if (!targetId) return;
+    const currentSearch = searchParams.toString();
+    if (lastAutoOpenRef.current === currentSearch) return;
     const order = orders.find(o => o.id === targetId);
     const fb = feedback[targetId];
     if (order && fb) {
-      autoOpenRef.current = true;
+      lastAutoOpenRef.current = currentSearch;
       setFeedbackModal({ order, fb });
     }
   }, [searchParams, orders, feedback]);
@@ -168,13 +171,16 @@ function WarehouseOrdersPage() {
         rawContent = afterTag;
       }
 
-      // Strategy 2: backend inserts "الطلبية: UUID" line in return-report notifications
+      // Strategy 2: backend return-report notifications use "الطلبية: UUID" (no [PHREPORT] prefix)
       if (!orderId) {
         const orderLineMatch = msg.match(/الطلبية:\s*([0-9a-f\-]{36})/i);
-        if (orderLineMatch && msg.includes('[PHREPORT]')) {
+        if (orderLineMatch) {
           orderId = orderLineMatch[1];
-          // Extract summary lines (✅/⚠️/❌ lines)
-          rawContent = msg.split('\n').filter((l: string) => l.startsWith('✅') || l.startsWith('⚠️') || l.startsWith('❌') || l.includes('رفض الطلب')).join('\n');
+          rawContent = msg.split('\n').filter((l: string) =>
+            l.startsWith('✅') || l.startsWith('⚠️') || l.startsWith('❌') ||
+            l.startsWith('📷') || l.startsWith('📦') || l.startsWith('🔢') ||
+            l.includes('رفض الطلب')
+          ).join('\n');
         }
       }
 

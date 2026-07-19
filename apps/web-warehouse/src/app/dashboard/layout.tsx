@@ -59,10 +59,20 @@ export default function WarehouseDashboardLayout({ children }: { children: React
     refresh();
     setShowNotifs(false);
     if (!message) return;
+    // [PHREPORT] / pharmacy confirmReceipt messages
     const oidMatch = message.match(/\[oid:([0-9a-f-]{36})\]/i);
     if (oidMatch) {
-      router.push(`/dashboard/orders?feedback=${oidMatch[1]}`);
-    } else if (message.includes('B2B') || message.includes('طلب') || message.includes('order')) {
+      // _t param makes each click a unique URL so the orders page re-opens the modal
+      router.push(`/dashboard/orders?feedback=${oidMatch[1]}&_t=${Date.now()}`);
+      return;
+    }
+    // Return-report (broken/missing) messages from backend use "الطلبية: UUID"
+    const orderLineMatch = message.match(/الطلبية:\s*([0-9a-f\-]{36})/i);
+    if (orderLineMatch) {
+      router.push(`/dashboard/orders?feedback=${orderLineMatch[1]}&_t=${Date.now()}`);
+      return;
+    }
+    if (message.includes('B2B') || message.includes('طلب') || message.includes('order')) {
       router.push('/dashboard/orders');
     }
   };
