@@ -62,8 +62,13 @@ function recordBatch(receipt: PendingReceipt, item: PendingItem, qty: number) {
       subtotal:      batchTotal,
     };
     if (idx >= 0) {
-      // UPDATE: accumulate into existing entry for this order
-      existing[idx].invoices.push(batchInvoice);
+      // UPDATE: merge item into the first invoice (keep all items under one invoice per order)
+      if (existing[idx].invoices && existing[idx].invoices.length > 0) {
+        existing[idx].invoices[0].items.push({ name: item.name, qty, price: item.unit_price });
+        existing[idx].invoices[0].subtotal = (existing[idx].invoices[0].subtotal || 0) + batchTotal;
+      } else {
+        existing[idx].invoices = [batchInvoice];
+      }
       existing[idx].grandTotal = (existing[idx].grandTotal || 0) + batchTotal;
     } else {
       // INSERT: first batch for this order

@@ -127,6 +127,8 @@ export default function WarehousesPage() {
   const [confirmedOrders, setConfirmedOrders] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem(CONFIRMED_KEY) || '[]')); } catch { return new Set(); }
   });
+  // Tracks orders where user clicked قبول الكل — hides bulk buttons so only per-item & confirm remain
+  const [bulkDoneOrders, setBulkDoneOrders] = useState<Set<string>>(new Set());
 
   const ensureStatuses = (order: any) => {
     setItemStatusesRaw(prev => {
@@ -151,6 +153,7 @@ export default function WarehousesPage() {
     (order.items || []).forEach((it: any) => { updated[it.id] = 'accepted'; });
     setItemStatuses(p => ({ ...p, ...updated }));
     setShowRejectBox(null);
+    setBulkDoneOrders(prev => new Set([...prev, order.id]));
   };
 
   const handleImageUpload = (itemId: string, file: File) => {
@@ -718,6 +721,7 @@ export default function WarehousesPage() {
                                   setItemStatuses(p => { const next = { ...p, ...resetStatuses }; return next; });
                                   setMissingQtys(p => { const n = { ...p }; (order.items || []).forEach((it: any) => delete n[it.id]); return n; });
                                   setRejectedNotes(p => { const n = { ...p }; (order.items || []).forEach((it: any) => delete n[it.id]); return n; });
+                                  setBulkDoneOrders(prev => { const s = new Set(prev); s.delete(order.id); return s; });
                                 }}
                                 className="text-xs text-amber-600 font-bold border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition-colors shrink-0">
                                 إعادة التحديد
@@ -725,8 +729,8 @@ export default function WarehousesPage() {
                             </div>
                           )}
 
-                          {/* Accept all / Reject all — delivered, not yet locked */}
-                          {order.status === 'delivered' && !locked && (
+                          {/* Accept all / Reject all — delivered, not yet locked, not yet bulk-accepted */}
+                          {order.status === 'delivered' && !locked && !bulkDoneOrders.has(order.id) && (
                             <div className="flex gap-2 mt-3">
                               <button onClick={() => acceptAll(order)}
                                 className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold py-2 rounded-xl flex items-center justify-center gap-1">
@@ -740,7 +744,7 @@ export default function WarehousesPage() {
                           )}
 
                           {/* Reject-all justification box */}
-                          {order.status === 'delivered' && !locked && showRejectBox === order.id && (
+                          {order.status === 'delivered' && !locked && !bulkDoneOrders.has(order.id) && showRejectBox === order.id && (
                             <div className="mt-2 bg-red-50 border border-red-200 rounded-xl p-3 space-y-2">
                               <p className="text-xs font-bold text-red-700">سبب رفض الطلب بالكامل — سيُرسل للمستودع:</p>
                               <textarea
@@ -772,22 +776,16 @@ export default function WarehousesPage() {
                                     <span className="text-sm font-semibold text-gray-800">{it.name}</span>
                                     <span className="text-xs text-gray-500">{it.quantity} × {fmtPrice(it.unit_price)}</span>
                                   </div>
-                                  {/* Inline status buttons — only when not locked */}
+                                  {/* Inline status buttons — always visible when order is not locked */}
                                   {order.status === 'delivered' && !locked && (
-                                    st === 'accepted' ? (
-                                      /* Accepted items are locked — no further editing */
-                                      <p className="text-xs font-semibold text-emerald-700">✅ مستلم بالكامل — مقفل</p>
-                                    ) : (
-                                      /* Missing / rejected items stay editable so pharmacy can correct */
-                                      <div className="flex gap-1.5">
-                                        {([['accepted','✅ مستلم','bg-emerald-500'],['missing','⚠️ ناقص','bg-amber-500'],['rejected','❌ تالف','bg-red-500']] as const).map(([val,lbl,cls]) => (
-                                          <button key={val} onClick={() => setItemStatus(it.id, val as ItemStatus)}
-                                            className={`flex-1 text-xs font-bold py-1.5 rounded-lg transition-colors ${st === val ? `${cls} text-white` : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                                            {lbl}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )
+                                    <div className="flex gap-1.5">
+                                      {([['accepted','✅ مستلم','bg-emerald-500'],['missing','⚠️ ناقص','bg-amber-500'],['rejected','❌ تالف','bg-red-500']] as const).map(([val,lbl,cls]) => (
+                                        <button key={val} onClick={() => setItemStatus(it.id, val as ItemStatus)}
+                                          className={`flex-1 text-xs font-bold py-1.5 rounded-lg transition-colors ${st === val ? `${cls} text-white` : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                                          {lbl}
+                                        </button>
+                                      ))}
+                                    </div>
                                   )}
                                   {/* Show locked status label */}
                                   {order.status === 'delivered' && locked && (
