@@ -315,7 +315,8 @@ export default function PendingReceiptsTab() {
     return <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${c.cls}`}>{c.label}</span>;
   };
 
-  const isActionable = (s?: ItemStatus | string) => !s || s === 'pending' || s === 'partial';
+  // received = permanently locked; broken/partial can still be edited
+  const isActionable = (s?: ItemStatus | string) => !s || s === 'pending' || s === 'partial' || s === 'broken';
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -398,11 +399,11 @@ export default function PendingReceiptsTab() {
                             🔢 {item.status === 'partial' ? 'دفعة جزئية إضافية' : 'كمية مختلفة'}
                           </button>
 
-                          {/* Broken — only on first-time (pending) */}
-                          {item.status === 'pending' && (
+                          {/* Broken — available on pending and on already-broken items (re-photo) */}
+                          {(item.status === 'pending' || item.status === 'broken') && (
                             <button onClick={() => openCamera(receipt, item)}
                               className="flex items-center justify-center gap-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold px-3 py-2 rounded-xl transition-colors">
-                              <Camera className="w-3.5 h-3.5" /> مكسور
+                              <Camera className="w-3.5 h-3.5" /> {item.status === 'broken' ? 'تحديث صورة الكسر' : 'مكسور'}
                             </button>
                           )}
 
