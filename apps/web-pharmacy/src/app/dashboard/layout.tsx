@@ -2,11 +2,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send, Receipt, Warehouse } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingBag, BarChart2, Users, Megaphone, Settings, LogOut, Bell, X, UserCircle, MessageSquare, ChevronLeft, AlertTriangle, CheckCircle, Send, Receipt, Warehouse, CreditCard } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
 import DraggableModal from '@/components/DraggableModal';
+import { useIdleLogout } from '@/hooks/useIdleLogout';
 
-const API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
+const API = `${process.env.NEXT_PUBLIC_API_URL}/pharmacies`;
 
 // Each nav item declares which permission grants access. Owners (role='owner') see all.
 const NAV_ITEMS = [
@@ -19,11 +20,12 @@ const NAV_ITEMS = [
   { href: '/dashboard/employees',  icon: Users,           label: 'الموظفون',  perm: 'employees:read' },
   { href: '/dashboard/messages',   icon: MessageSquare,   label: 'الرسائل',   perm: 'employees:read' },
   { href: '/dashboard/campaigns',  icon: Megaphone,       label: 'الحملات',   perm: 'employees:manage' },
+  { href: '/dashboard/subscription', icon: CreditCard,   label: 'الاشتراك',  perm: null },
   { href: '/dashboard/settings',   icon: Settings,        label: 'الإعدادات', perm: 'settings:read' },
 ];
 
-const PHARMACY_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies';
-const PLATFORM_API = 'https://mediflow-production-d815.up.railway.app/api/v1/platform';
+const PHARMACY_API = `${process.env.NEXT_PUBLIC_API_URL}/pharmacies`;
+const PLATFORM_API = `${process.env.NEXT_PUBLIC_API_URL}/platform`;
 
 function pharmAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
   try {
@@ -216,23 +218,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => { clearInterval(iv); window.removeEventListener('mediflow-rx-update', onRxUpdate); };
   }, [router, refresh]);
 
-  // Auto-logout after 30 minutes of inactivity
-  useEffect(() => {
-    const IDLE_MS = 30 * 60 * 1000;
-    let timer: ReturnType<typeof setTimeout>;
-    const reset = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        ['pharmacy-token','pharmacy-refresh','pharmacy-id','pharmacy-name','pharmacy-role','pharmacy-permissions','pharmacy-staff-id','pharmacy-opening-hours']
-          .forEach(k => localStorage.removeItem(k));
-        router.push('/auth/login');
-      }, IDLE_MS);
-    };
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
-    reset();
-    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
-  }, [router]);
+  // Auto-logout after 30 minutes of inactivity — shared across every portal, see useIdleLogout.
+  useIdleLogout(() => {
+    ['pharmacy-token','pharmacy-refresh','pharmacy-id','pharmacy-name','pharmacy-role','pharmacy-permissions','pharmacy-staff-id','pharmacy-opening-hours']
+      .forEach(k => localStorage.removeItem(k));
+    router.push('/auth/login');
+  });
 
   // When a prescription notification is opened: fetch image + check claim status
   useEffect(() => {

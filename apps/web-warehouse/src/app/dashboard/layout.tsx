@@ -2,8 +2,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X, MessageSquare, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, Megaphone, BarChart3, Settings, LogOut, Warehouse, Users, Bell, X, MessageSquare, BookOpen, CreditCard } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
+import { useIdleLogout } from '@/hooks/useIdleLogout';
 
 const NAV = [
   { href: '/dashboard',           label: 'الرئيسية',       icon: LayoutDashboard },
@@ -14,6 +15,7 @@ const NAV = [
   { href: '/dashboard/campaigns', label: 'الحملات',        icon: Megaphone },
   { href: '/dashboard/analytics', label: 'التحليلات',      icon: BarChart3 },
   { href: '/dashboard/employees', label: 'الموظفون',       icon: Users },
+  { href: '/dashboard/subscription', label: 'الاشتراك',    icon: CreditCard },
   { href: '/dashboard/settings',  label: 'الإعدادات',      icon: Settings },
 ];
 
@@ -35,22 +37,14 @@ export default function WarehouseDashboardLayout({ children }: { children: React
     if (!localStorage.getItem('warehouse-token')) { router.push('/auth/login'); return; }
     refresh();
     const iv = setInterval(refresh, 30000);
-
-    const IDLE_MS = 30 * 60 * 1000;
-    let idleTimer: ReturnType<typeof setTimeout>;
-    const reset = () => {
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        localStorage.removeItem('warehouse-token');
-        router.push('/auth/login');
-      }, IDLE_MS);
-    };
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
-    reset();
-
-    return () => { clearInterval(iv); clearTimeout(idleTimer); events.forEach(e => window.removeEventListener(e, reset)); };
+    return () => { clearInterval(iv); };
   }, [router, refresh]);
+
+  // Auto-logout after 30 minutes of inactivity — shared across every portal, see useIdleLogout.
+  useIdleLogout(() => {
+    localStorage.removeItem('warehouse-token');
+    router.push('/auth/login');
+  });
 
   const unread = notifs.filter(n => !n.isRead).length;
 

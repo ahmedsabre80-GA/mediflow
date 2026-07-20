@@ -134,10 +134,33 @@ function errorHandler(err, req, res, _next) {
   });
 }
 
+// quota.js signals expected, named business-rule failures via err.code rather
+// than throwing AppError subclasses (it has no dependency on this file's
+// classes). This is the single place those codes map to an HTTP status, so
+// every subscription/quota route handles them the same way instead of each
+// repeating its own if (err.code === '...') block.
+const QUOTA_ERROR_STATUS = {
+  DUPLICATE_PENDING_REQUEST: 409,
+  PLAN_NOT_CURRENT: 409,
+  NOT_PENDING: 409,
+  NO_ACTIVE_SUBSCRIPTION: 409,
+  NOTHING_TO_RESTORE: 409,
+  ALREADY_ACTIVE: 409,
+  INVALID_OVERRIDE_VALUE: 422,
+};
+function handleQuotaError(err, res, next) {
+  const status = QUOTA_ERROR_STATUS[err.code];
+  if (!status) return next(err);
+  const error = { title: err.message, status };
+  if (err.existing) error.existing = err.existing;
+  return res.status(status).json({ success: false, error });
+}
+
 // ─── BOOTSTRAP ────────────────────────────────────────────────────────────────
 async function bootstrap() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20 });
   await pool.connect().then((c) => { console.log('PostgreSQL connected'); c.release(); });
+  const quota = require('./quota')(pool);
 
   // Lightweight schema migrations
   await pool.query(`
@@ -149,6 +172,15 @@ async function bootstrap() {
   await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS license_holder_name TEXT`).catch(() => {});
   await pool.query(`ALTER TABLE public.admin_requests ADD COLUMN IF NOT EXISTS latitude FLOAT`).catch(() => {});
   await pool.query(`ALTER TABLE public.admin_requests ADD COLUMN IF NOT EXISTS longitude FLOAT`).catch(() => {});
+
+  // `status` is the approval lifecycle (pending_verification/active/suspended/rejected/deleted) —
+  // it must never double as an online/offline presence flag, or a pharmacy that simply logs out
+  // gets treated as "not active" on its next login. `is_online` is the dedicated presence flag.
+  await pool.query(`ALTER TABLE pharmacies.pharmacies ADD COLUMN IF NOT EXISTS is_online BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
+  // One-time repair: any pharmacy previously pushed to status='inactive' by the online/offline
+  // toggle (not by an admin, who never writes 'inactive') is really an active, approved pharmacy
+  // that was just offline — restore its approval status and record it as offline via is_online.
+  await pool.query(`UPDATE pharmacies.pharmacies SET is_online = false, status = 'active' WHERE status = 'inactive'`).catch(() => {});
 
   // Ensure products schema and drugs table with barcode column exist
   await pool.query(`
@@ -874,10 +906,9 @@ async function bootstrap() {
   router.get('/active', async (_req, res, next) => {
     try {
       const result = await pool.query(`
-        SELECT id, owner_id, name, name_ar, phone, city, address, status,
-               (status = 'active') AS is_online
+        SELECT id, owner_id, name, name_ar, phone, city, address, status, is_online
         FROM pharmacies.pharmacies
-        WHERE status IN ('active', 'inactive')
+        WHERE status = 'active'
         ORDER BY is_online DESC, name_ar ASC
       `);
       res.json({ success: true, data: result.rows });
@@ -962,15 +993,17 @@ async function bootstrap() {
     } catch (err) { next(err); }
   });
 
-  // Pharmacy sets itself online/offline (login=active, logout=inactive)
+  // Pharmacy sets itself online/offline (login=active, logout=inactive).
+  // This is a presence toggle only — it must never touch the `status` approval column,
+  // or a pharmacy that logs out gets rejected as "not active" on its next login.
   router.patch('/:id/status', authenticate, async (req, res, next) => {
     try {
       const { status } = req.body;
       const allowed = ['active', 'inactive'];
       if (!allowed.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
       await pool.query(
-        `UPDATE pharmacies.pharmacies SET status=$1, updated_at=NOW() WHERE id=$2 AND (owner_id=$3 OR id IN (SELECT pharmacy_id FROM public.pharmacy_staff WHERE user_id=$3))`,
-        [status, req.params.id, req.user.sub]
+        `UPDATE pharmacies.pharmacies SET is_online=$1, updated_at=NOW() WHERE id=$2 AND (owner_id=$3 OR id IN (SELECT pharmacy_id FROM public.pharmacy_staff WHERE user_id=$3))`,
+        [status === 'active', req.params.id, req.user.sub]
       );
       res.json({ success: true });
     } catch (err) { next(err); }
@@ -1127,7 +1160,7 @@ async function bootstrap() {
                   (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) AS distance_km,
                   'pharmacy' AS result_type
            FROM pharmacies.pharmacies p
-           WHERE p.status IN ('active', 'inactive')
+           WHERE p.status = 'active'
              AND (p.name ILIKE $1 OR p.name_ar ILIKE $1)
              AND (6371 * acos(LEAST(1, cos(radians($2::float)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians($3::float)) + sin(radians($2::float)) * sin(radians(p.latitude))))) < $4::float
            ORDER BY distance_km ASC LIMIT 5`,
@@ -1160,7 +1193,7 @@ async function bootstrap() {
                s.selling_price, s.quantity, s.currency
         FROM pharmacies.pharmacies p
         LEFT JOIN public.pharmacy_stock s ON s.pharmacy_id = p.id AND ($3::uuid IS NULL OR s.drug_id = $3::uuid)
-        WHERE p.status IN ('active','inactive')
+        WHERE p.status = 'active'
           AND ($3::uuid IS NULL OR s.quantity > 0)
         ORDER BY p.id, distance_km ASC NULLS LAST
         LIMIT 20
@@ -1695,7 +1728,13 @@ async function bootstrap() {
   });
 
   // Pharmacy claims prescription (removes it from others)
-  router.patch('/prescriptions/:id/claim', authenticate, async (req, res, next) => {
+  router.patch('/prescriptions/:id/claim', authenticate, quota.enforceQuota({
+    quotaKey: 'prescriptions',
+    getEntity: (req) => {
+      const pharmacyId = req.body.pharmacyId || req.user?.sub;
+      return pharmacyId ? { entityType: 'pharmacy', entityId: pharmacyId, ownerUserId: req.user?.sub || null } : null;
+    },
+  }), async (req, res, next) => {
     try {
       const pharmacyId = req.body.pharmacyId || req.user?.sub;
       const r = await pool.query(
@@ -1861,7 +1900,10 @@ async function bootstrap() {
   });
 
   // POST create booking (public — patient books)
-  apptRouter.post('/:doctorId/bookings', async (req, res, next) => {
+  apptRouter.post('/:doctorId/bookings', quota.enforceQuota({
+    quotaKey: 'future_appointment_limit',
+    getEntity: (req) => ({ entityType: 'doctor', entityId: req.params.doctorId, ownerUserId: req.params.doctorId }),
+  }), async (req, res, next) => {
     try {
       const { patient_name, patient_phone, patient_email, appointment_date, notes } = req.body;
       // Check availability
@@ -2057,6 +2099,560 @@ async function bootstrap() {
       );
       if (!wRes.rows.length) return res.status(404).json({ error: 'Warehouse row not found — activate first' });
       res.json({ success: true, data: wRes.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // ─── SUBSCRIPTIONS / ORGANIZATIONS — Phase 1: schema only, no routes yet ──────
+  // core.organizations is a registry of every subscribable entity (pharmacy, warehouse,
+  // doctor today; any future org type just adds a new entity_type — no new table needed).
+  // subscriptions.* implements versioned/immutable plans, quotas, feature flags, per-org
+  // overrides, permanent history ledgers, and metered usage. See CLAUDE.md for the full design.
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS core`).catch(() => {});
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS subscriptions`).catch(() => {});
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS core.organizations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_type TEXT NOT NULL,
+      entity_id UUID NOT NULL,
+      owner_user_id UUID REFERENCES auth.users(id),
+      parent_organization_id UUID REFERENCES core.organizations(id),
+      display_name TEXT,
+      display_name_ar TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deleted_at TIMESTAMPTZ,
+      UNIQUE (entity_type, entity_id)
+    )
+  `).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS organizations_owner_idx ON core.organizations(owner_user_id)`).catch(() => {});
+  // Admin org search does display_name ILIKE '%term%' — a leading-wildcard
+  // pattern a btree index can't use. pg_trgm (already enabled, see 001_init_schemas.sql)
+  // makes that a real index scan instead of a full-table scan as orgs grow.
+  await pool.query(`CREATE INDEX IF NOT EXISTS organizations_display_name_trgm_idx ON core.organizations USING GIN (display_name gin_trgm_ops)`).catch(() => {});
+
+  // Plans are versioned and immutable once published: editing a plan creates a new row
+  // (version + 1) rather than mutating one that already has subscribers, so existing
+  // subscribers are never silently affected by a later plan edit (grandfathering).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.plans (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      family_code TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      is_current_version BOOLEAN NOT NULL DEFAULT true,
+      superseded_by_plan_id UUID REFERENCES subscriptions.plans(id),
+      name TEXT NOT NULL,
+      name_ar TEXT,
+      description TEXT,
+      description_ar TEXT,
+      marketing_features JSONB NOT NULL DEFAULT '[]',
+      display_order INTEGER NOT NULL,
+      is_default BOOLEAN NOT NULL DEFAULT false,
+      is_public BOOLEAN NOT NULL DEFAULT true,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deleted_at TIMESTAMPTZ
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS plans_one_current_version_per_family
+      ON subscriptions.plans (family_code) WHERE is_current_version AND deleted_at IS NULL
+  `).catch(() => {});
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS plans_one_default
+      ON subscriptions.plans (is_default) WHERE is_default AND deleted_at IS NULL
+  `).catch(() => {});
+
+  // Separate pricing table — new currencies/billing cycles never require a redesign.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.plan_prices (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      plan_id UUID NOT NULL REFERENCES subscriptions.plans(id) ON DELETE CASCADE,
+      currency TEXT NOT NULL,
+      billing_cycle TEXT NOT NULL,
+      price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (plan_id, currency, billing_cycle)
+    )
+  `).catch(() => {});
+
+  // Quota registry — any quota type, any organization type; a new quota is one INSERT here,
+  // never a migration. reset_period/reset_period_days makes the reset cadence configurable
+  // per quota (daily/weekly/monthly/yearly/custom/none for non-metered values).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.quota_definitions (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      label_ar TEXT,
+      applies_to_entity_type TEXT,
+      value_type TEXT NOT NULL DEFAULT 'count',
+      is_metered BOOLEAN NOT NULL DEFAULT true,
+      reset_period TEXT NOT NULL DEFAULT 'monthly',
+      reset_period_days INTEGER,
+      default_warning_pct NUMERIC(5,2) NOT NULL DEFAULT 80,
+      default_critical_pct NUMERIC(5,2) NOT NULL DEFAULT 95,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.plan_quotas (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      plan_id UUID NOT NULL REFERENCES subscriptions.plans(id) ON DELETE CASCADE,
+      quota_key TEXT NOT NULL REFERENCES subscriptions.quota_definitions(key),
+      limit_value NUMERIC,
+      warning_pct NUMERIC(5,2),
+      critical_pct NUMERIC(5,2),
+      UNIQUE (plan_id, quota_key)
+    )
+  `).catch(() => {});
+
+  // Feature flags — booleans, deliberately separate from numeric quotas.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.feature_definitions (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      label_ar TEXT,
+      applies_to_entity_type TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.plan_features (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      plan_id UUID NOT NULL REFERENCES subscriptions.plans(id) ON DELETE CASCADE,
+      feature_key TEXT NOT NULL REFERENCES subscriptions.feature_definitions(key),
+      is_enabled BOOLEAN NOT NULL DEFAULT true,
+      UNIQUE (plan_id, feature_key)
+    )
+  `).catch(() => {});
+
+  // Active subscription — current state only; subscription_history (below) is the
+  // permanent, append-only ledger of every transition.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.subscriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      plan_id UUID NOT NULL REFERENCES subscriptions.plans(id),
+      status TEXT NOT NULL DEFAULT 'active',
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      current_period_end TIMESTAMPTZ,
+      canceled_at TIMESTAMPTZ,
+      billing_provider TEXT,
+      billing_reference TEXT,
+      billing_cycle TEXT,
+      next_billing_at TIMESTAMPTZ,
+      renewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_one_active_per_org
+      ON subscriptions.subscriptions (organization_id) WHERE status IN ('trialing','active','past_due')
+  `).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS subscriptions_org_idx ON subscriptions.subscriptions(organization_id)`).catch(() => {});
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.subscription_history (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      subscription_id UUID REFERENCES subscriptions.subscriptions(id),
+      previous_plan_id UUID REFERENCES subscriptions.plans(id),
+      new_plan_id UUID NOT NULL REFERENCES subscriptions.plans(id),
+      changed_by UUID REFERENCES auth.users(id),
+      change_reason TEXT,
+      effective_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expiration_date TIMESTAMPTZ,
+      payment_provider TEXT,
+      payment_reference TEXT,
+      amount NUMERIC(12,2),
+      currency TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Admin org-detail/audit-log always filters this by organization_id — without
+  // an index it's a full-table scan once history accumulates.
+  await pool.query(`CREATE INDEX IF NOT EXISTS subscription_history_org_idx ON subscriptions.subscription_history(organization_id, effective_date DESC)`).catch(() => {});
+
+  // Per-organization overrides take precedence over plan_quotas/plan_features when
+  // resolving an org's effective limit. Reset-to-default = delete the override row.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.organization_quota_overrides (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      quota_key TEXT NOT NULL REFERENCES subscriptions.quota_definitions(key),
+      override_value NUMERIC,
+      is_temporary BOOLEAN NOT NULL DEFAULT false,
+      expires_at TIMESTAMPTZ,
+      reason TEXT,
+      created_by UUID REFERENCES auth.users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (organization_id, quota_key)
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.organization_feature_overrides (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      feature_key TEXT NOT NULL REFERENCES subscriptions.feature_definitions(key),
+      is_enabled BOOLEAN NOT NULL,
+      is_temporary BOOLEAN NOT NULL DEFAULT false,
+      expires_at TIMESTAMPTZ,
+      reason TEXT,
+      created_by UUID REFERENCES auth.users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (organization_id, feature_key)
+    )
+  `).catch(() => {});
+
+  // Permanent quota-override change ledger (before/after value, who, why) — separate from
+  // plan-level history because plan quota changes are handled by plan versioning instead.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.quota_change_history (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      quota_key TEXT NOT NULL REFERENCES subscriptions.quota_definitions(key),
+      change_type TEXT NOT NULL,
+      previous_value NUMERIC,
+      new_value NUMERIC,
+      changed_by UUID REFERENCES auth.users(id),
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS quota_change_history_org_idx ON subscriptions.quota_change_history(organization_id, created_at DESC)`).catch(() => {});
+
+  // Metered usage — configurable reset period per quota (quota_definitions.reset_period).
+  // Increment via INSERT ... ON CONFLICT DO UPDATE SET used_value = used_value + N so
+  // concurrent requests can never race past the limit (Phase 2 will add this query).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.usage_counters (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      quota_key TEXT NOT NULL REFERENCES subscriptions.quota_definitions(key),
+      period_start TIMESTAMPTZ NOT NULL,
+      period_end TIMESTAMPTZ NOT NULL,
+      used_value NUMERIC NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (organization_id, quota_key, period_start)
+    )
+  `).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS usage_counters_org_key_idx ON subscriptions.usage_counters(organization_id, quota_key)`).catch(() => {});
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions.upgrade_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL REFERENCES core.organizations(id) ON DELETE CASCADE,
+      request_type TEXT NOT NULL,
+      requested_plan_id UUID REFERENCES subscriptions.plans(id),
+      requested_quota_key TEXT REFERENCES subscriptions.quota_definitions(key),
+      requested_value NUMERIC,
+      requested_duration_days INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      admin_notes TEXT,
+      decided_by UUID REFERENCES auth.users(id),
+      decided_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS upgrade_requests_org_idx ON subscriptions.upgrade_requests(organization_id, status)`).catch(() => {});
+
+  // ─── Seed data: the five tiers, Bronze → Silver → Gold → Platinum → Super ─────
+  const planSeeds = [
+    { code: 'bronze',   name: 'Bronze',   name_ar: 'برونزي',  order: 1, isDefault: true,  isPublic: true  },
+    { code: 'silver',   name: 'Silver',   name_ar: 'فضي',      order: 2, isDefault: false, isPublic: true  },
+    { code: 'gold',     name: 'Gold',     name_ar: 'ذهبي',     order: 3, isDefault: false, isPublic: true  },
+    { code: 'platinum', name: 'Platinum', name_ar: 'بلاتيني',  order: 4, isDefault: false, isPublic: true  },
+    { code: 'super',    name: 'Super',    name_ar: 'سوبر',     order: 5, isDefault: false, isPublic: false },
+  ];
+  const planIds = {};
+  for (const p of planSeeds) {
+    const existing = await pool.query(
+      `SELECT id FROM subscriptions.plans WHERE family_code=$1 AND is_current_version`, [p.code]
+    ).catch(() => ({ rows: [] }));
+    if (existing.rows.length) { planIds[p.code] = existing.rows[0].id; continue; }
+    const inserted = await pool.query(
+      `INSERT INTO subscriptions.plans (family_code, version, is_current_version, name, name_ar, display_order, is_default, is_public, status)
+       VALUES ($1, 1, true, $2, $3, $4, $5, $6, 'active') RETURNING id`,
+      [p.code, p.name, p.name_ar, p.order, p.isDefault, p.isPublic]
+    ).catch(() => ({ rows: [] }));
+    if (inserted.rows.length) planIds[p.code] = inserted.rows[0].id;
+  }
+
+  const quotaSeeds = [
+    { key: 'max_pharmacies_contacted',     label: 'Max pharmacies contacted',       label_ar: 'أقصى عدد صيدليات يمكن التواصل معها', entityType: 'warehouse', valueType: 'count',    metered: true,  reset: 'monthly' },
+    { key: 'max_doctors_contacted',        label: 'Max doctors contacted',          label_ar: 'أقصى عدد أطباء يمكن التواصل معهم',   entityType: 'warehouse', valueType: 'count',    metered: true,  reset: 'monthly' },
+    { key: 'online_orders',                label: 'Online orders',                  label_ar: 'الطلبات الإلكترونية',                entityType: 'pharmacy',  valueType: 'count',    metered: true,  reset: 'monthly' },
+    { key: 'direct_sales',                 label: 'Direct sales',                   label_ar: 'المبيعات المباشرة',                  entityType: 'pharmacy',  valueType: 'count',    metered: true,  reset: 'monthly' },
+    { key: 'prescriptions',                label: 'Prescriptions',                  label_ar: 'الوصفات الطبية',                     entityType: 'pharmacy',  valueType: 'count',    metered: true,  reset: 'monthly' },
+    { key: 'reservation_duration_minutes', label: 'Reservation duration (minutes)', label_ar: 'مدة الحجز (بالدقائق)',                entityType: 'doctor',    valueType: 'duration', metered: false, reset: 'none'    },
+    { key: 'future_appointment_limit',     label: 'Future appointment limit',       label_ar: 'أقصى عدد مواعيد مستقبلية',           entityType: 'doctor',    valueType: 'count',    metered: true,  reset: 'daily'   },
+  ];
+  for (const q of quotaSeeds) {
+    await pool.query(
+      `INSERT INTO subscriptions.quota_definitions (key, label, label_ar, applies_to_entity_type, value_type, is_metered, reset_period)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (key) DO NOTHING`,
+      [q.key, q.label, q.label_ar, q.entityType, q.valueType, q.metered, q.reset]
+    ).catch(() => {});
+  }
+
+  if (Object.keys(planIds).length === planSeeds.length) {
+    const limitsByTier = {
+      bronze:   { max_pharmacies_contacted: 5,    max_doctors_contacted: 5,    online_orders: 20,   direct_sales: 20,   prescriptions: 10,  reservation_duration_minutes: 15, future_appointment_limit: 5   },
+      silver:   { max_pharmacies_contacted: 20,   max_doctors_contacted: 20,   online_orders: 100,  direct_sales: 100,  prescriptions: 50,  reservation_duration_minutes: 20, future_appointment_limit: 15  },
+      gold:     { max_pharmacies_contacted: 50,   max_doctors_contacted: 50,   online_orders: 500,  direct_sales: 500,  prescriptions: 200, reservation_duration_minutes: 30, future_appointment_limit: 40  },
+      platinum: { max_pharmacies_contacted: 150,  max_doctors_contacted: 150,  online_orders: 2000, direct_sales: 2000, prescriptions: 800, reservation_duration_minutes: 45, future_appointment_limit: 100 },
+      super:    { max_pharmacies_contacted: null, max_doctors_contacted: null, online_orders: null, direct_sales: null, prescriptions: null, reservation_duration_minutes: 60, future_appointment_limit: null },
+    };
+    for (const [tier, quotas] of Object.entries(limitsByTier)) {
+      for (const [key, value] of Object.entries(quotas)) {
+        await pool.query(
+          `INSERT INTO subscriptions.plan_quotas (plan_id, quota_key, limit_value) VALUES ($1,$2,$3) ON CONFLICT (plan_id, quota_key) DO NOTHING`,
+          [planIds[tier], key, value]
+        ).catch(() => {});
+      }
+    }
+  }
+
+  // ─── Backfill core.organizations from existing entities (additive, idempotent) ─
+  await pool.query(`
+    INSERT INTO core.organizations (entity_type, entity_id, owner_user_id, display_name, display_name_ar, status)
+    SELECT 'pharmacy', p.id, p.owner_id, p.name, p.name_ar, p.status
+    FROM pharmacies.pharmacies p
+    ON CONFLICT (entity_type, entity_id) DO NOTHING
+  `).catch(() => {});
+  await pool.query(`
+    INSERT INTO core.organizations (entity_type, entity_id, owner_user_id, display_name, display_name_ar, status)
+    SELECT 'warehouse', w.id, w.owner_id, w.name, w.name_ar, w.status
+    FROM warehouses.warehouses w
+    ON CONFLICT (entity_type, entity_id) DO NOTHING
+  `).catch(() => {});
+  await pool.query(`
+    INSERT INTO core.organizations (entity_type, entity_id, owner_user_id, display_name, status)
+    SELECT 'doctor', u.id, u.id, COALESCE(u.email, u.phone), u.status
+    FROM auth.users u
+    WHERE u.role = 'doctor'
+    ON CONFLICT (entity_type, entity_id) DO NOTHING
+  `).catch(() => {});
+
+  // Default-subscribe any organization without an active subscription to the default plan.
+  await pool.query(`
+    INSERT INTO subscriptions.subscriptions (organization_id, plan_id, status, started_at)
+    SELECT o.id, (SELECT id FROM subscriptions.plans WHERE is_default AND deleted_at IS NULL LIMIT 1), 'active', NOW()
+    FROM core.organizations o
+    WHERE NOT EXISTS (
+      SELECT 1 FROM subscriptions.subscriptions s
+      WHERE s.organization_id = o.id AND s.status IN ('trialing','active','past_due')
+    )
+    AND EXISTS (SELECT 1 FROM subscriptions.plans WHERE is_default AND deleted_at IS NULL)
+  `).catch(() => {});
+
+  // ─── SUBSCRIPTIONS — org subscription/quota/usage + upgrade requests ─────────
+  // Generic across entity_type — any future module (hospital, lab, insurance,
+  // driver, clinic, ...) is served by these same routes with no code change.
+  app.get('/api/v1/organizations/:entityType/:entityId/subscription', authenticate, quota.requireOrgAccess(), async (req, res, next) => {
+    try {
+      const snapshot = await quota.getOrganizationSnapshot(req.organization.entity_type, req.organization.entity_id);
+      res.json({ success: true, data: snapshot });
+    } catch (err) { next(err); }
+  });
+
+  // Public plan catalog — lets the frontend render upgrade options without any
+  // entity-specific logic on either side.
+  app.get('/api/v1/subscriptions/plans', authenticate, async (req, res, next) => {
+    try {
+      const plans = await quota.listPublicPlans();
+      res.json({ success: true, data: plans });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/organizations/:entityType/:entityId/upgrade-requests', authenticate, quota.requireOrgAccess(), async (req, res, next) => {
+    try {
+      const requests = await quota.listUpgradeRequests(req.organization.id);
+      res.json({ success: true, data: requests });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/organizations/:entityType/:entityId/upgrade-requests', authenticate, quota.requireOrgAccess(), async (req, res, next) => {
+    try {
+      const { requestType, requestedPlanId, requestedQuotaKey, requestedValue, requestedDurationDays } = req.body;
+      if (!requestType) {
+        return res.status(422).json({ success: false, error: { title: 'requestType is required', status: 422 } });
+      }
+      if (requestType === 'plan_change') {
+        if (!requestedPlanId) {
+          return res.status(422).json({ success: false, error: { title: 'requestedPlanId is required for plan_change', status: 422 } });
+        }
+        const planCheck = await pool.query(
+          `SELECT id FROM subscriptions.plans WHERE id=$1 AND is_current_version AND is_public AND status='active' AND deleted_at IS NULL`,
+          [requestedPlanId]
+        );
+        if (!planCheck.rows.length) {
+          return res.status(422).json({ success: false, error: { title: 'requestedPlanId is not a valid public plan', status: 422 } });
+        }
+      }
+      const created = await quota.createUpgradeRequest(req.organization.id, {
+        requestType, requestedPlanId, requestedQuotaKey, requestedValue, requestedDurationDays,
+      });
+      res.status(201).json({ success: true, data: created });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  // ─── SUBSCRIPTIONS — Phase 4: admin management ───────────────────────────
+  // Every route below is generic — none of them branch on entity_type. Same
+  // isAdmin gate already used elsewhere in this file (admin/super_admin/
+  // auditor/support), same quota.js primitives as Phases 2-3.
+  app.get('/api/v1/admin/subscriptions/dashboard', authenticate, isAdmin, async (req, res, next) => {
+    try { res.json({ success: true, data: await quota.getDashboardStats() }); }
+    catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/subscriptions/plans', authenticate, isAdmin, async (req, res, next) => {
+    try { res.json({ success: true, data: await quota.listAllPlans() }); }
+    catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/subscriptions/plans/:id', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const plan = await quota.getPlanById(req.params.id);
+      if (!plan) return res.status(404).json({ success: false, error: { title: 'Plan not found', status: 404 } });
+      res.json({ success: true, data: plan });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/admin/subscriptions/plans/:id', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { name, name_ar, description, description_ar, marketing_features, display_order, is_public } = req.body;
+      const updated = await quota.createPlanVersion(req.params.id, {
+        name, name_ar, description, description_ar, marketing_features, display_order, is_public,
+      });
+      res.json({ success: true, data: updated });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  app.patch('/api/v1/admin/subscriptions/plans/:id/status', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { status } = req.body;
+      if (!['active', 'inactive'].includes(status)) {
+        return res.status(422).json({ success: false, error: { title: "status must be 'active' or 'inactive'", status: 422 } });
+      }
+      const updated = await quota.setPlanStatus(req.params.id, status);
+      if (!updated) return res.status(404).json({ success: false, error: { title: 'Plan not found or not the current version', status: 404 } });
+      res.json({ success: true, data: updated });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/organizations', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { search, entityType, planFamilyCode, page, limit } = req.query;
+      res.json({ success: true, ...(await quota.listOrganizations({ search, entityType, planFamilyCode, page, limit })) });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/organizations/:id', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const snapshot = await quota.getOrganizationById(req.params.id);
+      if (!snapshot) return res.status(404).json({ success: false, error: { title: 'Organization not found', status: 404 } });
+      res.json({ success: true, data: snapshot });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/upgrade-requests', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { status, entityType, page, limit } = req.query;
+      res.json({ success: true, ...(await quota.listUpgradeRequestsAdmin({ status, entityType, page, limit })) });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/upgrade-requests/:id', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const request = await quota.getUpgradeRequestById(req.params.id);
+      if (!request) return res.status(404).json({ success: false, error: { title: 'Upgrade request not found', status: 404 } });
+      res.json({ success: true, data: request });
+    } catch (err) { next(err); }
+  });
+
+  for (const decision of ['approved', 'rejected', 'cancelled']) {
+    const path = decision === 'approved' ? 'approve' : decision === 'rejected' ? 'reject' : 'cancel';
+    app.patch(`/api/v1/admin/upgrade-requests/:id/${path}`, authenticate, isAdmin, async (req, res, next) => {
+      try {
+        const updated = await quota.decideUpgradeRequest(req.params.id, {
+          decision, adminUserId: req.user.sub, adminNotes: req.body.adminNotes,
+        });
+        res.json({ success: true, data: updated });
+      } catch (err) { handleQuotaError(err, res, next); }
+    });
+  }
+
+  app.post('/api/v1/admin/organizations/:id/subscription/change-plan', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { planId, reason } = req.body;
+      if (!planId) return res.status(422).json({ success: false, error: { title: 'planId is required', status: 422 } });
+      const planCheck = await pool.query(`SELECT id FROM subscriptions.plans WHERE id=$1 AND deleted_at IS NULL`, [planId]);
+      if (!planCheck.rows.length) return res.status(422).json({ success: false, error: { title: 'planId does not exist', status: 422 } });
+      const snapshot = await quota.changeOrgPlan(req.params.id, planId, { changedBy: req.user.sub, reason });
+      res.json({ success: true, data: snapshot });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/admin/organizations/:id/subscription/cancel', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const snapshot = await quota.cancelOrgSubscription(req.params.id, { changedBy: req.user.sub, reason: req.body.reason });
+      res.json({ success: true, data: snapshot });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  app.post('/api/v1/admin/organizations/:id/subscription/restore', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const snapshot = await quota.restoreOrgSubscription(req.params.id, { changedBy: req.user.sub, reason: req.body.reason });
+      res.json({ success: true, data: snapshot });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  app.get('/api/v1/admin/organizations/:id/quota-overrides', authenticate, isAdmin, async (req, res, next) => {
+    try { res.json({ success: true, data: await quota.listQuotaOverrides(req.params.id) }); }
+    catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/admin/organizations/:id/quota-overrides', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { quotaKey, overrideValue, isTemporary, expiresAt, reason } = req.body;
+      if (!quotaKey) return res.status(422).json({ success: false, error: { title: 'quotaKey is required', status: 422 } });
+      const def = await quota.getQuotaDefinition(quotaKey);
+      if (!def) return res.status(422).json({ success: false, error: { title: 'quotaKey is not a known quota', status: 422 } });
+      const created = await quota.upsertQuotaOverride(req.params.id, quotaKey, {
+        overrideValue, isTemporary, expiresAt, reason, createdBy: req.user.sub,
+      });
+      res.status(201).json({ success: true, data: created });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  app.patch('/api/v1/admin/organizations/:id/quota-overrides/:quotaKey', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { overrideValue, isTemporary, expiresAt, reason } = req.body;
+      const updated = await quota.upsertQuotaOverride(req.params.id, req.params.quotaKey, {
+        overrideValue, isTemporary, expiresAt, reason, createdBy: req.user.sub,
+      });
+      res.json({ success: true, data: updated });
+    } catch (err) { handleQuotaError(err, res, next); }
+  });
+
+  app.delete('/api/v1/admin/organizations/:id/quota-overrides/:quotaKey', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const result = await quota.removeQuotaOverride(req.params.id, req.params.quotaKey, { removedBy: req.user.sub, reason: req.body?.reason });
+      if (!result) return res.status(404).json({ success: false, error: { title: 'No override exists for this quota', status: 404 } });
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/admin/audit-log', authenticate, isAdmin, async (req, res, next) => {
+    try {
+      const { organizationId, page, limit } = req.query;
+      res.json({ success: true, data: await quota.getAuditLog({ organizationId, page, limit }) });
     } catch (err) { next(err); }
   });
 

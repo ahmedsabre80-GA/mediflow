@@ -2,8 +2,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare, ChevronLeft, Building2 } from 'lucide-react';
+import { LayoutDashboard, Calendar, FileText, Users, BarChart3, Settings, LogOut, Stethoscope, UserCog, Bell, X, MessageSquare, ChevronLeft, Building2, CreditCard } from 'lucide-react';
 import { fetchNotifications, markNotifRead, type PortalNotif } from '@/lib/portalNotifications';
+import { useIdleLogout } from '@/hooks/useIdleLogout';
 
 const NAV = [
   { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
@@ -14,6 +15,7 @@ const NAV = [
   { href: '/dashboard/employees', label: 'الموظفون', icon: UserCog },
   { href: '/dashboard/messages', label: 'الرسائل', icon: MessageSquare },
   { href: '/dashboard/analytics', label: 'الإحصائيات', icon: BarChart3 },
+  { href: '/dashboard/subscription', label: 'الاشتراك', icon: CreditCard },
   { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
 ];
 
@@ -27,8 +29,8 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
   const [ptRescheduleActed, setPtRescheduleActed] = useState<Record<string, 'accepted' | 'cancelled'>>({});
   const [ptBookingStatus, setPtBookingStatus] = useState<string | null>(null);
 
-  const APPT_API  = 'https://mediflow-production-d815.up.railway.app/api/v1/appointments/doctors';
-  const NOTIF_API = 'https://mediflow-production-d815.up.railway.app/api/v1/pharmacies/portal-notifications';
+  const APPT_API  = `${process.env.NEXT_PUBLIC_API_URL}/appointments/doctors`;
+  const NOTIF_API = `${process.env.NEXT_PUBLIC_API_URL}/pharmacies/portal-notifications`;
 
   function drAuthHeaders(): Record<string, string> {
     const token = localStorage.getItem('doctor-token') || '';
@@ -68,22 +70,11 @@ export default function DoctorDashboardLayout({ children }: { children: React.Re
     return () => { clearInterval(iv); clearInterval(ivVal); };
   }, [router, refresh, validateToken]);
 
-  // Auto-logout after 30 minutes of inactivity
-  useEffect(() => {
-    const IDLE_MS = 30 * 60 * 1000;
-    let timer: ReturnType<typeof setTimeout>;
-    const reset = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        ['doctor-token','doctor-name','doctor-id','doctor-user-id'].forEach(k => localStorage.removeItem(k));
-        router.push('/auth/login');
-      }, IDLE_MS);
-    };
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
-    reset();
-    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
-  }, [router]);
+  // Auto-logout after 30 minutes of inactivity — shared across every portal, see useIdleLogout.
+  useIdleLogout(() => {
+    ['doctor-token','doctor-name','doctor-id','doctor-user-id'].forEach(k => localStorage.removeItem(k));
+    router.push('/auth/login');
+  });
 
   const unread = notifs.filter(n => !n.isRead).length;
 

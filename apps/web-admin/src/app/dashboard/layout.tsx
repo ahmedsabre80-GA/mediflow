@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, Building2, Users, ShoppingCart,
   BarChart3, Shield, Settings, LogOut, Menu, X, Bell,
-  Package, Stethoscope, ClipboardList, UserCog, MessageSquare, Trash2, HeartPulse, KeyRound, Pill
+  Package, Stethoscope, ClipboardList, UserCog, MessageSquare, Trash2, HeartPulse, KeyRound, Pill, CreditCard
 } from 'lucide-react';
 import {
   startSession, endSession,
@@ -13,6 +13,7 @@ import {
   deleteNotification, deleteAllNotifications,
   type PlatformNotification,
 } from '@/lib/auditSystem';
+import { useIdleLogout } from '@/hooks/useIdleLogout';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/orders', label: 'الطلبات', icon: ShoppingCart },
   { href: '/dashboard/analytics', label: 'التحليلات', icon: BarChart3 },
   { href: '/dashboard/messages', label: 'مركز الرسائل', icon: MessageSquare },
+  { href: '/dashboard/subscriptions', label: 'إدارة الاشتراكات', icon: CreditCard },
   { href: '/dashboard/audit', label: 'سجل المراقبة', icon: Shield },
   { href: '/dashboard/settings', label: 'الإعدادات', icon: Settings },
 ];
@@ -72,7 +74,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!token) { router.push('/auth/login'); return; }
 
     // Validate token is still accepted by the backend
-    fetch('https://mediflowauth-service-production.up.railway.app/api/v1/auth/admin/users?role=pharmacy&limit=1', {
+    fetch(`${process.env.NEXT_PUBLIC_AUTH_API_URL}/auth/admin/users?role=pharmacy&limit=1`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => {
       if (r.status === 401) {
@@ -88,23 +90,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => window.removeEventListener('resize', handleResize);
   }, [router]);
 
-  // Auto-logout after 30 minutes of inactivity
-  useEffect(() => {
-    const IDLE_MS = 30 * 60 * 1000;
-    let timer: ReturnType<typeof setTimeout>;
-    const reset = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        endSession(false);
-        localStorage.removeItem('admin-token');
-        router.push('/auth/login');
-      }, IDLE_MS);
-    };
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
-    reset();
-    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)); };
-  }, [router]);
+  // Auto-logout after 30 minutes of inactivity — shared across every portal, see useIdleLogout.
+  useIdleLogout(() => {
+    endSession(false);
+    localStorage.removeItem('admin-token');
+    router.push('/auth/login');
+  });
 
   const logout = () => {
     endSession(false);
