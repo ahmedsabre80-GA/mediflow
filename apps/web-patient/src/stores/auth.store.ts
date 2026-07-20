@@ -32,7 +32,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'mediflow-auth',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ refreshToken: state.refreshToken, user: state.user }),
+      partialize: (state) => ({ accessToken: state.accessToken, refreshToken: state.refreshToken, user: state.user, isAuthenticated: state.isAuthenticated }),
     },
   ),
 );
